@@ -1,10 +1,12 @@
-use std::io::IsTerminal;
+use std::collections::BTreeMap;
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use dialoguer::{Confirm, Input, Select};
+use dialoguer::{Confirm, Input, Password, Select};
 use lucy_core::config::{self, Config};
+use lucy_core::secrets::{self, KeySource, OsKeyring, SecretStore, Secrets, SecretsError};
 
 mod wizard;
 
@@ -50,10 +52,15 @@ enum ConfigAction {
 
 #[derive(Subcommand)]
 enum AuthAction {
-    /// Store an API key for a provider.
-    Set { provider: String },
-    /// Remove a stored API key.
-    Remove { provider: String },
+    /// Store an API key in the OS keyring. Reads stdin when piped.
+    Set {
+        /// The `key_name` a profile uses, e.g. `anthropic`.
+        key_name: String,
+    },
+    /// Remove a stored API key from the OS keyring.
+    Remove { key_name: String },
+    /// Show where each profile's API key comes from (never prints keys).
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -100,7 +107,18 @@ fn main() -> Result<()> {
                 Ok(())
             }
         },
-        Some(Command::Auth { .. }) => bail!("`lucy auth` is not implemented yet (milestone 1)"),
+        Some(Command::Auth { action }) => match action {
+            AuthAction::Set { key_name } => auth_set(&key_name),
+            AuthAction::Remove { key_name } => {
+                if keyring_hint(OsKeyring.delete(&key_name), &key_name)? {
+                    println!("Removed `{key_name}` from the OS keyring.");
+                } else {
+                    println!("No stored key named `{key_name}`.");
+                }
+                Ok(())
+            }
+            AuthAction::Status => auth_status(),
+        },
         Some(Command::Service { .. }) => {
             bail!("`lucy service` is not implemented yet (milestone 1)")
         }
@@ -129,6 +147,66 @@ fn init_config(path: &Path) -> Result<()> {
         println!("Store the API key with: lucy auth set {key_name}");
     }
     Ok(())
+}
+
+fn auth_set(key_name: &str) -> Result<()> {
+    let secret = if std::io::stdin().is_terminal() {
+        Password::new()
+            .with_prompt(format!("API key for `{key_name}`"))
+            .interact()?
+    } else {
+        let mut secret = String::new();
+        std::io::stdin().read_to_string(&mut secret)?;
+        secret.trim_end_matches(['\r', '\n']).to_owned()
+    };
+    if secret.is_empty() {
+        bail!("no key given");
+    }
+    keyring_hint(OsKeyring.set(key_name, &secret), key_name)?;
+    println!("Stored `{key_name}` in the OS keyring.");
+    Ok(())
+}
+
+fn auth_status() -> Result<()> {
+    let path = config_path()?;
+    let config = Config::load(&path)?.with_context(|| no_config_message(&path))?;
+
+    let mut key_names: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (profile, settings) in &config.profiles {
+        if let Some(key_name) = &settings.key_name {
+            key_names.entry(key_name).or_default().push(profile);
+        }
+    }
+    if key_names.is_empty() {
+        println!("No profiles need an API key.");
+        return Ok(());
+    }
+
+    let secrets = Secrets::system();
+    for (key_name, profiles) in key_names {
+        let status = match secrets.resolve(key_name) {
+            Ok(Some(key)) => match key.source {
+                KeySource::Env(var) => format!("set via ${var}"),
+                KeySource::Keyring => "set in OS keyring".to_owned(),
+            },
+            Ok(None) => format!("missing: run `lucy auth set {key_name}`"),
+            Err(err) => format!("error: {err}"),
+        };
+        println!("{key_name} ({}): {status}", profiles.join(", "));
+    }
+    Ok(())
+}
+
+/// Turn "no keyring" into an error that says which env var to use instead.
+fn keyring_hint<T>(result: Result<T, SecretsError>, key_name: &str) -> Result<T> {
+    result.map_err(|err| match err {
+        SecretsError::Unavailable(reason) => SecretsError::UnavailableFor {
+            reason,
+            env_var: secrets::env_var_name(key_name),
+        }
+        .into(),
+        err => err.into(),
+    })
 }
 
 struct TerminalPrompter;
