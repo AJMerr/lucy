@@ -8,6 +8,8 @@ use dialoguer::{Confirm, Input, Password, Select};
 use lucy_core::config::{self, Config};
 use lucy_core::secrets::{self, KeySource, OsKeyring, SecretStore, Secrets, SecretsError};
 
+mod ask;
+mod core_process;
 mod wizard;
 
 /// Lucy: a model-agnostic personal assistant.
@@ -40,6 +42,18 @@ enum Command {
         #[command(subcommand)]
         action: ServiceAction,
     },
+    /// Lucy's background core (started automatically when needed).
+    #[command(hide = true)]
+    Core {
+        #[command(subcommand)]
+        action: CoreAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum CoreAction {
+    /// Run the core in the foreground until it has been idle for a while.
+    Run,
 }
 
 #[derive(Subcommand)]
@@ -82,13 +96,16 @@ fn main() -> Result<()> {
             }
             bail!("interactive chat is not implemented yet (milestone 1)")
         }
-        Some(Command::Ask { .. }) => {
+        Some(Command::Ask { prompt }) => {
             let path = config_path()?;
             if Config::load(&path)?.is_none() {
                 bail!(no_config_message(&path));
             }
-            bail!("`lucy ask` is not implemented yet (milestone 1)")
+            ask::run(prompt)
         }
+        Some(Command::Core {
+            action: CoreAction::Run,
+        }) => core_process::run(),
         Some(Command::Config { action }) => match action {
             ConfigAction::Init => {
                 let path = config_path()?;

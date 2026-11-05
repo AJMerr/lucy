@@ -206,3 +206,17 @@ fn vendor_env_var(key_name: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+impl<T: SecretStore + ?Sized> SecretStore for Box<T> {
+    fn get(&self, key_name: &str) -> Result<Option<String>, SecretsError> {
+        (**self).get(key_name)
+    }
+
+    fn set(&self, key_name: &str, secret: &str) -> Result<(), SecretsError> {
+        (**self).set(key_name, secret)
+    }
+
+    fn delete(&self, key_name: &str) -> Result<bool, SecretsError> {
+        (**self).delete(key_name)
+    }
+}

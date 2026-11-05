@@ -2,6 +2,8 @@
 //!
 //! Anything that crosses the IPC boundary lives here so all sides agree on the wire format.
 
+pub mod rpc;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

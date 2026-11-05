@@ -19,7 +19,8 @@ Built test-first against the `mock` provider.
 5. ✅ **Persona** — built-in personas plus user overrides in `<config dir>/lucy/personas/`; system
    prompt with voice/plain blocks and live context (date, machine, name, model). `/plain` command
    itself lands with the CLI (step 7).
-6. **Core + IPC** — core process, JSON-RPC over local socket, spawn-on-demand from the CLI.
+6. ✅ **Core + IPC** — core process, JSON-RPC over local socket, spawn-on-demand from the CLI,
+   idle exit, live events to subscribers. Plain-text `lucy ask` works end to end.
 7. **CLI** — `lucy` interactive streaming chat with markdown rendering and `/model`, `/mode`,
    `/plain`, `/sessions`; `lucy ask "..."` one-shot (reads stdin).
 8. **Tools** — MCP client; tool calls in both adapters; Assist-mode confirmations.

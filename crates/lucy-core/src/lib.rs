@@ -8,6 +8,7 @@ pub mod config;
 pub mod persona;
 pub mod provider;
 pub mod secrets;
+pub mod server;
 pub mod sessions;
 
 pub use lucy_protocol as protocol;

@@ -23,6 +23,7 @@ pub struct FakeResponse {
     content_type: &'static str,
     body: Vec<u8>,
     chunk_size: usize,
+    stall: bool,
 }
 
 impl FakeResponse {
@@ -36,6 +37,7 @@ impl FakeResponse {
             content_type: "text/event-stream",
             body: body.into(),
             chunk_size: Self::DEFAULT_CHUNK,
+            stall: false,
         }
     }
 
@@ -45,12 +47,20 @@ impl FakeResponse {
             content_type: "application/json",
             body: body.into(),
             chunk_size: Self::DEFAULT_CHUNK,
+            stall: false,
         }
     }
 
     /// Write the body in pieces of `size` bytes (large captures are slow at the default).
     pub fn chunk_size(mut self, size: usize) -> Self {
         self.chunk_size = size;
+        self
+    }
+
+    /// After the body, keep the connection open until the client hangs up (a reply that
+    /// never finishes), so tests can cancel mid-stream.
+    pub fn stall(mut self) -> Self {
+        self.stall = true;
         self
     }
 }
@@ -145,6 +155,10 @@ async fn handle(
         }
         socket.flush().await.ok();
         tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    if response.stall {
+        let mut buf = [0u8; 1];
+        let _ = socket.read(&mut buf).await;
     }
     socket.shutdown().await.ok();
 }
