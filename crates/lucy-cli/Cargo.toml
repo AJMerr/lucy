@@ -1,0 +1,16 @@
+[package]
+name = "lucy-cli"
+description = "The `lucy` command: interactive chat, one-shot ask, auth, and service management."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "lucy"
+path = "src/main.rs"
+
+[dependencies]
+lucy-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true

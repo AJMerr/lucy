@@ -1,0 +1,29 @@
+# Rust
+/target/
+
+# Node / Tauri (apps/sprite)
+node_modules/
+dist/
+apps/sprite/src-tauri/target/
+
+# Nix
+/result
+/result-*
+.direnv/
+
+# Local runtime data — never commit
+*.sqlite
+*.sqlite3
+.env
+.env.*
+
+# Sprite packs are user-supplied and live outside the repo
+# (default: <data dir>/lucy/packs). Only the placeholder pack is tracked.
+/packs/*
+!/packs/placeholder/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

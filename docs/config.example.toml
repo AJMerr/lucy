@@ -1,0 +1,56 @@
+# Example Lucy config. Copy to your config dir:
+#   Linux:   ~/.config/lucy/config.toml
+#   macOS:   ~/Library/Application Support/lucy/config.toml
+#   Windows: %APPDATA%\lucy\config.toml
+#
+# `lucy` runs a first-run wizard that writes this for you; this file documents the format.
+# API keys never go here — use `lucy auth set <key_name>` (OS keyring) or the env var override.
+
+[defaults]
+profile = "local-qwen"          # used by Assist mode and `lucy ask`
+agent_profile = "claude"        # used by Agent mode (optional; falls back to `profile`)
+persona = "lucy"                # persona/<name>.md
+mode = "assist"                 # "assist" | "agent"
+agent_level = 1                 # 0 supervised, 1 guarded, 2 workspace, 3 unrestricted
+
+[agent]
+max_steps = 25
+max_cost_usd = 1.00
+workspace = "~/Projects"        # only used at agent_level = 2
+
+# --- Provider profiles -------------------------------------------------------------------
+
+[profiles.local-qwen]
+provider = "openai_compat"
+base_url = "http://localhost:11434/v1"   # Ollama
+model = "qwen3:14b"
+
+[profiles.qwen-cloud]
+provider = "openai_compat"
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+model = "qwen-max"
+key_name = "dashscope"          # keyring entry; env override: LUCY_KEY_DASHSCOPE
+
+[profiles.openrouter]
+provider = "openai_compat"
+base_url = "https://openrouter.ai/api/v1"
+model = "qwen/qwen3-235b-a22b"
+key_name = "openrouter"
+
+[profiles.claude]
+provider = "anthropic"
+model = "claude-sonnet-5-5"
+key_name = "anthropic"          # env override: LUCY_KEY_ANTHROPIC (or ANTHROPIC_API_KEY)
+
+# --- Remote access (off by default) -------------------------------------------------------
+
+[remote]
+enabled = false
+bind = "127.0.0.1:7077"         # LAN/Tailscale binding is an explicit opt-in
+
+# --- Sprite (milestone 2) -----------------------------------------------------------------
+
+[sprite]
+pack = "placeholder"            # looked up in <data dir>/lucy/packs/, then bundled packs
+scale = 1.0
+bubble_timeout_secs = 12

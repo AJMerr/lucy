@@ -1,0 +1,11 @@
+[package]
+name = "lucy-core"
+description = "Lucy's background service: sessions, tools (MCP), modes, persistence, IPC."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lucy-protocol.workspace = true
+lucy-providers.workspace = true

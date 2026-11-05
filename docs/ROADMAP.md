@@ -1,0 +1,39 @@
+# Roadmap
+
+## Milestone 0 — Repo scaffold ✅
+
+Cargo workspace, Nix dev shell, CI on Linux/macOS/Windows, ADRs, persona, placeholder pack,
+`Provider` trait + `mock` provider.
+
+## Milestone 1 — Terminal Lucy
+
+Built test-first against the `mock` provider.
+
+1. **Config** — load `config.toml` (profiles, defaults, agent settings) from the platform config
+   dir; first-run wizard writes it.
+2. **Secrets** — keyring storage, `LUCY_KEY_*` env override, `lucy auth set|remove`.
+3. **Providers** — `openai_compat` (streaming) and `anthropic` (streaming), with recorded-fixture
+   tests. Qwen preset in the wizard.
+4. **Sessions** — SQLite store; create, list, resume.
+5. **Persona** — load `persona/<name>.md` as the system prompt; `/plain` toggle.
+6. **Core + IPC** — core process, JSON-RPC over local socket, spawn-on-demand from the CLI.
+7. **CLI** — `lucy` interactive streaming chat with markdown rendering and `/model`, `/mode`,
+   `/plain`, `/sessions`; `lucy ask "..."` one-shot (reads stdin).
+8. **Tools** — MCP client; tool calls in both adapters; Assist-mode confirmations.
+9. **Agent mode** — `AgentLevel` enforcement, step and cost caps.
+10. **Service** — `lucy service install|uninstall`.
+11. **Optional HTTP/WebSocket** transport (off by default).
+
+## Milestone 2 — Desktop sprite
+
+Tauri app in `apps/sprite`: transparent always-on-top overlay, frames renderer, `pack.toml`
+loader, speech bubbles, hotkey/click input, full chat window for long replies, Hyprland window
+rule docs, toggle keybind.
+
+## Later
+
+- Long-term memory (editable file of facts about the user)
+- Live2D renderer
+- Voice: local Whisper STT, pluggable TTS, lip-sync to the `talking` state
+- More providers (Gemini, ...)
+- Decide licence before making the repo public
