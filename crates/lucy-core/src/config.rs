@@ -19,6 +19,8 @@ pub struct Config {
     pub remote: RemoteSettings,
     #[serde(default)]
     pub sprite: SpriteSettings,
+    #[serde(default)]
+    pub user: UserSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,6 +94,14 @@ impl Default for RemoteSettings {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UserSettings {
+    /// What Lucy calls you.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SpriteSettings {
@@ -159,6 +169,7 @@ impl Config {
             profiles: BTreeMap::from([(name, profile)]),
             remote: RemoteSettings::default(),
             sprite: SpriteSettings::default(),
+            user: UserSettings::default(),
         }
     }
 

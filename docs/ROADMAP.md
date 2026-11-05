@@ -16,7 +16,9 @@ Built test-first against the `mock` provider.
    tests. Qwen preset in the wizard. *Fixtures are hand-written from the documented formats until
    real captures replace them (`cargo run -p lucy-providers --example capture`).*
 4. ✅ **Sessions** — SQLite store; create, append, list, load (resume), rename, delete, ID-prefix lookup.
-5. **Persona** — load `persona/<name>.md` as the system prompt; `/plain` toggle.
+5. ✅ **Persona** — built-in personas plus user overrides in `<config dir>/lucy/personas/`; system
+   prompt with voice/plain blocks and live context (date, machine, name, model). `/plain` command
+   itself lands with the CLI (step 7).
 6. **Core + IPC** — core process, JSON-RPC over local socket, spawn-on-demand from the CLI.
 7. **CLI** — `lucy` interactive streaming chat with markdown rendering and `/model`, `/mode`,
    `/plain`, `/sessions`; `lucy ask "..."` one-shot (reads stdin).

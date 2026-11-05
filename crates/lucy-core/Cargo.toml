@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 lucy-protocol.workspace = true
 lucy-providers.workspace = true
+chrono.workspace = true
 dirs.workspace = true
 serde.workspace = true
 thiserror.workspace = true

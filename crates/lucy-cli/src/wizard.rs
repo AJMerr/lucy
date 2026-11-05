@@ -99,7 +99,11 @@ pub fn run(prompter: &mut impl Prompter) -> Result<Config> {
     };
 
     let name = prompter.input("Profile name", Some(preset.profile_name))?;
-    Ok(Config::with_profile(name, profile))
+    let mut config = Config::with_profile(name, profile);
+
+    let user_name = prompter.input("What should Lucy call you? (leave empty to skip)", Some(""))?;
+    config.user.name = Some(user_name.trim().to_owned()).filter(|n| !n.is_empty());
+    Ok(config)
 }
 
 #[cfg(test)]
@@ -157,7 +161,7 @@ mod tests {
 
     #[test]
     fn accepting_every_default_sets_up_local_qwen() {
-        let config = run_scripted([Answer::Enter, Answer::Enter, Answer::Enter]);
+        let config = run_scripted([Answer::Enter, Answer::Enter, Answer::Enter, Answer::Enter]);
 
         assert_eq!(
             config,
@@ -203,7 +207,12 @@ mod tests {
         ];
 
         for (preset, name, provider, base_url, model, key_name) in cases {
-            let config = run_scripted([Answer::Pick(preset), Answer::Enter, Answer::Enter]);
+            let config = run_scripted([
+                Answer::Pick(preset),
+                Answer::Enter,
+                Answer::Enter,
+                Answer::Enter,
+            ]);
             assert_eq!(
                 config,
                 Config::with_profile(
@@ -226,6 +235,7 @@ mod tests {
             Answer::Pick("Anthropic"),
             Answer::Type("claude-opus-5-5"),
             Answer::Type("opus"),
+            Answer::Enter,
         ]);
 
         assert_eq!(config.defaults.profile, "opus");
@@ -240,6 +250,7 @@ mod tests {
             Answer::Type("llama-3.3-70b"),
             Answer::Enter,
             Answer::Type("homelab"),
+            Answer::Enter,
         ]);
 
         assert_eq!(
@@ -254,5 +265,19 @@ mod tests {
                 },
             )
         );
+    }
+
+    #[test]
+    fn name_is_asked_last_and_optional() {
+        let named = run_scripted([
+            Answer::Enter,
+            Answer::Enter,
+            Answer::Enter,
+            Answer::Type("Sam"),
+        ]);
+        assert_eq!(named.user.name.as_deref(), Some("Sam"));
+
+        let unnamed = run_scripted([Answer::Enter, Answer::Enter, Answer::Enter, Answer::Enter]);
+        assert_eq!(unnamed.user.name, None);
     }
 }

@@ -54,3 +54,8 @@ bind = "127.0.0.1:7077"         # LAN/Tailscale binding is an explicit opt-in
 pack = "placeholder"            # looked up in <data dir>/lucy/packs/, then bundled packs
 scale = 1.0
 bubble_timeout_secs = 12
+
+# --- You ----------------------------------------------------------------------------------
+
+[user]
+name = "Sam"                    # optional: what Lucy calls you

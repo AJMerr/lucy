@@ -129,3 +129,11 @@ fn load_reports_the_file_path_on_invalid_config() {
     let err = Config::load(&path).unwrap_err().to_string();
     assert!(err.contains(&path.display().to_string()), "{err}");
 }
+
+#[test]
+fn user_name_is_optional() {
+    assert_eq!(Config::from_toml_str(MINIMAL).unwrap().user.name, None);
+
+    let named = Config::from_toml_str(&format!("{MINIMAL}\n[user]\nname = \"Sam\"\n")).unwrap();
+    assert_eq!(named.user.name.as_deref(), Some("Sam"));
+}
