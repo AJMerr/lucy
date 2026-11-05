@@ -10,11 +10,16 @@ use async_trait::async_trait;
 use futures::Stream;
 use lucy_protocol::Message;
 
+pub mod anthropic;
+mod http;
 pub mod mock;
+pub mod openai_compat;
+mod sse;
+#[cfg(feature = "testing")]
+pub mod testing;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChatRequest {
-    pub model: String,
     pub messages: Vec<Message>,
 }
 
@@ -29,10 +34,17 @@ pub enum StreamEvent {
 pub enum ProviderError {
     #[error("authentication failed: {0}")]
     Auth(String),
-    #[error("request failed: {0}")]
+    /// Rejected; retrying unchanged won't help (bad model name, invalid input, ...).
+    #[error("request rejected: {0}")]
     Request(String),
+    /// Temporary: rate limited, overloaded, server error, or network failure. Worth retrying.
+    #[error("provider unavailable: {0}")]
+    Unavailable(String),
     #[error("provider returned an unexpected response: {0}")]
     Protocol(String),
+    /// The model declined to answer (e.g. a safety refusal).
+    #[error("the model declined to answer: {0}")]
+    Refused(String),
 }
 
 pub type EventStream = Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderError>> + Send>>;

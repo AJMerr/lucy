@@ -63,7 +63,6 @@ mod tests {
 
     fn request(text: &str) -> ChatRequest {
         ChatRequest {
-            model: "mock".into(),
             messages: vec![Message::new(Role::User, text)],
         }
     }

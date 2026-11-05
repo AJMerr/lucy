@@ -5,6 +5,7 @@
 //! See `docs/ROADMAP.md` for what lands in each milestone.
 
 pub mod config;
+pub mod provider;
 pub mod secrets;
 
 pub use lucy_protocol as protocol;

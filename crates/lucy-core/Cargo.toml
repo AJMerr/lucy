@@ -17,3 +17,6 @@ keyring.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+lucy-providers = { workspace = true, features = ["testing"] }
+futures.workspace = true
+tokio.workspace = true

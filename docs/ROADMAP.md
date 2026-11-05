@@ -12,8 +12,9 @@ Built test-first against the `mock` provider.
 1. ✅ **Config** — load `config.toml` (profiles, defaults, agent settings) from the platform config
    dir; first-run wizard writes it.
 2. ✅ **Secrets** — keyring storage, `LUCY_KEY_*` env override, `lucy auth set|remove|status`.
-3. **Providers** — `openai_compat` (streaming) and `anthropic` (streaming), with recorded-fixture
-   tests. Qwen preset in the wizard.
+3. ✅ **Providers** — `openai_compat` (streaming) and `anthropic` (streaming), with recorded-fixture
+   tests. Qwen preset in the wizard. *Fixtures are hand-written from the documented formats until
+   real captures replace them (`cargo run -p lucy-providers --example capture`).*
 4. **Sessions** — SQLite store; create, list, resume.
 5. **Persona** — load `persona/<name>.md` as the system prompt; `/plain` toggle.
 6. **Core + IPC** — core process, JSON-RPC over local socket, spawn-on-demand from the CLI.
