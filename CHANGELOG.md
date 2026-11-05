@@ -35,9 +35,8 @@ Anthropic model, talks in Lucy's voice, and remembers your conversations.
 
 ### Known limitations
 
-- **Windows is not yet verified end to end.** CI builds and runs most tests on Windows, but the
-  test where `lucy` starts the background core still fails there and is under investigation.
-  Linux and macOS pass.
+- **Tested day to day on Linux only.** Every test, including starting the background core, passes
+  in CI on Linux, macOS and Windows. Interactive use has so far only happened on NixOS.
 - **No tools yet.** Lucy can't read files, run commands or browse; that's next (MCP tools, step 8).
   `/mode agent` is a placeholder.
 - **Some settings reset with the core.** Per-chat `/model` and `/plain` choices last until the core
@@ -45,11 +44,13 @@ Anthropic model, talks in Lucy's voice, and remembers your conversations.
 - **Short Ollama context.** Ollama's default window is 4,096 tokens, which long chats outgrow. Raise
   it with `OLLAMA_CONTEXT_LENGTH` (or `services.ollama.environmentVariables` on NixOS).
 - **Restart the core after upgrading.** A core started by an older build keeps running until idle.
-  Restart it with `pkill -f "lucy core run"`.
+  Restart it with `pkill -f "lucy core run"` (on Windows, end the `lucy.exe` process running
+  `core run`).
 - **No desktop sprite or voice yet.**
 
 ### Under the hood
 
-Rust workspace with five crates (protocol, providers, core, client, CLI). It has 106 automated tests (plus one opt-in test against the real OS keyring),
-including fake model servers that stream in tiny chunks and a real recorded Qwen stream. CI runs
-on Linux, macOS and Windows. The design decisions are in `docs/adr/0001`–`0007`.
+Rust workspace with five crates (protocol, providers, core, client, CLI). It has 106 automated
+tests, plus one opt-in test against the real OS keyring. They include fake model servers that
+stream in tiny chunks and a real recorded Qwen stream. CI runs on Linux, macOS and Windows. The
+design decisions are in `docs/adr/0001`–`0007`.
