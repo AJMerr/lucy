@@ -186,3 +186,25 @@ async fn unreachable_server_is_unavailable_and_names_the_url() {
         "{err:?}"
     );
 }
+
+/// A real stream recorded from Ollama + qwen3:14b with the `capture` example
+/// (prompt: "Say hello in exactly five words."). ~800 events, mostly reasoning.
+#[tokio::test]
+async fn real_ollama_qwen3_capture_yields_only_the_answer() {
+    let capture = include_str!("fixtures/openai_compat/captured_ollama_qwen3.sse");
+    let server = FakeServer::start([FakeResponse::sse(capture).chunk_size(4096)]).await;
+
+    let (events, err) = collect(&provider(&server, None)).await;
+
+    assert!(err.is_none(), "{err:?}");
+    assert_eq!(events.last(), Some(&StreamEvent::Done));
+    let text: String = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::TextDelta(text) => Some(text.as_str()),
+            StreamEvent::Done => None,
+        })
+        .collect();
+    // Expected value extracted independently with jq from the capture's `content` fields.
+    assert_eq!(text, "Hello, how are you doing?");
+}

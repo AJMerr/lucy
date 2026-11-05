@@ -22,15 +22,20 @@ pub struct FakeResponse {
     status: u16,
     content_type: &'static str,
     body: Vec<u8>,
+    chunk_size: usize,
 }
 
 impl FakeResponse {
+    /// Small enough that most events straddle two reads.
+    const DEFAULT_CHUNK: usize = 7;
+
     /// A 200 `text/event-stream` response.
     pub fn sse(body: impl Into<Vec<u8>>) -> Self {
         Self {
             status: 200,
             content_type: "text/event-stream",
             body: body.into(),
+            chunk_size: Self::DEFAULT_CHUNK,
         }
     }
 
@@ -39,7 +44,14 @@ impl FakeResponse {
             status,
             content_type: "application/json",
             body: body.into(),
+            chunk_size: Self::DEFAULT_CHUNK,
         }
+    }
+
+    /// Write the body in pieces of `size` bytes (large captures are slow at the default).
+    pub fn chunk_size(mut self, size: usize) -> Self {
+        self.chunk_size = size;
+        self
     }
 }
 
@@ -49,8 +61,6 @@ pub struct FakeServer {
 }
 
 impl FakeServer {
-    const CHUNK: usize = 7;
-
     /// Serve `responses` in order, one per incoming request.
     pub async fn start(responses: impl IntoIterator<Item = FakeResponse>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -129,7 +139,7 @@ async fn handle(
         response.status, response.content_type
     );
     socket.write_all(head.as_bytes()).await.unwrap();
-    for chunk in response.body.chunks(FakeServer::CHUNK) {
+    for chunk in response.body.chunks(response.chunk_size) {
         if socket.write_all(chunk).await.is_err() {
             break;
         }

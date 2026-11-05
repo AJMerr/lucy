@@ -7,6 +7,7 @@
 pub mod config;
 pub mod provider;
 pub mod secrets;
+pub mod sessions;
 
 pub use lucy_protocol as protocol;
 pub use lucy_providers as providers;
