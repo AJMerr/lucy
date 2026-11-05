@@ -1,0 +1,2 @@
+# Recorded HTTP streams are byte-exact fixtures; never convert their line endings.
+*.sse -text
