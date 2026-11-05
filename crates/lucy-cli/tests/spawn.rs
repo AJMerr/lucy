@@ -82,10 +82,15 @@ impl Env {
     }
 
     async fn core_pid(&self) -> u32 {
-        Client::connect(&self.endpoint(), "test")
-            .await
-            .unwrap()
-            .core_pid()
+        match Client::connect(&self.endpoint(), "test").await {
+            Ok(client) => client.core_pid(),
+            Err(err) => panic!("{err}\n--- core.log ---\n{}", self.core_log()),
+        }
+    }
+
+    fn core_log(&self) -> String {
+        std::fs::read_to_string(self.dir.path().join("data/core.log"))
+            .unwrap_or_else(|err| format!("(no log: {err})"))
     }
 
     /// Wait without connecting: every connection counts as activity and would keep the
@@ -106,7 +111,10 @@ impl Env {
                 }
             }
         }
-        panic!("core never exited after going idle");
+        panic!(
+            "core never exited after going idle\n--- core.log ---\n{}",
+            self.core_log()
+        );
     }
 }
 

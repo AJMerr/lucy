@@ -14,6 +14,7 @@ pub mod method {
     pub const SUBSCRIBE: &str = "subscribe";
     pub const CHAT_SEND: &str = "chat.send";
     pub const CHAT_CANCEL: &str = "chat.cancel";
+    pub const SESSIONS_CREATE: &str = "sessions.create";
     pub const SESSIONS_LIST: &str = "sessions.list";
     pub const SESSIONS_LOAD: &str = "sessions.load";
     pub const SESSIONS_RENAME: &str = "sessions.rename";

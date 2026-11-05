@@ -27,10 +27,35 @@ pub fn run() -> Result<()> {
         secrets: Secrets::new(Box::new(OsKeyring), Box::new(|var| std::env::var(var).ok())),
         idle_timeout,
     };
-    match tokio::runtime::Runtime::new()?.block_on(serve(options)) {
-        Ok(()) | Err(CoreError::AlreadyRunning(_)) => Ok(()),
-        Err(err) => Err(err.into()),
+    let endpoint = options.endpoint.to_string();
+    log(&format!(
+        "lucy core {} (pid {}) starting at {endpoint}",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id()
+    ));
+    let outcome = tokio::runtime::Runtime::new()?.block_on(serve(options));
+    match outcome {
+        Ok(()) => {
+            log("exiting: idle");
+            Ok(())
+        }
+        Err(CoreError::AlreadyRunning(_)) => {
+            log("exiting: another core is already running");
+            Ok(())
+        }
+        Err(err) => {
+            log(&format!("exiting: {err}"));
+            Err(err.into())
+        }
     }
+}
+
+/// One line in the core's log (its stderr, which `spawn` points at `core.log`).
+fn log(message: &str) {
+    eprintln!(
+        "[{}] {message}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    );
 }
 
 /// Connect to the core, starting it in the background if it isn't running.

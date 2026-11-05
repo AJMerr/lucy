@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[lib]
+name = "lucy_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "lucy"
 path = "src/main.rs"
@@ -14,12 +18,17 @@ path = "src/main.rs"
 lucy-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+chrono.workspace = true
 dialoguer.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rustyline.workspace = true
+syntect.workspace = true
+terminal_size.workspace = true
 lucy-client.workspace = true
 lucy-protocol.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
 lucy-providers = { workspace = true, features = ["testing"] }
-serde_json.workspace = true
 tempfile.workspace = true

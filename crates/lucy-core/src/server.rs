@@ -325,6 +325,10 @@ async fn handle(
             let id = store.resolve(&p.session_id).map_err(app)?;
             result(session_dto(store.load(&id).map_err(app)?))
         }
+        method::SESSIONS_CREATE => {
+            let id = core.store.lock().unwrap().create().map_err(app)?;
+            result(id.to_string())
+        }
         method::SESSIONS_LIST => {
             let sessions = core.store.lock().unwrap().list().map_err(app)?;
             result(sessions.into_iter().map(summary_dto).collect::<Vec<_>>())

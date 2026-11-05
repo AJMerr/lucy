@@ -666,3 +666,24 @@ async fn a_reply_in_progress_keeps_the_core_awake() {
 
     assert!(!harness.core.is_finished(), "exited mid-reply");
 }
+
+#[tokio::test]
+async fn sessions_create_makes_an_empty_session_that_settings_can_target() {
+    let harness = Harness::start(vec![]).await;
+    let client = harness.client().await;
+
+    let id: String = client.call("sessions.create", json!({})).await.unwrap();
+
+    assert_eq!(load(&client, &id).await.messages.len(), 0);
+    let settings: SessionSettings = client
+        .call(
+            "session.set_plain",
+            SetPlainParams {
+                session_id: id,
+                plain: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(settings.plain);
+}

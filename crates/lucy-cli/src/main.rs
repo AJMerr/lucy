@@ -8,14 +8,19 @@ use dialoguer::{Confirm, Input, Password, Select};
 use lucy_core::config::{self, Config};
 use lucy_core::secrets::{self, KeySource, OsKeyring, SecretStore, Secrets, SecretsError};
 
-mod ask;
-mod core_process;
-mod wizard;
+use lucy_cli::chat::Start;
+use lucy_cli::{ask, core_process, terminal, wizard};
 
 /// Lucy: a model-agnostic personal assistant.
 #[derive(Parser)]
 #[command(name = "lucy", version, about)]
 struct Cli {
+    /// Continue your most recent chat.
+    #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
+    continue_latest: bool,
+    /// Resume a saved chat by ID (any unique prefix).
+    #[arg(short, long, value_name = "ID")]
+    resume: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -94,7 +99,12 @@ fn main() -> Result<()> {
                 }
                 init_config(&path)?;
             }
-            bail!("interactive chat is not implemented yet (milestone 1)")
+            let start = match (cli.continue_latest, cli.resume) {
+                (true, _) => Start::Continue,
+                (_, Some(id)) => Start::Resume(id),
+                _ => Start::New,
+            };
+            terminal::run(start)
         }
         Some(Command::Ask { prompt }) => {
             let path = config_path()?;
