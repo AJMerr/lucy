@@ -9,7 +9,7 @@ Cargo workspace, Nix dev shell, CI on Linux/macOS/Windows, ADRs, persona, placeh
 
 Built test-first against the `mock` provider.
 
-1. **Config** — load `config.toml` (profiles, defaults, agent settings) from the platform config
+1. ✅ **Config** — load `config.toml` (profiles, defaults, agent settings) from the platform config
    dir; first-run wizard writes it.
 2. **Secrets** — keyring storage, `LUCY_KEY_*` env override, `lucy auth set|remove`.
 3. **Providers** — `openai_compat` (streaming) and `anthropic` (streaming), with recorded-fixture

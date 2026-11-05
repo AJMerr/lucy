@@ -29,17 +29,21 @@ impl Message {
 }
 
 /// How much freedom Lucy has to run tools without asking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
     /// Chat plus tools; risky actions require confirmation.
+    #[default]
     Assist,
     /// Autonomous multi-step tasks, governed by an [`AgentLevel`].
     Agent,
 }
 
 /// Agent-mode freedom levels. See `docs/adr/0004-modes-and-permissions.md`.
+///
+/// Serialized as its number (0–3).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
 pub enum AgentLevel {
     /// Confirm every tool call.
     Supervised = 0,
@@ -50,6 +54,26 @@ pub enum AgentLevel {
     Workspace = 2,
     /// Never confirm; only step and cost caps apply.
     Unrestricted = 3,
+}
+
+impl TryFrom<u8> for AgentLevel {
+    type Error = String;
+
+    fn try_from(level: u8) -> Result<Self, Self::Error> {
+        match level {
+            0 => Ok(Self::Supervised),
+            1 => Ok(Self::Guarded),
+            2 => Ok(Self::Workspace),
+            3 => Ok(Self::Unrestricted),
+            other => Err(format!("agent level must be 0–3, got {other}")),
+        }
+    }
+}
+
+impl From<AgentLevel> for u8 {
+    fn from(level: AgentLevel) -> Self {
+        level as u8
+    }
 }
 
 #[cfg(test)]

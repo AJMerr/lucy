@@ -14,3 +14,4 @@ path = "src/main.rs"
 lucy-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+dialoguer.workspace = true

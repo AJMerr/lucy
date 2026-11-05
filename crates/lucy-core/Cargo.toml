@@ -9,3 +9,10 @@ publish.workspace = true
 [dependencies]
 lucy-protocol.workspace = true
 lucy-providers.workspace = true
+dirs.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
