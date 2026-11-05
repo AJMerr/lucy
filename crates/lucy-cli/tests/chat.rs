@@ -87,19 +87,23 @@ impl Harness {
 
     /// Run a chat session over `lines`; returns the transcript (no colour).
     async fn chat(&self, start: Start, lines: &[&str]) -> String {
-        self.chat_with_interrupts(start, lines, mpsc::channel(1).1)
-            .await
+        self.chat_interrupting_at(start, lines, None).await
     }
 
-    async fn chat_with_interrupts(
+    /// Like `chat`, pressing Ctrl+C the moment the transcript contains `trigger`.
+    async fn chat_interrupting_at(
         &self,
         start: Start,
         lines: &[&str],
-        mut interrupts: mpsc::Receiver<()>,
+        trigger: Option<&str>,
     ) -> String {
         let mut client = Client::connect(&self.endpoint, "test").await.unwrap();
         let mut input = Scripted(lines.iter().map(|l| l.to_string()).collect());
-        let mut out = Vec::new();
+        let (tx, mut interrupts) = mpsc::channel(1);
+        let mut out = Tripwire {
+            transcript: Vec::new(),
+            trigger: trigger.map(|t| (t.to_owned(), tx)),
+        };
         run_chat(
             &mut client,
             &mut input,
@@ -113,7 +117,30 @@ impl Harness {
         )
         .await
         .unwrap();
-        String::from_utf8(out).unwrap()
+        String::from_utf8(out.transcript).unwrap()
+    }
+}
+
+/// Collects output and sends an interrupt once the trigger text has been written.
+struct Tripwire {
+    transcript: Vec<u8>,
+    trigger: Option<(String, mpsc::Sender<()>)>,
+}
+
+impl std::io::Write for Tripwire {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.transcript.extend_from_slice(data);
+        if let Some((text, _)) = &self.trigger
+            && String::from_utf8_lossy(&self.transcript).contains(text.as_str())
+            && let Some((_, tx)) = self.trigger.take()
+        {
+            let _ = tx.try_send(());
+        }
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -234,14 +261,12 @@ async fn ctrl_c_stops_the_reply_and_the_chat_goes_on() {
         vec![],
     )
     .await;
-    let (tx, rx) = mpsc::channel(1);
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        tx.send(()).await.unwrap();
-    });
-
     let transcript = h
-        .chat_with_interrupts(Start::New, &["story?", "never mind"], rx)
+        .chat_interrupting_at(
+            Start::New,
+            &["story?", "never mind"],
+            Some("Once upon a time"),
+        )
         .await;
 
     assert!(transcript.contains("Once upon a time"), "{transcript}");

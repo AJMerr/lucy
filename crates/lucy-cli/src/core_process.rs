@@ -103,10 +103,32 @@ fn spawn() -> std::io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        stop_inheriting_std_handles();
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
     }
     command.spawn()?;
     Ok(())
+}
+
+/// Windows hands every inheritable handle to child processes. Our stdin/stdout/stderr are
+/// inheritable (they came from our parent), so without this the long-lived core would hold
+/// them open: `lucy ask | other` would then wait for the core to exit instead of for us.
+#[cfg(windows)]
+fn stop_inheriting_std_handles() {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+
+    let handles = [
+        std::io::stdin().as_raw_handle(),
+        std::io::stdout().as_raw_handle(),
+        std::io::stderr().as_raw_handle(),
+    ];
+    for handle in handles {
+        if !handle.is_null() {
+            // SAFETY: a handle we own for our whole lifetime; only its inherit flag changes.
+            unsafe { SetHandleInformation(handle as _, HANDLE_FLAG_INHERIT, 0) };
+        }
+    }
 }
