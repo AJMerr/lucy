@@ -53,7 +53,12 @@ impl Harness {
             ),
         )
         .unwrap();
-        let endpoint = Endpoint::Path(dir.path().join("run/core.sock"));
+        let endpoint = if cfg!(windows) {
+            let unique = dir.path().file_name().unwrap().to_string_lossy();
+            Endpoint::Pipe(format!("lucy-test-{unique}"))
+        } else {
+            Endpoint::Path(dir.path().join("run/core.sock"))
+        };
         let options = CoreOptions {
             endpoint: endpoint.clone(),
             config_path,
@@ -638,10 +643,9 @@ async fn core_exits_once_idle_and_removes_its_socket() {
     drop(client);
     let exited = tokio::time::timeout(Duration::from_secs(3), harness.core).await;
     assert!(exited.is_ok(), "core did not exit after going idle");
-    let Endpoint::Path(socket) = &harness.endpoint else {
-        unreachable!()
-    };
-    assert!(!socket.exists(), "socket file left behind");
+    if let Endpoint::Path(socket) = &harness.endpoint {
+        assert!(!socket.exists(), "socket file left behind");
+    }
 }
 
 #[tokio::test]

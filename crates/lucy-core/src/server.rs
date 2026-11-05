@@ -130,14 +130,13 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         activity: Activity::default(),
     });
 
-    loop {
-        let changed = core.activity.changed.notified();
-        tokio::pin!(changed);
-        changed.as_mut().enable();
-        let idle = core.activity.is_idle();
-        tokio::select! {
-            accepted = listener.accept() => {
-                if let Ok(stream) = accepted {
+    // Accept in a task of its own: cancelling a pending accept would close the waiting pipe
+    // instance on Windows, briefly leaving nothing to connect to.
+    let acceptor = {
+        let core = Arc::clone(&core);
+        tokio::spawn(async move {
+            loop {
+                if let Ok(stream) = listener.accept().await {
                     core.activity.add(&core.activity.connections, 1);
                     let core = Arc::clone(&core);
                     tokio::spawn(async move {
@@ -146,10 +145,23 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
                     });
                 }
             }
+        })
+    };
+
+    loop {
+        let changed = core.activity.changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        let idle = core.activity.is_idle();
+        tokio::select! {
             _ = &mut changed => {}
-            _ = tokio::time::sleep(idle_timeout), if idle => return Ok(()),
+            _ = tokio::time::sleep(idle_timeout), if idle => break,
         }
     }
+    acceptor.abort();
+    // Dropping the listener (inside the aborted task) removes the socket file.
+    let _ = acceptor.await;
+    Ok(())
 }
 
 async fn bind(endpoint: &Endpoint) -> Result<Listener, CoreError> {
