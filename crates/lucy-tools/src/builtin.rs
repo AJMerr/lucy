@@ -41,7 +41,7 @@ pub struct BuiltinOptions {
 /// Start a built-in server in this process and connect a client to it.
 pub async fn connect(
     options: BuiltinOptions,
-) -> Result<RunningService<RoleClient, ()>, ClientInitializeError> {
+) -> Result<RunningService<RoleClient, ()>, Box<ClientInitializeError>> {
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     let server = Builtin::new(options);
     tokio::spawn(async move {
@@ -49,7 +49,7 @@ pub async fn connect(
             let _ = running.waiting().await;
         }
     });
-    ().serve(client_io).await
+    ().serve(client_io).await.map_err(Box::new)
 }
 
 #[derive(Clone)]
