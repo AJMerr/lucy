@@ -36,12 +36,13 @@ keyring = "4.2"
 libc = "0.2"
 regex = "1"
 reqwest = { version = "0.13", features = ["json", "stream"] }
-rmcp = { version = "3.9", features = ["client", "server", "macros", "schemars"] }
+rmcp = { version = "3.9", features = ["client", "server", "macros", "schemars", "transport-io", "transport-child-process", "which-command"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 rustyline = { version = "19", features = ["derive"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+shell-words = "1"
 similar = "3"
 syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
 tempfile = "3"
@@ -50,5 +51,6 @@ thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "io-util", "signal"] }
 tokio-util = "0.7"
 toml = "1.2"
+toml_edit = "0.25"
 ulid = "3"
 windows-sys = { version = "0.61", features = ["Win32_Foundation"] }

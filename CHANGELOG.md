@@ -23,6 +23,21 @@
 - Lucy's persona now says to use tools instead of guessing, and never to claim she ran or read
   something without a tool result.
 
+### MCP servers (step 8b)
+
+- **Use any MCP server.** `lucy mcp add github --key GITHUB_PERSONAL_ACCESS_TOKEN=github -- npx
+  -y @modelcontextprotocol/server-github` adds a server, or run `lucy mcp add` alone to answer
+  a few questions. It keeps your config's comments, then starts the server once and lists its
+  tools. `lucy mcp list` shows which servers start, and `lucy mcp remove` takes one out.
+- Servers start the first time a chat needs tools, stay up for every chat, and restart on next
+  use if they crash or their config changes. Removed servers stop on the next message.
+- **Tokens stay in the keyring:** `env_keys = { VAR = "keyname" }` fills a variable from
+  `lucy auth set keyname` (or `LUCY_KEY_KEYNAME`). `lucy auth status` lists those keys too.
+- Their tools appear as `<server>__<tool>` and follow the same approval rules as the built-ins.
+  `[tools.rules]` can set a whole server to `ask` or `deny`.
+- `/tools` and `lucy mcp list` show servers that failed to start, and why.
+- `lucy mcp serve` offers Lucy's built-in tools to other MCP clients over stdio.
+
 ### Upgrading
 
 - **Protocol v2.** Stop the old core after installing (`pkill -f "lucy core run"`); the new

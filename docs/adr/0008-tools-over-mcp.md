@@ -1,6 +1,6 @@
 # 8. Tools over MCP, with built-ins and core-enforced approvals
 
-Date: 2026-11-06 · Status: Accepted (8a built; 8b and 8c planned)
+Date: 2026-11-06 · Status: Accepted (8a and 8b built; 8c planned)
 
 ## Context
 
@@ -60,10 +60,27 @@ and assemble streamed tool calls (OpenAI fragments by index; Anthropic `input_js
 whole `ToolCall` events. Garbled argument JSON is passed on as a string so the core can tell
 the model. Profiles can opt out with `tools = false`.
 
+**External servers (8b).** `[mcp.servers.<name>]` gives a command, arguments, plain `env`,
+`env_keys` (variable → keyring entry, resolved like model keys, so `LUCY_KEY_*` overrides),
+an optional `cwd` (default home) and `enabled`. The core's `McpHost` starts each server the
+first time a chat needs tools (all of them in parallel, 60 s to finish the handshake), shares
+it across chats, and restarts it on next use if it died or its config changed. Servers
+removed from the config are stopped, and all are stopped when the core exits. A server that
+won't start is logged and listed by `tools.list` (`/tools`, `lucy mcp list`); the chat goes on
+without it. Commands are found on `PATH` the way a shell would (`npx.cmd` on Windows), and
+servers' stderr goes to the core log.
+
+- Tools are always exposed as `<server>__<tool>` (sanitised to `[A-Za-z0-9_-]`, at most 64
+  characters), so names never change when another server is added. Built-ins keep short names.
+- `[tools.rules]` keys match a tool's exposed name first, then its server's name.
+- Relative paths in a server's read-only calls are checked against that server's folder.
+- `lucy mcp add` takes flags and asks for anything missing (name, command, then keyring
+  variables). It edits config.toml with `toml_edit`, keeping comments, refuses edits that
+  wouldn't load, then starts the server once and lists its tools. `lucy mcp serve` offers the
+  built-ins to other MCP clients over stdio.
+
 ## Planned
 
-- **8b:** external MCP servers started as child processes, under `[mcp.servers.<name>]`, plus
-  `lucy mcp add|list|remove`. Server tools are prefixed if names collide.
 - **8c:** remote MCP servers over streamable HTTP, with an API key from the keyring, or OAuth
   via `lucy mcp login <server>`. That opens a browser, catches the redirect on a temporary
   localhost port, and keeps the tokens in the keyring, refreshing them automatically.

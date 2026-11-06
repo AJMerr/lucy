@@ -1,6 +1,6 @@
 //! The core's local-socket server: JSON-RPC over newline-delimited JSON (ADR 0003).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -14,8 +14,8 @@ use lucy_client::Endpoint;
 use lucy_protocol::rpc::{
     self, ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event,
     HelloParams, HelloResult, Notification, PROTOCOL_VERSION, ProfileInfo, RenameParams, Request,
-    ResolveParams, Response, RpcError, SessionParams, SessionSettings, SetPlainParams,
-    SetProfileParams, ToolsListParams, TurnOutcome, code, method,
+    ResolveParams, Response, RpcError, ServerProblem, SessionParams, SessionSettings,
+    SetPlainParams, SetProfileParams, ToolsList, ToolsListParams, TurnOutcome, code, method,
 };
 use lucy_protocol::{Message, Role, ToolCall};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent};
@@ -26,7 +26,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{Config, ProviderKind, ToolSettings};
+use crate::config::{Config, McpServer, ProviderKind, ToolSettings};
+use crate::mcp::McpHost;
 use crate::persona::{Personas, PromptContext, build_system_prompt, detect_machine};
 use crate::provider::build_provider;
 
@@ -102,6 +103,8 @@ struct Core {
     activity: Activity,
     /// Tool calls waiting for the user, by (session, call ID).
     approvals: Mutex<HashMap<(String, String), oneshot::Sender<Decision>>>,
+    /// External MCP servers, shared by every chat.
+    mcp: McpHost,
 }
 
 #[derive(Default, Clone)]
@@ -137,6 +140,7 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         events,
         activity: Activity::default(),
         approvals: Mutex::default(),
+        mcp: McpHost::new(),
     });
 
     // Accept in a task of its own: cancelling a pending accept would close the waiting pipe
@@ -167,6 +171,7 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
             _ = tokio::time::sleep(idle_timeout), if idle => break,
         }
     }
+    core.mcp.shutdown().await;
     acceptor.abort();
     // Dropping the listener (inside the aborted task) removes the socket file.
     let _ = acceptor.await;
@@ -463,10 +468,22 @@ async fn handle(
                 None => HashSet::new(),
             };
             let cwd = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
-            let toolbox = ToolBox::open(&config.tools, cwd).await.map_err(app)?;
-            let infos = toolbox.infos(&allowed);
+            let (external, failed) = core
+                .mcp
+                .servers(&config.mcp.servers, &core.options.secrets)
+                .await;
+            let toolbox = ToolBox::open(&config.tools, cwd, external)
+                .await
+                .map_err(app)?;
+            let tools = toolbox.infos(&allowed);
             toolbox.close().await;
-            result(infos)
+            result(ToolsList {
+                tools,
+                problems: failed
+                    .into_iter()
+                    .map(|(server, error)| ServerProblem { server, error })
+                    .collect(),
+            })
         }
         other => Err(RpcError::new(
             code::METHOD_NOT_FOUND,
@@ -601,7 +618,11 @@ fn chat_send(
     tokio::spawn(turn.run(Plan {
         provider,
         messages,
-        tools: profile.tools.then(|| (config.tools.clone(), cwd)),
+        tools: profile.tools.then(|| ToolPlan {
+            settings: config.tools.clone(),
+            servers: config.mcp.servers.clone(),
+            cwd,
+        }),
         cancel,
     }));
     result(ChatSendResult {
@@ -631,8 +652,15 @@ struct Plan {
     provider: Box<dyn Provider>,
     messages: Vec<Message>,
     /// Tool settings and working folder, when this profile uses tools.
-    tools: Option<(ToolSettings, PathBuf)>,
+    tools: Option<ToolPlan>,
     cancel: CancellationToken,
+}
+
+struct ToolPlan {
+    settings: ToolSettings,
+    servers: BTreeMap<String, McpServer>,
+    /// The user's working folder.
+    cwd: PathBuf,
 }
 
 impl Turn {
@@ -659,8 +687,8 @@ impl Turn {
         });
 
         let toolbox = match plan.tools {
-            Some((settings, cwd)) => match ToolBox::open(&settings, cwd).await {
-                Ok(toolbox) => Some((toolbox, settings.max_rounds)),
+            Some(plan) => match self.open_tools(&plan).await {
+                Ok(toolbox) => Some((toolbox, plan.settings.max_rounds)),
                 Err(err) => {
                     eprintln!("tools unavailable for this reply: {err}");
                     None
@@ -701,6 +729,19 @@ impl Turn {
             error,
         });
         self.core.activity.add(&self.core.activity.turns, -1);
+    }
+
+    /// The built-ins plus every configured MCP server that starts; failures are logged.
+    async fn open_tools(&self, plan: &ToolPlan) -> Result<ToolBox, String> {
+        let (external, failed) = self
+            .core
+            .mcp
+            .servers(&plan.servers, &self.core.options.secrets)
+            .await;
+        for (server, err) in failed {
+            eprintln!("MCP server `{server}` unavailable: {err}");
+        }
+        ToolBox::open(&plan.settings, plan.cwd.clone(), external).await
     }
 
     /// Ask the model, run any tools it calls, and repeat until it answers without tools.

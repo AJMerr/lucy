@@ -28,7 +28,8 @@ Built test-first against the `mock` provider.
      approvals (y / always / no); built-in tools (`read_file`, `list_dir`, `search_files`,
      `fetch_url`, `run_command`, `write_file`, `edit_file`) as an in-process MCP server;
      `/tools`, `/last`, `lucy ask --yes`.
-   - **8b** — external MCP servers started as programs; `lucy mcp add|list|remove`.
+   - ✅ **8b** — external MCP servers started as programs (shared, restarted on crash, tokens
+     from the keyring); tools named `<server>__<tool>`; `lucy mcp add|list|remove|serve`.
    - **8c** — remote MCP servers by URL, with API keys or OAuth (`lucy mcp login`).
 9. **Agent mode** — `AgentLevel` enforcement, step and cost caps.
 10. **Service** — `lucy service install|uninstall`.

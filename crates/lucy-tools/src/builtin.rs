@@ -602,3 +602,16 @@ pub fn preview(tool: &str, arguments: &Value, cwd: &Path) -> Option<String> {
     }
     Some(preview)
 }
+
+/// Serve the built-in tools over stdin/stdout, for other MCP clients (`lucy mcp serve`).
+pub async fn serve_stdio(options: BuiltinOptions) -> Result<(), String> {
+    let running = Builtin::new(options)
+        .serve(rmcp::transport::stdio())
+        .await
+        .map_err(|err| format!("MCP handshake failed: {err}"))?;
+    running
+        .waiting()
+        .await
+        .map_err(|err| format!("MCP server stopped: {err}"))?;
+    Ok(())
+}

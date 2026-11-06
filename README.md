@@ -5,8 +5,8 @@ today; later she'll live on your desktop as an animated sprite with speech bubbl
 toggle on and off.
 
 > **Status:** v0.1.0 plus tools (unreleased): terminal chat with any OpenAI-compatible or
-> Anthropic model, now able to read, search, run and edit with your approval. External MCP
-> servers, agent mode and the desktop sprite are next. See [release notes](CHANGELOG.md) and the
+> Anthropic model, now able to read, search, run and edit with your approval, and to use any
+> MCP server you add. Remote MCP servers, agent mode and the desktop sprite are next. See [release notes](CHANGELOG.md) and the
 > [roadmap](docs/ROADMAP.md).
 
 ## What works today
@@ -22,6 +22,9 @@ toggle on and off.
   commands, and write or edit files. Reads in your home folder just happen; anything that
   changes files, runs a command or goes online asks first (`y`, `a` for always this chat, `n`).
   Private paths like `~/.ssh` and `.env` files always ask.
+- **Any MCP server.** Add tool servers with `lucy mcp add` (GitHub, databases, browsers…).
+  Lucy starts them when needed, fills their tokens from your keyring, and applies the same
+  approval rules.
 - **Saved conversations.** Every chat is stored locally in SQLite. Continue the last one with
   `lucy -c`, or resume any by ID prefix.
 - **Keys kept out of files.** API keys live in your OS keyring, with environment-variable
@@ -76,7 +79,7 @@ In the chat:
 Keys: Tab completes commands and profile names, Alt+Enter (or a trailing `\`) starts a new line,
 Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a literal `/`.
 
-Other commands: `lucy config path`, `lucy auth set|remove|status`.
+Other commands: `lucy config path`, `lucy auth set|remove|status`, `lucy mcp add|list|remove`.
 
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
@@ -97,6 +100,27 @@ that file. Instead:
 Tools are set up under `[tools]`: turn the built-ins off, change the private-path list, or
 set a tool to `auto`, `ask` or `deny`. Add `tools = false` to a profile whose model can't
 call tools. See [ADR 0008](docs/adr/0008-tools-over-mcp.md).
+
+### MCP servers
+
+```sh
+lucy auth set github                     # store the token in the keyring
+lucy mcp add github --key GITHUB_PERSONAL_ACCESS_TOKEN=github \
+  -- npx -y @modelcontextprotocol/server-github
+lucy mcp add                             # or answer a few questions instead
+lucy mcp list                            # which servers start, and how many tools each has
+lucy mcp remove github
+```
+
+A server's tools show up as `<server>__<tool>` (e.g. `github__create_issue`). Servers start
+the first time a chat needs tools and keep running until the core stops; one that crashes is
+restarted on next use. Tools the server labels read-only run by themselves (with the same
+path checks as the built-ins); everything else asks. Set `github = "ask"` (or `"deny"`) under
+`[tools.rules]` to override a whole server. `lucy mcp add` keeps your config's comments and
+layout.
+
+`lucy mcp serve` works the other way round: it offers Lucy's built-in tools to any MCP client
+over stdio, working in the current folder.
 
 To change Lucy's voice, copy [`persona/lucy.md`](persona/lucy.md) to
 `~/.config/lucy/personas/lucy.md` and edit it. Text between `<!-- voice -->` markers is dropped in
@@ -124,7 +148,7 @@ plain mode.
 crates/
   lucy-protocol/   JSON-RPC messages and events shared by every side
   lucy-providers/  the Provider trait + openai_compat and anthropic streaming adapters
-  lucy-core/       the background core: config, keys, sessions, personas, tool rules, socket
+  lucy-core/       the background core: config, keys, sessions, personas, tools, MCP servers
   lucy-client/     connects front ends to the core (and starts it on demand)
   lucy-cli/        the `lucy` command: chat loop, Markdown renderer, setup wizard
   lucy-tools/      built-in tools (files, search, fetch, shell) as an in-process MCP server

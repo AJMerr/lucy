@@ -57,7 +57,22 @@ max_rounds = 10                 # tool rounds per message before Lucy must answe
 
 [tools.rules]                   # override the usual rule for a tool: "auto" | "ask" | "deny"
 # run_command = "deny"
+# github = "ask"               # every tool from the `github` MCP server
 # fetch_url = "auto"
+
+# --- External MCP servers -----------------------------------------------------------------
+# Programs Lucy starts the first time a chat needs tools, then keeps running. Their tools
+# appear as `<server>__<tool>`, and follow the same rules as the built-ins (labels decide
+# what runs by itself; [tools.rules] can name a whole server, e.g. github = "ask").
+# `lucy mcp add|list|remove` edits this section for you.
+
+[mcp.servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env_keys = { GITHUB_PERSONAL_ACCESS_TOKEN = "github" }   # from `lucy auth set github`
+# env = { GITHUB_HOST = "github.com" }                  # plain, non-secret values
+# cwd = "~/Projects"                                     # default: home
+# enabled = false                                        # keep it configured but off
 
 # --- Remote access (off by default) -------------------------------------------------------
 

@@ -5,6 +5,7 @@ pub mod chat;
 pub mod commands;
 pub mod core_process;
 pub mod markdown;
+pub mod mcp;
 pub mod terminal;
 pub mod tool_display;
 pub mod wizard;

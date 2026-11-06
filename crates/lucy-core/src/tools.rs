@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use lucy_protocol::rpc::{ToolInfo, ToolRuleInfo};
 use lucy_protocol::{Message, Role, ToolCall};
@@ -16,16 +17,23 @@ use rmcp::service::RunningService;
 use serde_json::Value;
 
 use crate::config::{ToolRule, ToolSettings};
+use crate::mcp::ExternalServer;
 
 pub const BUILTIN: &str = "builtin";
 /// Longest tool output passed to the model.
 const MAX_OUTPUT: usize = 100 * 1024;
+/// Providers accept tool names of at most 64 characters from `[a-zA-Z0-9_-]`.
+const MAX_NAME: usize = 64;
 /// Argument names treated as file paths when checking where a read-only tool looks.
 const PATH_KEYS: &[&str] = &["path", "paths", "file", "files", "dir", "directory", "root"];
 
 struct Tool {
+    /// What the model calls it: the built-in's own name, or `<server>__<tool>`.
+    name: String,
     server: String,
     def: rmcp::model::Tool,
+    /// External servers' tools; `None` for built-ins.
+    external: Option<Arc<ExternalServer>>,
 }
 
 /// What to do with one tool call.
@@ -51,8 +59,12 @@ pub struct ToolBox {
 }
 
 impl ToolBox {
-    /// Connect the tool servers for a turn working in `cwd`.
-    pub async fn open(settings: &ToolSettings, cwd: PathBuf) -> Result<Self, String> {
+    /// The tools for a turn working in `cwd`: the built-ins (if on) plus `external` servers'.
+    pub async fn open(
+        settings: &ToolSettings,
+        cwd: PathBuf,
+        external: Vec<Arc<ExternalServer>>,
+    ) -> Result<Self, String> {
         let home = dirs::home_dir();
         let private = PrivatePaths::new(&settings.private_paths, home.as_deref())
             .map_err(|err| format!("bad pattern in tools.private_paths: {err}"))?;
@@ -69,13 +81,25 @@ impl ToolBox {
                 .await
                 .map_err(|err| format!("could not list built-in tools: {err}"))?;
             tools.extend(listed.into_iter().map(|def| Tool {
+                name: def.name.to_string(),
                 server: BUILTIN.into(),
                 def,
+                external: None,
             }));
             Some(client)
         } else {
             None
         };
+        for server in external {
+            for def in server.tools() {
+                tools.push(Tool {
+                    name: exposed_name(server.name(), &def.name),
+                    server: server.name().to_owned(),
+                    def: def.clone(),
+                    external: Some(Arc::clone(&server)),
+                });
+            }
+        }
         Ok(Self {
             builtin,
             tools,
@@ -94,9 +118,9 @@ impl ToolBox {
     pub fn specs(&self) -> Vec<ToolSpec> {
         self.tools
             .iter()
-            .filter(|t| self.settings.rules.get(t.def.name.as_ref()) != Some(&ToolRule::Deny))
+            .filter(|t| self.rule(t) != Some(ToolRule::Deny))
             .map(|t| ToolSpec {
-                name: t.def.name.to_string(),
+                name: t.name.clone(),
                 description: t.def.description.as_deref().unwrap_or_default().to_owned(),
                 input_schema: Value::Object((*t.def.input_schema).clone()),
             })
@@ -107,7 +131,7 @@ impl ToolBox {
         self.tools
             .iter()
             .map(|t| ToolInfo {
-                name: t.def.name.to_string(),
+                name: t.name.clone(),
                 server: t.server.clone(),
                 description: first_sentence(t.def.description.as_deref().unwrap_or_default()),
                 rule: self.rule_info(t, allowed),
@@ -115,13 +139,21 @@ impl ToolBox {
             .collect()
     }
 
+    /// The config rule for a tool: by its own name first, then by its server's name.
+    fn rule(&self, tool: &Tool) -> Option<ToolRule> {
+        let rules = &self.settings.rules;
+        rules
+            .get(&tool.name)
+            .or_else(|| rules.get(&tool.server))
+            .copied()
+    }
+
     fn rule_info(&self, tool: &Tool, allowed: &HashSet<String>) -> ToolRuleInfo {
-        let name = tool.def.name.as_ref();
-        match self.settings.rules.get(name) {
+        match self.rule(tool) {
             Some(ToolRule::Auto) => ToolRuleInfo::Auto,
             Some(ToolRule::Ask) => ToolRuleInfo::Ask,
             Some(ToolRule::Deny) => ToolRuleInfo::Deny,
-            None if allowed.contains(name) => ToolRuleInfo::Auto,
+            None if allowed.contains(&tool.name) => ToolRuleInfo::Auto,
             None if reads_locally(tool) => ToolRuleInfo::AutoInHome,
             None => ToolRuleInfo::Ask,
         }
@@ -144,7 +176,7 @@ impl ToolBox {
             reason: reason.to_owned(),
             preview: self.preview(tool, call),
         };
-        match self.settings.rules.get(&call.name) {
+        match self.rule(tool) {
             Some(ToolRule::Deny) => {
                 return Verdict::Refuse("The user's settings don't allow this tool.".into());
             }
@@ -172,37 +204,15 @@ impl ToolBox {
         let Some(tool) = self.find(&call.name) else {
             return (format!("There is no tool named `{}`.", call.name), true);
         };
-        let client = match tool.server.as_str() {
-            BUILTIN => self.builtin.as_ref(),
-            _ => None,
+        let (output, is_error) = match (&tool.external, &self.builtin) {
+            (Some(server), _) => server
+                .call(&tool.def.name, call.arguments.clone())
+                .await
+                .unwrap_or_else(|err| (err, true)),
+            (None, Some(client)) => call_builtin(client, &tool.def.name, &call.arguments).await,
+            (None, None) => ("The built-in tools are off.".into(), true),
         };
-        let Some(client) = client else {
-            return (format!("The {} server isn't running.", tool.server), true);
-        };
-        let mut params = CallToolRequestParams::new(call.name.clone());
-        if let Value::Object(arguments) = &call.arguments {
-            params = params.with_arguments(arguments.clone());
-        }
-        match client.call_tool(params).await {
-            Ok(result) => {
-                let mut parts: Vec<String> = result
-                    .content
-                    .iter()
-                    .map(|c| match c.as_text() {
-                        Some(text) => text.text.clone(),
-                        None => "[non-text content omitted]".into(),
-                    })
-                    .collect();
-                if parts.is_empty()
-                    && let Some(structured) = &result.structured_content
-                {
-                    parts.push(structured.to_string());
-                }
-                let text = truncate(&parts.join("\n"));
-                (text, result.is_error == Some(true))
-            }
-            Err(err) => (format!("The tool failed: {err}"), true),
-        }
+        (truncate(&output), is_error)
     }
 
     pub async fn close(self) {
@@ -212,13 +222,21 @@ impl ToolBox {
     }
 
     fn find(&self, name: &str) -> Option<&Tool> {
-        self.tools.iter().find(|t| t.def.name == name)
+        self.tools.iter().find(|t| t.name == name)
     }
 
     fn preview(&self, tool: &Tool, call: &ToolCall) -> Option<String> {
-        match tool.server.as_str() {
-            BUILTIN => builtin::preview(&call.name, &call.arguments, &self.cwd),
-            _ => None,
+        match tool.external {
+            None => builtin::preview(&tool.def.name, &call.arguments, &self.cwd),
+            Some(_) => None,
+        }
+    }
+
+    /// Where a tool's relative paths start: the turn's folder, or the server's.
+    fn base_dir(&self, tool: &Tool) -> PathBuf {
+        match &tool.external {
+            Some(server) => server.cwd().to_owned(),
+            None => self.cwd.clone(),
         }
     }
 
@@ -229,6 +247,7 @@ impl ToolBox {
         tool: &Tool,
         arguments: &'a Value,
     ) -> impl Iterator<Item = PathBuf> + 'a {
+        let base = self.base_dir(tool);
         let mut paths: Vec<PathBuf> = Vec::new();
         if let Value::Object(args) = arguments {
             for (key, value) in args {
@@ -239,12 +258,12 @@ impl ToolBox {
                     continue;
                 }
                 match value {
-                    Value::String(p) => paths.push(resolve(p, &self.cwd)),
+                    Value::String(p) => paths.push(resolve(p, &base)),
                     Value::Array(items) => paths.extend(
                         items
                             .iter()
                             .filter_map(Value::as_str)
-                            .map(|p| resolve(p, &self.cwd)),
+                            .map(|p| resolve(p, &base)),
                     ),
                     _ => {}
                 }
@@ -256,7 +275,7 @@ impl ToolBox {
                 .and_then(|p| p.get("path"))
                 .is_some();
             if takes_path && !args.contains_key("path") {
-                paths.push(self.cwd.clone());
+                paths.push(base.clone());
             }
         }
         paths.into_iter()
@@ -357,4 +376,43 @@ pub fn close_dangling_calls(history: Vec<Message>) -> Vec<Message> {
             .map(|id| Message::tool_result(id, NO_RESULT, true)),
     );
     out
+}
+async fn call_builtin(
+    client: &RunningService<RoleClient, ()>,
+    name: &str,
+    arguments: &Value,
+) -> (String, bool) {
+    let mut params = CallToolRequestParams::new(name.to_owned());
+    if let Value::Object(arguments) = arguments {
+        params = params.with_arguments(arguments.clone());
+    }
+    match client.call_tool(params).await {
+        Ok(result) => {
+            let text: Vec<String> = result
+                .content
+                .iter()
+                .map(|c| match c.as_text() {
+                    Some(text) => text.text.clone(),
+                    None => "[non-text content omitted]".into(),
+                })
+                .collect();
+            (text.join("\n"), result.is_error == Some(true))
+        }
+        Err(err) => (format!("The tool failed: {err}"), true),
+    }
+}
+
+/// `<server>__<tool>`, with anything providers reject replaced and the length capped.
+fn exposed_name(server: &str, tool: &str) -> String {
+    let name: String = format!("{server}__{tool}")
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    name.chars().take(MAX_NAME).collect()
 }

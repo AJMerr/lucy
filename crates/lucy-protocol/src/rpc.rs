@@ -247,6 +247,20 @@ pub struct ToolsListParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolsList {
+    pub tools: Vec<ToolInfo>,
+    /// Configured MCP servers that couldn't start, and why.
+    #[serde(default)]
+    pub problems: Vec<ServerProblem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ServerProblem {
+    pub server: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolInfo {
     pub name: String,
     /// Which server provides it: `builtin`, or an MCP server's name from config.

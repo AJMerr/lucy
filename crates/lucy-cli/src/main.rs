@@ -9,7 +9,7 @@ use lucy_core::config::{self, Config};
 use lucy_core::secrets::{self, KeySource, OsKeyring, SecretStore, Secrets, SecretsError};
 
 use lucy_cli::chat::Start;
-use lucy_cli::{ask, core_process, terminal, wizard};
+use lucy_cli::{ask, core_process, mcp, terminal, wizard};
 
 /// Lucy: a model-agnostic personal assistant.
 #[derive(Parser)]
@@ -44,6 +44,11 @@ enum Command {
     Auth {
         #[command(subcommand)]
         action: AuthAction,
+    },
+    /// Add, list or remove external MCP tool servers.
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
     },
     /// Install or remove the core as a login service.
     Service {
@@ -83,6 +88,36 @@ enum AuthAction {
     Remove { key_name: String },
     /// Show where each profile's API key comes from (never prints keys).
     Status,
+}
+
+#[derive(Subcommand)]
+enum McpAction {
+    /// Add a server Lucy starts as a program. Asks for anything not given.
+    ///
+    /// Example: lucy mcp add github --key GITHUB_TOKEN=github -- npx -y @modelcontextprotocol/server-github
+    Add {
+        /// Short name; its tools appear as `<name>__<tool>`.
+        name: Option<String>,
+        /// Fill an environment variable from the keyring: VAR=keyname (see `lucy auth set`).
+        #[arg(long = "key", value_name = "VAR=KEYNAME")]
+        keys: Vec<String>,
+        /// A plain environment variable: VAR=value.
+        #[arg(long, value_name = "VAR=VALUE")]
+        env: Vec<String>,
+        /// Folder to start it in (default: home).
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// The command that starts the server, after `--`.
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+    /// Show configured servers and whether they start.
+    List,
+    /// Remove a server from the config.
+    Remove { name: String },
+    /// Serve Lucy's built-in tools over stdio, for other MCP clients.
+    #[command(hide = true)]
+    Serve,
 }
 
 #[derive(Subcommand)]
@@ -149,9 +184,50 @@ fn main() -> Result<()> {
             }
             AuthAction::Status => auth_status(),
         },
+        Some(Command::Mcp { action }) => mcp_command(action),
         Some(Command::Service { .. }) => {
             bail!("`lucy service` is not implemented yet (milestone 1)")
         }
+    }
+}
+
+fn mcp_command(action: McpAction) -> Result<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    let path = config_path()?;
+    match action {
+        McpAction::Add {
+            name,
+            keys,
+            env,
+            cwd,
+            command,
+        } => {
+            let args = mcp::AddArgs {
+                name,
+                command,
+                keys,
+                env,
+                cwd,
+            };
+            let (name, server) = if std::io::stdin().is_terminal() {
+                mcp::complete_add(args, &mut TerminalPrompter)?
+            } else {
+                mcp::complete_add(args, &mut NoPrompts)?
+            };
+            mcp::add_to_config(&path, &name, &server)?;
+            println!("Added `{name}` to {}.", path.display());
+            runtime.block_on(mcp::check(&name, &server))
+        }
+        McpAction::List => {
+            let config = Config::load(&path)?.with_context(|| no_config_message(&path))?;
+            runtime.block_on(mcp::list(&config))
+        }
+        McpAction::Remove { name } => {
+            mcp::remove_from_config(&path, &name)?;
+            println!("Removed `{name}`. New chats won't offer its tools.");
+            Ok(())
+        }
+        McpAction::Serve => runtime.block_on(mcp::serve()),
     }
 }
 
@@ -207,8 +283,13 @@ fn auth_status() -> Result<()> {
             key_names.entry(key_name).or_default().push(profile);
         }
     }
+    for (server, settings) in &config.mcp.servers {
+        for key_name in settings.env_keys.values() {
+            key_names.entry(key_name).or_default().push(server);
+        }
+    }
     if key_names.is_empty() {
-        println!("No profiles need an API key.");
+        println!("No profiles or MCP servers need a key.");
         return Ok(());
     }
 
@@ -258,5 +339,21 @@ impl wizard::Prompter for TerminalPrompter {
             None => {}
         }
         Ok(input.interact_text()?)
+    }
+}
+
+/// Used when stdin isn't a terminal: anything missing has to come from the command line.
+struct NoPrompts;
+
+impl wizard::Prompter for NoPrompts {
+    fn select(&mut self, prompt: &str, _items: &[&str], _default: usize) -> Result<usize> {
+        bail!("can't ask \"{prompt}\" without a terminal; pass it on the command line")
+    }
+
+    fn input(&mut self, prompt: &str, default: Option<&str>) -> Result<String> {
+        match default {
+            Some(default) => Ok(default.to_owned()),
+            None => bail!("can't ask \"{prompt}\" without a terminal; pass it on the command line"),
+        }
     }
 }

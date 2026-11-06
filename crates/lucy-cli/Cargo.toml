@@ -27,6 +27,9 @@ syntect.workspace = true
 terminal_size.workspace = true
 lucy-client.workspace = true
 lucy-protocol.workspace = true
+lucy-tools.workspace = true
+shell-words.workspace = true
+toml_edit.workspace = true
 tokio.workspace = true
 
 [target.'cfg(windows)'.dependencies]

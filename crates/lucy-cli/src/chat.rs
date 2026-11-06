@@ -8,7 +8,8 @@ use lucy_client::{Client, ClientError};
 use lucy_protocol::rpc::{
     ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event, ProfileInfo,
     RenameParams, ResolveParams, Session, SessionParams, SessionSettings, SessionSummary,
-    SetPlainParams, SetProfileParams, ToolInfo, ToolRuleInfo, ToolsListParams, TurnOutcome, method,
+    SetPlainParams, SetProfileParams, ToolRuleInfo, ToolsList, ToolsListParams, TurnOutcome,
+    method,
 };
 use lucy_protocol::{Mode, Role, ToolCall};
 use serde::Serialize;
@@ -521,7 +522,7 @@ impl<W: Write> Chat<'_, W> {
                 self.note("Mode: assist (chat with tools; risky ones ask first).")?;
             }
             Command::Tools => {
-                let tools: Vec<ToolInfo> = self
+                let list: ToolsList = self
                     .call(
                         method::TOOLS_LIST,
                         ToolsListParams {
@@ -529,8 +530,13 @@ impl<W: Write> Chat<'_, W> {
                         },
                     )
                     .await?;
-                if tools.is_empty() {
-                    self.note("No tools: the built-in tools are off ([tools] builtin = false).")?;
+                let tools = list.tools;
+                if tools.is_empty() && list.problems.is_empty() {
+                    self.note("No tools: the built-ins are off and no MCP servers are set up.")?;
+                }
+                for problem in &list.problems {
+                    let line = format!("  {}: {}", problem.server, problem.error);
+                    self.error(&line)?;
                 }
                 let width = tools.iter().map(|t| t.name.len()).max().unwrap_or(0);
                 for tool in &tools {

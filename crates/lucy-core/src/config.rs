@@ -23,6 +23,8 @@ pub struct Config {
     pub user: UserSettings,
     #[serde(default)]
     pub tools: ToolSettings,
+    #[serde(default, skip_serializing_if = "McpSettings::is_empty")]
+    pub mcp: McpSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -221,6 +223,7 @@ impl Config {
             sprite: SpriteSettings::default(),
             user: UserSettings::default(),
             tools: ToolSettings::default(),
+            mcp: McpSettings::default(),
         }
     }
 
@@ -287,6 +290,68 @@ impl Config {
                 )));
             }
         }
+        for (name, server) in &self.mcp.servers {
+            validate_server_name(name).map_err(ConfigError::Invalid)?;
+            if server.command.trim().is_empty() {
+                return Err(ConfigError::Invalid(format!(
+                    "MCP server `{name}` needs a command"
+                )));
+            }
+        }
         Ok(())
+    }
+}
+
+/// External MCP servers (ADR 0008), started on first use and kept running.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct McpSettings {
+    pub servers: BTreeMap<String, McpServer>,
+}
+
+impl McpSettings {
+    pub fn is_empty(&self) -> bool {
+        self.servers.is_empty()
+    }
+}
+
+/// A server Lucy starts as a program and talks to over stdin/stdout.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpServer {
+    /// The program, e.g. `npx`. Looked up on `PATH`.
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Plain environment variables (nothing secret).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    /// Environment variables filled from keyring entries: `GITHUB_TOKEN = "github"` uses the
+    /// key stored with `lucy auth set github` (or `LUCY_KEY_GITHUB`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env_keys: BTreeMap<String, String>,
+    /// Folder to start in; defaults to home.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+}
+
+/// Server names become tool-name prefixes (`github__create_issue`), so keep them simple.
+pub fn validate_server_name(name: &str) -> Result<(), String> {
+    let valid = !name.is_empty()
+        && name.len() <= 32
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        && !name.contains("__")
+        && name != crate::tools::BUILTIN;
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{name}` isn't a valid MCP server name: use up to 32 lowercase letters, digits, `-` \
+             or `_` (no `__`, and not `builtin`)"
+        ))
     }
 }
