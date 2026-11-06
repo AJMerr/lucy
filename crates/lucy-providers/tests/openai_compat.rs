@@ -1,8 +1,8 @@
 use futures::StreamExt;
-use lucy_protocol::{Message, Role};
+use lucy_protocol::{Message, Role, ToolCall};
 use lucy_providers::openai_compat::{OpenAiCompat, OpenAiCompatConfig};
 use lucy_providers::testing::{FakeResponse, FakeServer};
-use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent};
+use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, ToolSpec};
 use serde_json::json;
 
 const TEXT: &str = include_str!("fixtures/openai_compat/text.sse");
@@ -18,6 +18,7 @@ fn provider(server: &FakeServer, api_key: Option<&str>) -> OpenAiCompat {
 
 fn request() -> ChatRequest {
     ChatRequest {
+        tools: vec![],
         messages: vec![
             Message::new(Role::System, "You are Lucy."),
             Message::new(Role::User, "hi"),
@@ -202,9 +203,208 @@ async fn real_ollama_qwen3_capture_yields_only_the_answer() {
         .iter()
         .filter_map(|event| match event {
             StreamEvent::TextDelta(text) => Some(text.as_str()),
-            StreamEvent::Done => None,
+            _ => None,
         })
         .collect();
     // Expected value extracted independently with jq from the capture's `content` fields.
     assert_eq!(text, "Hello, how are you doing?");
+}
+
+// --- Tools ---------------------------------------------------------------------------------
+
+fn read_file_tool() -> ToolSpec {
+    ToolSpec {
+        name: "read_file".into(),
+        description: "Read a text file.".into(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        }),
+    }
+}
+
+async fn collect_request(
+    provider: &impl Provider,
+    request: ChatRequest,
+) -> (Vec<StreamEvent>, Option<ProviderError>) {
+    let mut stream = match provider.stream(request).await {
+        Ok(stream) => stream,
+        Err(err) => return (vec![], Some(err)),
+    };
+    let mut events = vec![];
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(event) => events.push(event),
+            Err(err) => return (events, Some(err)),
+        }
+    }
+    (events, None)
+}
+
+fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: name.into(),
+        arguments,
+    }
+}
+
+#[tokio::test]
+async fn sends_tools_and_tool_history_as_functions() {
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+    let request = ChatRequest {
+        messages: vec![
+            Message::new(Role::User, "what's in my notes?"),
+            Message::assistant_with_tools(
+                "Let me look.",
+                vec![call("call_1", "read_file", json!({"path": "notes.txt"}))],
+            ),
+            Message::tool_result("call_1", "buy milk", false),
+            Message::assistant_with_tools(
+                "",
+                vec![call("call_2", "read_file", json!({"path": "todo.txt"}))],
+            ),
+            Message::tool_result("call_2", "no such file", true),
+        ],
+        tools: vec![read_file_tool()],
+    };
+
+    collect_request(&provider(&server, None), request).await;
+
+    let [request] = server.requests().try_into().unwrap();
+    assert_eq!(
+        request.body["tools"],
+        json!([{
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a text file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        }])
+    );
+    assert_eq!(
+        request.body["messages"],
+        json!([
+            {"role": "user", "content": "what's in my notes?"},
+            {"role": "assistant", "content": "Let me look.", "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{\"path\":\"notes.txt\"}"},
+            }]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "buy milk"},
+            {"role": "assistant", "content": null, "tool_calls": [{
+                "id": "call_2",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{\"path\":\"todo.txt\"}"},
+            }]},
+            // There's no error flag in this API, so failures say so in the text.
+            {"role": "tool", "tool_call_id": "call_2", "content": "Error: no such file"},
+        ])
+    );
+}
+
+#[tokio::test]
+async fn tool_calls_streamed_in_fragments_arrive_whole() {
+    let fixture = include_str!("fixtures/openai_compat/tool_calls.sse");
+    // Tiny chunks split events, JSON and multi-byte characters at arbitrary points.
+    let server = FakeServer::start([FakeResponse::sse(fixture).chunk_size(5)]).await;
+
+    let (events, err) = collect(&provider(&server, None)).await;
+
+    assert!(err.is_none(), "{err:?}");
+    assert_eq!(
+        events,
+        vec![
+            StreamEvent::TextDelta("Let me look.".into()),
+            StreamEvent::ToolCall(call("call_1", "read_file", json!({"path": "notes.txt"}))),
+            StreamEvent::ToolCall(call("call_2", "list_dir", json!({}))),
+            StreamEvent::Done,
+        ]
+    );
+}
+
+fn tool_call_chunk(tool_call: serde_json::Value) -> String {
+    format!(
+        "data: {}\n\n",
+        json!({"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}, "finish_reason": null}]})
+    )
+}
+
+const FINISH_TOOL_CALLS: &str = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n";
+
+#[tokio::test]
+async fn garbled_arguments_are_passed_on_as_a_string() {
+    let body = tool_call_chunk(json!({
+        "index": 0, "id": "call_1", "type": "function",
+        "function": {"name": "read_file", "arguments": "{\"path\": \"notes"},
+    })) + FINISH_TOOL_CALLS;
+    let server = FakeServer::start([FakeResponse::sse(body)]).await;
+
+    let (events, err) = collect(&provider(&server, None)).await;
+
+    assert!(err.is_none(), "{err:?}");
+    assert_eq!(
+        events,
+        vec![
+            StreamEvent::ToolCall(call("call_1", "read_file", json!("{\"path\": \"notes"))),
+            StreamEvent::Done,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn calls_without_an_id_or_index_get_distinct_ids() {
+    // Some local servers send each call whole, with neither an index nor an ID.
+    let body = tool_call_chunk(json!({
+        "type": "function", "function": {"name": "list_dir", "arguments": "{}"},
+    })) + &tool_call_chunk(json!({
+        "type": "function", "function": {"name": "read_file", "arguments": "{\"path\":\"a\"}"},
+    })) + FINISH_TOOL_CALLS;
+    let server = FakeServer::start([FakeResponse::sse(body)]).await;
+
+    let (events, err) = collect(&provider(&server, None)).await;
+
+    assert!(err.is_none(), "{err:?}");
+    let calls: Vec<&ToolCall> = events
+        .iter()
+        .filter_map(|e| match e {
+            StreamEvent::ToolCall(call) => Some(call),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls.len(), 2, "{events:?}");
+    assert_eq!(calls[0].name, "list_dir");
+    assert_eq!(calls[1].arguments, json!({"path": "a"}));
+    assert_ne!(calls[0].id, calls[1].id);
+    assert!(!calls[0].id.is_empty());
+}
+
+/// A real stream recorded from Ollama + qwen3:14b with `capture ... tools` (prompt: "What does
+/// notes.txt say? Read it."). Reasoning, then one whole tool call, then two finish chunks.
+#[tokio::test]
+async fn real_ollama_qwen3_tool_call_capture_yields_just_the_call() {
+    let capture = include_str!("fixtures/openai_compat/captured_ollama_qwen3_tool_call.sse");
+    let server = FakeServer::start([FakeResponse::sse(capture).chunk_size(512)]).await;
+
+    let (events, err) = collect(&provider(&server, None)).await;
+
+    assert!(err.is_none(), "{err:?}");
+    // Expected values read independently from the capture with jq.
+    assert_eq!(
+        events,
+        vec![
+            StreamEvent::ToolCall(call(
+                "call_ghdmvvdu",
+                "read_file",
+                json!({"path": "notes.txt"})
+            )),
+            StreamEvent::Done,
+        ]
+    );
 }

@@ -2,13 +2,13 @@
 //! LM Studio, llama.cpp, vLLM, ...
 
 use async_trait::async_trait;
-use lucy_protocol::Role;
+use lucy_protocol::{Message, Role, ToolCall};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::http::{check_status, error_message, send_error};
 use crate::sse::{self, EventParser, SseEvent};
-use crate::{ChatRequest, EventStream, Provider, ProviderError, StreamEvent};
+use crate::{ChatRequest, EventStream, Provider, ProviderError, StreamEvent, parse_arguments};
 
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatConfig {
@@ -46,16 +46,28 @@ impl Provider for OpenAiCompat {
             "{}/chat/completions",
             self.config.base_url.trim_end_matches('/')
         );
-        let messages: Vec<_> = request
-            .messages
-            .iter()
-            .map(|m| json!({"role": role(m.role), "content": m.content}))
-            .collect();
-        let body = json!({
+        let messages: Vec<Value> = request.messages.iter().map(message).collect();
+        let mut body = json!({
             "model": self.config.model,
             "stream": true,
             "messages": messages,
         });
+        if !request.tools.is_empty() {
+            body["tools"] = request
+                .tools
+                .iter()
+                .map(|tool| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.input_schema,
+                        },
+                    })
+                })
+                .collect();
+        }
 
         let mut http = self.client.post(&url).json(&body);
         if let Some(key) = &self.config.api_key {
@@ -69,7 +81,45 @@ impl Provider for OpenAiCompat {
     }
 }
 
-fn role(role: Role) -> &'static str {
+fn message(m: &Message) -> Value {
+    match m.role {
+        Role::Tool => {
+            // This API has no error flag, so a failure has to say so in its text.
+            let content = if m.is_error {
+                format!("Error: {}", m.content)
+            } else {
+                m.content.clone()
+            };
+            json!({"role": "tool", "tool_call_id": m.tool_call_id, "content": content})
+        }
+        Role::Assistant if !m.tool_calls.is_empty() => {
+            let calls: Vec<Value> = m
+                .tool_calls
+                .iter()
+                .map(|call| {
+                    json!({
+                        "id": call.id,
+                        "type": "function",
+                        "function": {"name": call.name, "arguments": arguments_text(&call.arguments)},
+                    })
+                })
+                .collect();
+            let content = (!m.content.is_empty()).then_some(m.content.as_str());
+            json!({"role": "assistant", "content": content, "tool_calls": calls})
+        }
+        role => json!({"role": role_name(role), "content": m.content}),
+    }
+}
+
+/// Arguments go back exactly as the model wrote them, garbled or not.
+fn arguments_text(arguments: &Value) -> String {
+    match arguments {
+        Value::String(raw) => raw.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn role_name(role: Role) -> &'static str {
     match role {
         Role::System => "system",
         Role::User => "user",
@@ -94,19 +144,96 @@ struct Choice {
 #[derive(Default, Deserialize)]
 struct Delta {
     content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ToolCallDelta>,
+}
+
+#[derive(Deserialize)]
+struct ToolCallDelta {
+    index: Option<usize>,
+    id: Option<String>,
+    #[serde(default)]
+    function: FunctionDelta,
+}
+
+#[derive(Default, Deserialize)]
+struct FunctionDelta {
+    name: Option<String>,
+    arguments: Option<String>,
+}
+
+/// A tool call whose fragments are still arriving.
+#[derive(Default)]
+struct PartialCall {
+    index: Option<usize>,
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 #[derive(Default)]
 struct ChunkParser {
     finished: bool,
+    calls: Vec<PartialCall>,
+}
+
+impl ChunkParser {
+    fn add_tool_delta(&mut self, delta: ToolCallDelta) {
+        // Streaming servers number each call and send its ID and name once, then argument
+        // fragments. Some local servers send whole calls with no index; a name starts a new one.
+        let existing = match delta.index {
+            Some(index) => self.calls.iter().position(|c| c.index == Some(index)),
+            None if delta.function.name.is_some() => None,
+            None => self.calls.len().checked_sub(1),
+        };
+        let at = existing.unwrap_or_else(|| {
+            self.calls.push(PartialCall {
+                index: delta.index,
+                ..PartialCall::default()
+            });
+            self.calls.len() - 1
+        });
+        let call = &mut self.calls[at];
+        if let Some(id) = delta.id.filter(|id| !id.is_empty()) {
+            call.id = id;
+        }
+        if let Some(name) = delta.function.name {
+            call.name.push_str(&name);
+        }
+        if let Some(arguments) = delta.function.arguments {
+            call.arguments.push_str(&arguments);
+        }
+    }
+
+    /// The finished calls, then `Done`.
+    fn finish(&mut self) -> Vec<StreamEvent> {
+        let mut events: Vec<StreamEvent> = self
+            .calls
+            .drain(..)
+            .enumerate()
+            .map(|(n, call)| {
+                StreamEvent::ToolCall(ToolCall {
+                    id: if call.id.is_empty() {
+                        format!("call_{n}")
+                    } else {
+                        call.id
+                    },
+                    name: call.name,
+                    arguments: parse_arguments(&call.arguments),
+                })
+            })
+            .collect();
+        events.push(StreamEvent::Done);
+        events
+    }
 }
 
 impl EventParser for ChunkParser {
     fn on_event(&mut self, event: SseEvent) -> Result<Vec<StreamEvent>, ProviderError> {
         if event.data == "[DONE]" {
-            return Ok(vec![StreamEvent::Done]);
+            return Ok(self.finish());
         }
-        let value: serde_json::Value = serde_json::from_str(&event.data)
+        let value: Value = serde_json::from_str(&event.data)
             .map_err(|err| ProviderError::Protocol(format!("bad chunk: {err}")))?;
         if let Some(message) = error_message(&value) {
             return Err(ProviderError::Unavailable(message));
@@ -118,6 +245,9 @@ impl EventParser for ChunkParser {
             if let Some(text) = choice.delta.content.filter(|t| !t.is_empty()) {
                 events.push(StreamEvent::TextDelta(text));
             }
+            for delta in choice.delta.tool_calls {
+                self.add_tool_delta(delta);
+            }
             self.finished |= choice.finish_reason.is_some();
         }
         Ok(events)
@@ -126,7 +256,7 @@ impl EventParser for ChunkParser {
     fn on_eof(&mut self) -> Result<Vec<StreamEvent>, ProviderError> {
         // Some servers omit `[DONE]`; a finish_reason is enough to know the reply is complete.
         if self.finished {
-            Ok(vec![StreamEvent::Done])
+            Ok(self.finish())
         } else {
             Err(ProviderError::Protocol(
                 "stream ended before the response finished".into(),

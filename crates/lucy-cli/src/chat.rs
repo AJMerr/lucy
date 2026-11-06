@@ -6,11 +6,11 @@ use std::io::Write;
 use anyhow::{Context, Result, bail};
 use lucy_client::{Client, ClientError};
 use lucy_protocol::rpc::{
-    CancelResult, ChatSendParams, ChatSendResult, Event, ProfileInfo, RenameParams, ResolveParams,
-    Session, SessionParams, SessionSettings, SessionSummary, SetPlainParams, SetProfileParams,
-    TurnOutcome, method,
+    ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event, ProfileInfo,
+    RenameParams, ResolveParams, Session, SessionParams, SessionSettings, SessionSummary,
+    SetPlainParams, SetProfileParams, ToolInfo, ToolRuleInfo, ToolsListParams, TurnOutcome, method,
 };
-use lucy_protocol::{Mode, Role};
+use lucy_protocol::{Mode, Role, ToolCall};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 
 use crate::commands::{COMMANDS, Command, Input, parse};
 use crate::markdown::{Op, Renderer};
+use crate::tool_display;
 
 pub enum ReadLine {
     Text(String),
@@ -67,6 +68,7 @@ pub async fn run_chat<S: LineSource, W: Write>(
         color: options.color,
         width: options.width.max(20),
         session: None,
+        last_tool: None,
     };
 
     chat.banner().await?;
@@ -93,7 +95,7 @@ pub async fn run_chat<S: LineSource, W: Write>(
             Ok(Input::Nothing) => Ok(()),
             Ok(Input::Command(Command::Quit)) => break,
             Ok(Input::Command(command)) => chat.command(command).await,
-            Ok(Input::Message(text)) => chat.send(text, &mut events, interrupts).await,
+            Ok(Input::Message(text)) => chat.send(text, &mut events, interrupts, input).await,
         };
         if let Err(err) = outcome {
             chat.problem(&err)?;
@@ -109,6 +111,8 @@ struct Chat<'a, W: Write> {
     width: usize,
     /// `None` until the first message (or a command that needs a session).
     session: Option<String>,
+    /// The most recent tool call, its output and whether it failed, for `/last`.
+    last_tool: Option<(ToolCall, String, bool)>,
 }
 
 impl<W: Write> Chat<'_, W> {
@@ -218,36 +222,49 @@ impl<W: Write> Chat<'_, W> {
         let title = session.summary.title.as_deref().unwrap_or("untitled chat");
         self.note(&format!("Resumed “{title}”."))?;
 
-        let skip = session.messages.len().saturating_sub(RECAP);
-        for message in &session.messages[skip..] {
+        // Tool results are shown as the calls that made them, not as messages.
+        let shown: Vec<_> = session
+            .messages
+            .iter()
+            .filter(|m| m.role != Role::Tool)
+            .collect();
+        for message in &shown[shown.len().saturating_sub(RECAP)..] {
             match message.role {
                 Role::User => {
                     let line = self.styled("36", &format!("{PROMPT}{}", message.content));
                     self.say(&line)?;
                 }
                 _ => {
-                    let mut renderer = Renderer::new(self.color);
-                    let mut ops = renderer.push(&message.content);
-                    ops.extend(renderer.finish());
-                    let mut printer = Printer::new(self.out, self.color, self.width);
-                    for op in ops {
-                        printer.op(op)?;
+                    if !message.content.is_empty() {
+                        let mut renderer = Renderer::new(self.color);
+                        let mut ops = renderer.push(&message.content);
+                        ops.extend(renderer.finish());
+                        let mut printer = Printer::new(self.color, self.width);
+                        for op in ops {
+                            printer.op(self.out, op)?;
+                        }
+                    }
+                    for call in &message.tool_calls {
+                        self.note(&tool_display::started(call))?;
                     }
                     if message.incomplete {
                         self.note("(cut off)")?;
                     }
-                    self.say("")?;
+                    if message.tool_calls.is_empty() {
+                        self.say("")?;
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    async fn send(
+    async fn send<S: LineSource>(
         &mut self,
         text: String,
         events: &mut mpsc::UnboundedReceiver<Event>,
         interrupts: &mut mpsc::Receiver<()>,
+        input: &mut S,
     ) -> Result<()> {
         // A Ctrl+C pressed between replies must not cancel this one.
         while interrupts.try_recv().is_ok() {}
@@ -257,39 +274,75 @@ impl<W: Write> Chat<'_, W> {
                 ChatSendParams {
                     session_id: self.session.clone(),
                     text,
+                    cwd: std::env::current_dir()
+                        .ok()
+                        .map(|dir| dir.display().to_string()),
                 },
             )
             .await?;
         self.session = Some(sent.session_id.clone());
+        let session_id = sent.session_id.clone();
 
         let mut renderer = Renderer::new(self.color);
-        let mut printer = Printer::new(self.out, self.color, self.width);
+        let mut printer = Printer::new(self.color, self.width);
+        // The call whose `⚙` line is printed and waiting for its outcome.
+        let mut running: Option<ToolCall> = None;
         let (outcome, error) = loop {
             tokio::select! {
                 event = events.recv() => match event {
                     None => bail!(ClientError::Disconnected),
-                    Some(Event::Delta { turn_id, text, .. }) if turn_id == sent.turn_id => {
+                    Some(event) if turn_of(&event) != Some(sent.turn_id) => {}
+                    Some(Event::Delta { text, .. }) => {
                         for op in renderer.push(&text) {
-                            printer.op(op)?;
+                            printer.op(self.out, op)?;
                         }
                     }
-                    Some(Event::TurnFinished { turn_id, outcome, error, .. })
-                        if turn_id == sent.turn_id =>
-                    {
-                        for op in renderer.finish() {
-                            printer.op(op)?;
+                    Some(Event::ToolApproval { call, reason, preview, .. }) => {
+                        self.end_text(&mut renderer, &mut printer)?;
+                        let answer = self.approval(&call, &reason, preview.as_deref(), input).await?;
+                        let decision = answer.unwrap_or(Decision::Deny);
+                        let approved: Result<Value> = self
+                            .call(
+                                method::TOOL_APPROVE,
+                                ApproveParams {
+                                    session_id: session_id.clone(),
+                                    call_id: call.id.clone(),
+                                    decision,
+                                },
+                            )
+                            .await;
+                        if let Err(err) = approved {
+                            self.problem(&err)?;
+                        }
+                        if answer.is_none() {
+                            self.cancel(&session_id).await;
+                        }
+                    }
+                    Some(Event::ToolStarted { call, .. }) => {
+                        self.end_text(&mut renderer, &mut printer)?;
+                        let line = self.styled("2", &tool_display::started(&call));
+                        write!(self.out, "{line}")?;
+                        self.out.flush()?;
+                        running = Some(call);
+                    }
+                    Some(Event::ToolFinished { output, is_error, .. }) => {
+                        let mark = tool_display::finished(&output, is_error);
+                        let mark = self.styled(if is_error { "31" } else { "32" }, &mark);
+                        self.say(&format!("  {mark}"))?;
+                        if let Some(call) = running.take() {
+                            self.last_tool = Some((call, output, is_error));
+                        }
+                    }
+                    Some(Event::TurnFinished { outcome, error, .. }) => {
+                        self.end_text(&mut renderer, &mut printer)?;
+                        if running.take().is_some() {
+                            self.say("")?;
                         }
                         break (outcome, error);
                     }
                     Some(_) => {}
                 },
-                Some(()) = interrupts.recv() => {
-                    // `self.client`, not `self.call`: the printer is borrowing `self.out`.
-                    let _: Result<CancelResult, _> = self
-                        .client
-                        .call(method::CHAT_CANCEL, SessionParams { session_id: sent.session_id.clone() })
-                        .await;
-                }
+                Some(()) = interrupts.recv() => self.cancel(&session_id).await,
             }
         };
         match outcome {
@@ -299,6 +352,50 @@ impl<W: Write> Chat<'_, W> {
         }
         self.say("")?;
         Ok(())
+    }
+
+    async fn cancel(&self, session_id: &str) {
+        let _: Result<CancelResult, _> = self
+            .client
+            .call(
+                method::CHAT_CANCEL,
+                SessionParams {
+                    session_id: session_id.to_owned(),
+                },
+            )
+            .await;
+    }
+
+    /// Finish the streamed text so far, so tool lines start on a fresh line.
+    fn end_text(&mut self, renderer: &mut Renderer, printer: &mut Printer) -> Result<()> {
+        for op in renderer.finish() {
+            printer.op(self.out, op)?;
+        }
+        *renderer = Renderer::new(self.color);
+        Ok(())
+    }
+
+    /// Show what a tool wants to do and ask. `None` means Ctrl+C: decline and stop the reply.
+    async fn approval<S: LineSource>(
+        &mut self,
+        call: &ToolCall,
+        reason: &str,
+        preview: Option<&str>,
+        input: &mut S,
+    ) -> Result<Option<Decision>> {
+        for line in tool_display::approval(call, reason, preview, self.color) {
+            self.say(&line)?;
+        }
+        loop {
+            match input.read_line(tool_display::APPROVAL_PROMPT).await {
+                ReadLine::Text(answer) => match tool_display::parse_decision(&answer) {
+                    Some(decision) => return Ok(Some(decision)),
+                    None => self.note("Type y (yes), a (always this chat) or n (no).")?,
+                },
+                ReadLine::Interrupted => return Ok(None),
+                ReadLine::Eof => return Ok(Some(Decision::Deny)),
+            }
+        }
     }
 
     async fn command(&mut self, command: Command) -> Result<()> {
@@ -421,8 +518,48 @@ impl<W: Write> Chat<'_, W> {
                 })?;
             }
             Command::Mode(None) | Command::Mode(Some(Mode::Assist)) => {
-                self.note("Mode: assist (chat; tools arrive in step 8).")?;
+                self.note("Mode: assist (chat with tools; risky ones ask first).")?;
             }
+            Command::Tools => {
+                let tools: Vec<ToolInfo> = self
+                    .call(
+                        method::TOOLS_LIST,
+                        ToolsListParams {
+                            session_id: self.session.clone(),
+                        },
+                    )
+                    .await?;
+                if tools.is_empty() {
+                    self.note("No tools: the built-in tools are off ([tools] builtin = false).")?;
+                }
+                let width = tools.iter().map(|t| t.name.len()).max().unwrap_or(0);
+                for tool in &tools {
+                    let (rule, color) = match tool.rule {
+                        ToolRuleInfo::Auto => ("runs", "32"),
+                        ToolRuleInfo::AutoInHome => ("runs*", "32"),
+                        ToolRuleInfo::Ask => ("asks", "33"),
+                        ToolRuleInfo::Deny => ("blocked", "31"),
+                    };
+                    let name = self.styled("36", &format!("{:width$}", tool.name));
+                    let rule = self.styled(color, &format!("{rule:7}"));
+                    let description = self.styled("2", &tool.description);
+                    self.say(&format!("  {name}  {rule}  {description}"))?;
+                }
+                if tools.iter().any(|t| t.rule == ToolRuleInfo::AutoInHome) {
+                    self.note("  * runs by itself in your home folder; asks for private files and anywhere else")?;
+                }
+            }
+            Command::Last => match self.last_tool.clone() {
+                None => self.note("No tool calls yet in this chat.")?,
+                Some((call, output, is_error)) => {
+                    let title = self.styled("1", &format!("{} ({})", call.name, call.id));
+                    self.say(&title)?;
+                    let args = serde_json::to_string_pretty(&call.arguments)?;
+                    self.say(&args)?;
+                    self.note(if is_error { "failed:" } else { "output:" })?;
+                    self.say(output.trim_end())?;
+                }
+            },
             Command::Mode(Some(Mode::Agent)) => {
                 self.note("Agent mode isn't built yet (milestone 1, step 9); staying in assist.")?;
             }
@@ -431,51 +568,62 @@ impl<W: Write> Chat<'_, W> {
     }
 }
 
+/// The turn an event belongs to.
+fn turn_of(event: &Event) -> Option<u64> {
+    match event {
+        Event::UserMessage { .. } => None,
+        Event::TurnStarted { turn_id, .. }
+        | Event::Delta { turn_id, .. }
+        | Event::ToolApproval { turn_id, .. }
+        | Event::ToolStarted { turn_id, .. }
+        | Event::ToolFinished { turn_id, .. }
+        | Event::TurnFinished { turn_id, .. } => Some(*turn_id),
+    }
+}
+
 /// Writes renderer output, replacing a raw partial line with its styled form.
-struct Printer<'a, W: Write> {
-    out: &'a mut W,
+struct Printer {
     color: bool,
     width: usize,
     /// Raw text shown for the current, unfinished line.
     raw: String,
 }
 
-impl<'a, W: Write> Printer<'a, W> {
-    fn new(out: &'a mut W, color: bool, width: usize) -> Self {
+impl Printer {
+    fn new(color: bool, width: usize) -> Self {
         Self {
-            out,
             color,
             width,
             raw: String::new(),
         }
     }
 
-    fn op(&mut self, op: Op) -> std::io::Result<()> {
+    fn op(&mut self, out: &mut impl Write, op: Op) -> std::io::Result<()> {
         match op {
             Op::Raw(text) => {
-                write!(self.out, "{text}")?;
+                write!(out, "{text}")?;
                 self.raw.push_str(&text);
             }
             Op::Line(line) if self.color => {
                 if !self.raw.is_empty() {
                     // Back to the start of the (possibly wrapped) raw text, then clear it.
                     let rows_up = self.raw.chars().count().saturating_sub(1) / self.width;
-                    write!(self.out, "\r")?;
+                    write!(out, "\r")?;
                     if rows_up > 0 {
-                        write!(self.out, "\x1b[{rows_up}A")?;
+                        write!(out, "\x1b[{rows_up}A")?;
                     }
-                    write!(self.out, "\x1b[J")?;
+                    write!(out, "\x1b[J")?;
                 }
-                writeln!(self.out, "{line}")?;
+                writeln!(out, "{line}")?;
                 self.raw.clear();
             }
             Op::Line(line) => {
                 // Plain output: the line equals its raw text, so finish what's missing.
                 let rest = line.strip_prefix(self.raw.as_str()).unwrap_or(&line);
-                writeln!(self.out, "{rest}")?;
+                writeln!(out, "{rest}")?;
                 self.raw.clear();
             }
         }
-        self.out.flush()
+        out.flush()
     }
 }

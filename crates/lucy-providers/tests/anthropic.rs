@@ -1,8 +1,8 @@
 use futures::StreamExt;
-use lucy_protocol::{Message, Role};
+use lucy_protocol::{Message, Role, ToolCall};
 use lucy_providers::anthropic::{Anthropic, AnthropicConfig};
 use lucy_providers::testing::{FakeResponse, FakeServer};
-use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent};
+use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, ToolSpec};
 use serde_json::json;
 
 const TEXT: &str = include_str!("fixtures/anthropic/text.sse");
@@ -18,6 +18,7 @@ fn provider(server: &FakeServer) -> Anthropic {
 
 fn request() -> ChatRequest {
     ChatRequest {
+        tools: vec![],
         messages: vec![
             Message::new(Role::System, "You are Lucy."),
             Message::new(Role::System, "Plain mode is off."),
@@ -165,4 +166,98 @@ async fn stream_cut_off_before_message_stop_is_a_protocol_error() {
 
     assert_eq!(events, vec![StreamEvent::TextDelta("Wake up,".into())]);
     assert!(matches!(err, Some(ProviderError::Protocol(_))), "{err:?}");
+}
+
+// --- Tools ---------------------------------------------------------------------------------
+
+fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: name.into(),
+        arguments,
+    }
+}
+
+#[tokio::test]
+async fn sends_tools_and_tool_history_as_content_blocks() {
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+    let request = ChatRequest {
+        messages: vec![
+            Message::new(Role::User, "what's in my notes?"),
+            Message::assistant_with_tools(
+                "Let me look.",
+                vec![
+                    call("toolu_1", "read_file", json!({"path": "notes.txt"})),
+                    call("toolu_2", "read_file", json!({"path": "todo.txt"})),
+                ],
+            ),
+            Message::tool_result("toolu_1", "buy milk", false),
+            Message::tool_result("toolu_2", "no such file", true),
+            Message::assistant_with_tools("", vec![call("toolu_3", "list_dir", json!({}))]),
+            Message::tool_result("toolu_3", "notes.txt", false),
+        ],
+        tools: vec![ToolSpec {
+            name: "read_file".into(),
+            description: "Read a text file.".into(),
+            input_schema: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        }],
+    };
+
+    provider(&server)
+        .stream(request)
+        .await
+        .unwrap()
+        .count()
+        .await;
+
+    let [request] = server.requests().try_into().unwrap();
+    assert_eq!(
+        request.body["tools"],
+        json!([{
+            "name": "read_file",
+            "description": "Read a text file.",
+            "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}},
+        }])
+    );
+    assert_eq!(
+        request.body["messages"],
+        json!([
+            {"role": "user", "content": "what's in my notes?"},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Let me look."},
+                {"type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {"path": "notes.txt"}},
+                {"type": "tool_use", "id": "toolu_2", "name": "read_file", "input": {"path": "todo.txt"}},
+            ]},
+            // Results of one turn's calls share a single user message.
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": "buy milk"},
+                {"type": "tool_result", "tool_use_id": "toolu_2", "content": "no such file", "is_error": true},
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_3", "name": "list_dir", "input": {}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_3", "content": "notes.txt"},
+            ]},
+        ])
+    );
+}
+
+#[tokio::test]
+async fn tool_use_streamed_in_fragments_arrives_whole() {
+    let fixture = include_str!("fixtures/anthropic/tool_use.sse");
+    let server = FakeServer::start([FakeResponse::sse(fixture).chunk_size(5)]).await;
+
+    let (events, err) = collect(&provider(&server)).await;
+
+    assert!(err.is_none(), "{err:?}");
+    assert_eq!(
+        events,
+        vec![
+            StreamEvent::TextDelta("Let me look.".into()),
+            StreamEvent::ToolCall(call("toolu_01A", "read_file", json!({"path": "notes.txt"}))),
+            StreamEvent::ToolCall(call("toolu_01B", "list_dir", json!({}))),
+            StreamEvent::Done,
+        ]
+    );
 }

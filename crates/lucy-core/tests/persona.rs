@@ -95,6 +95,7 @@ fn context(plain: bool) -> PromptContext {
             profile: "local-qwen".into(),
             model: "qwen3:14b".into(),
         }),
+        cwd: None,
     }
 }
 

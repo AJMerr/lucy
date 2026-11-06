@@ -10,7 +10,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use ulid::Ulid;
 
 /// Bumped whenever the schema changes; each step in [`MIGRATIONS`] moves it up by one.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
     CREATE TABLE sessions (
         id          TEXT PRIMARY KEY,
         title       TEXT,
@@ -31,7 +32,14 @@ const MIGRATIONS: &[&str] = &[r#"
         created_at     INTEGER NOT NULL,
         PRIMARY KEY (session_id, seq)
     );
-"#];
+"#,
+    r#"
+    -- Tool use (step 8): what the assistant asked to run, and which call a result answers.
+    ALTER TABLE messages ADD COLUMN tool_calls TEXT;  -- JSON array, assistant messages only
+    ALTER TABLE messages ADD COLUMN tool_call_id TEXT;
+    ALTER TABLE messages ADD COLUMN is_error INTEGER NOT NULL DEFAULT 0;
+"#,
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionId(Ulid);
@@ -92,6 +100,26 @@ impl NewMessage {
 
     pub fn assistant(content: impl Into<String>, origin: Origin) -> Self {
         Self::new(Message::new(Role::Assistant, content), Some(origin))
+    }
+
+    /// A reply that asks to run tools (`content` is any text said first).
+    pub fn assistant_with_tools(
+        content: impl Into<String>,
+        tool_calls: Vec<lucy_protocol::ToolCall>,
+        origin: Origin,
+    ) -> Self {
+        Self::new(
+            Message::assistant_with_tools(content, tool_calls),
+            Some(origin),
+        )
+    }
+
+    pub fn tool_result(
+        call_id: impl Into<String>,
+        content: impl Into<String>,
+        is_error: bool,
+    ) -> Self {
+        Self::new(Message::tool_result(call_id, content, is_error), None)
     }
 
     fn new(message: Message, origin: Option<Origin>) -> Self {
@@ -187,7 +215,7 @@ impl SessionStore {
     pub fn list(&self) -> Result<Vec<SessionSummary>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.title, s.created_at, s.updated_at,
-                    (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id)
+                    (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role != 'tool')
              FROM sessions s ORDER BY s.activity DESC",
         )?;
         let rows = stmt.query_map([], summary_from_row)?;
@@ -208,11 +236,14 @@ impl SessionStore {
         found(touched, id)?;
 
         let origin = new.origin.as_ref();
+        let tool_calls = (!new.message.tool_calls.is_empty())
+            .then(|| serde_json::to_string(&new.message.tool_calls).expect("tool calls serialize"));
         self.conn.execute(
             "INSERT INTO messages (session_id, seq, role, content, profile, model, incomplete,
-                                   input_tokens, output_tokens, created_at)
+                                   input_tokens, output_tokens, created_at, tool_calls,
+                                   tool_call_id, is_error)
              VALUES (?1, (SELECT COUNT(*) FROM messages WHERE session_id = ?1),
-                     ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                     ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 id_text,
                 role_name(new.message.role),
@@ -223,6 +254,9 @@ impl SessionStore {
                 new.usage.map(|u| u.input_tokens),
                 new.usage.map(|u| u.output_tokens),
                 now,
+                tool_calls,
+                new.message.tool_call_id,
+                new.message.is_error,
             ],
         )?;
 
@@ -278,7 +312,7 @@ impl SessionStore {
             .conn
             .query_row(
                 "SELECT s.id, s.title, s.created_at, s.updated_at,
-                        (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id)
+                        (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role != 'tool')
                  FROM sessions s WHERE s.id = ?1",
                 [&id_text],
                 summary_from_row,
@@ -288,7 +322,7 @@ impl SessionStore {
 
         let mut stmt = self.conn.prepare(
             "SELECT role, content, profile, model, incomplete, input_tokens, output_tokens,
-                    created_at
+                    created_at, tool_calls, tool_call_id, is_error
              FROM messages WHERE session_id = ?1 ORDER BY seq",
         )?;
         let messages = stmt
@@ -298,8 +332,24 @@ impl SessionStore {
                 let model: Option<String> = row.get(3)?;
                 let input_tokens: Option<u32> = row.get(5)?;
                 let output_tokens: Option<u32> = row.get(6)?;
+                let tool_calls: Option<String> = row.get(8)?;
+                let tool_calls = match tool_calls {
+                    Some(json) => serde_json::from_str(&json).map_err(|err| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            8,
+                            rusqlite::types::Type::Text,
+                            Box::new(err),
+                        )
+                    })?,
+                    None => Vec::new(),
+                };
                 Ok(StoredMessage {
-                    message: Message::new(parse_role(&role)?, row.get::<_, String>(1)?),
+                    message: Message {
+                        tool_calls,
+                        tool_call_id: row.get(9)?,
+                        is_error: row.get(10)?,
+                        ..Message::new(parse_role(&role)?, row.get::<_, String>(1)?)
+                    },
                     origin: profile
                         .zip(model)
                         .map(|(profile, model)| Origin { profile, model }),

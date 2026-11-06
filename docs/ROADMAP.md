@@ -23,7 +23,13 @@ Built test-first against the `mock` provider.
    idle exit, live events to subscribers. Plain-text `lucy ask` works end to end.
 7. ✅ **CLI** — `lucy` interactive streaming chat with markdown rendering and `/model`, `/mode`,
    `/plain`, `/sessions`; `lucy ask "..."` one-shot (reads stdin).
-8. **Tools** — MCP client; tool calls in both adapters; Assist-mode confirmations.
+8. **Tools** (ADR 0008)
+   - ✅ **8a** — tool calls in both adapters; tool loop in the core; Assist-mode rules and
+     approvals (y / always / no); built-in tools (`read_file`, `list_dir`, `search_files`,
+     `fetch_url`, `run_command`, `write_file`, `edit_file`) as an in-process MCP server;
+     `/tools`, `/last`, `lucy ask --yes`.
+   - **8b** — external MCP servers started as programs; `lucy mcp add|list|remove`.
+   - **8c** — remote MCP servers by URL, with API keys or OAuth (`lucy mcp login`).
 9. **Agent mode** — `AgentLevel` enforcement, step and cost caps.
 10. **Service** — `lucy service install|uninstall`.
 11. **Optional HTTP/WebSocket** transport (off by default).

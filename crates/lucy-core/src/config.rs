@@ -21,6 +21,8 @@ pub struct Config {
     pub sprite: SpriteSettings,
     #[serde(default)]
     pub user: UserSettings,
+    #[serde(default)]
+    pub tools: ToolSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,6 +51,54 @@ pub struct Profile {
     /// Keyring entry holding this profile's API key (see ADR 0006).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_name: Option<String>,
+    /// Offer tools to this model. Turn off for models that can't call them.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub tools: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+/// Tools (ADR 0004 and 0008).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ToolSettings {
+    /// Lucy's own tools: files, search, fetch and shell.
+    pub builtin: bool,
+    /// Tool rounds allowed per message in Assist mode before Lucy has to answer.
+    pub max_rounds: u32,
+    /// Glob patterns Lucy never reads without asking. `~/` means home; `**/` matches anywhere.
+    pub private_paths: Vec<String>,
+    /// Per-tool overrides of the usual rule, e.g. `run_command = "deny"`.
+    pub rules: BTreeMap<String, ToolRule>,
+}
+
+impl Default for ToolSettings {
+    fn default() -> Self {
+        Self {
+            builtin: true,
+            max_rounds: 10,
+            private_paths: lucy_tools::paths::DEFAULT_PRIVATE_PATHS
+                .iter()
+                .map(|p| p.to_string())
+                .collect(),
+            rules: BTreeMap::new(),
+        }
+    }
+}
+
+/// Whether a tool runs by itself, asks first, or never runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolRule {
+    Auto,
+    Ask,
+    Deny,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +220,7 @@ impl Config {
             remote: RemoteSettings::default(),
             sprite: SpriteSettings::default(),
             user: UserSettings::default(),
+            tools: ToolSettings::default(),
         }
     }
 

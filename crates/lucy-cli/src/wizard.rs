@@ -84,6 +84,7 @@ pub fn run(prompter: &mut impl Prompter) -> Result<Config> {
             base_url: endpoint.base_url.map(Into::into),
             model: prompter.input("Model", Some(endpoint.model))?,
             key_name: endpoint.key_name.map(Into::into),
+            tools: true,
         },
         None => {
             let base_url = prompter.input("Base URL (e.g. http://localhost:8080/v1)", None)?;
@@ -94,6 +95,7 @@ pub fn run(prompter: &mut impl Prompter) -> Result<Config> {
                 base_url: Some(base_url),
                 model,
                 key_name: Some(key_name).filter(|name| !name.is_empty()),
+                tools: true,
             }
         }
     };
@@ -172,6 +174,7 @@ mod tests {
                     base_url: Some("http://localhost:11434/v1".into()),
                     model: "qwen3:14b".into(),
                     key_name: None,
+                    tools: true,
                 },
             )
         );
@@ -222,6 +225,7 @@ mod tests {
                         base_url: base_url.map(Into::into),
                         model: model.into(),
                         key_name: key_name.map(Into::into),
+                        tools: true,
                     },
                 ),
                 "preset {preset}"
@@ -262,6 +266,7 @@ mod tests {
                     base_url: Some("http://192.168.1.20:8080/v1".into()),
                     model: "llama-3.3-70b".into(),
                     key_name: None,
+                    tools: true,
                 },
             )
         );

@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Tools (step 8a)
+
+- **Lucy can use tools.** Built in: `read_file`, `list_dir`, `search_files`, `fetch_url`,
+  `run_command`, `write_file` and `edit_file`. They work in the folder you started `lucy` in,
+  and need nothing else installed. They're served over MCP in-process, so external MCP servers
+  (next) will follow the same rules.
+- **Approvals.** Reads in your home folder run by themselves. Private paths (`~/.ssh`, `.env`
+  files, keys, cloud credentials) and anything outside home ask first, even through a symlink.
+  So does anything that writes files, runs commands or goes online. Answer `y`, `a` (always,
+  for this chat) or `n`. Edits and writes show a diff first. Unanswered prompts are declined
+  after 5 minutes.
+- **In the chat**, each tool call is one line (`⚙ read_file  notes.txt  ✓ 73 B`). `/tools`
+  lists tools and whether they run or ask, and `/last` shows the last call's full input and
+  output. Resumed chats show past tool calls.
+- **`lucy ask`** asks on your terminal even when the question is piped in, and declines when
+  there's no terminal. `--yes` approves everything. Tool activity goes to stderr.
+- **Config:** `[tools]` (built-ins on/off, round limit, private paths, per-tool
+  `auto`/`ask`/`deny`), and `tools = false` per profile.
+- Lucy's persona now says to use tools instead of guessing, and never to claim she ran or read
+  something without a tool result.
+
+### Upgrading
+
+- **Protocol v2.** Stop the old core after installing (`pkill -f "lucy core run"`); the new
+  `lucy` says so if you forget.
+- The session database migrates itself (it adds tool-call columns).
+- Ollama's default 4,096-token context fills faster with tools. Raise `OLLAMA_CONTEXT_LENGTH`
+  (e.g. 16384) if replies lose track.
+
 ## v0.1.0: first working version (2026-11-05)
 
 Lucy's first usable release: a terminal assistant that works with any OpenAI-compatible or

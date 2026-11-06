@@ -31,6 +31,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         machine: Some(persona::detect_machine()),
         user_name: config.as_ref().and_then(|c| c.user.name.clone()),
         origin,
+        cwd: std::env::current_dir()
+            .ok()
+            .map(|dir| dir.display().to_string()),
     };
     println!("{}", build_system_prompt(&persona, &ctx));
     Ok(())

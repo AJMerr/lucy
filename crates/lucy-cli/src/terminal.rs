@@ -85,6 +85,8 @@ impl Terminal {
 impl LineSource for Terminal {
     fn read_line(&mut self, prompt: &str) -> impl Future<Output = ReadLine> {
         let editor = self.editor.take();
+        // Approval answers (y/a/n) aren't worth keeping in history.
+        let remember = prompt == crate::chat::PROMPT;
         let raw = prompt.to_owned();
         let styled = if self.color {
             format!("\x1b[1;36m{prompt}\x1b[0m")
@@ -104,7 +106,7 @@ impl LineSource for Terminal {
 
             let line = match result {
                 Ok(line) => {
-                    if !line.trim().is_empty() {
+                    if remember && !line.trim().is_empty() {
                         let _ = editor.add_history_entry(line.as_str());
                         if let Some(path) = &self.history {
                             let _ = editor.save_history(path);

@@ -23,12 +23,14 @@ fn profile(provider: ProviderKind, base_url: &str, key_name: Option<&str>) -> Pr
         base_url: Some(base_url.into()),
         model: "some-model".into(),
         key_name: key_name.map(Into::into),
+        tools: true,
     }
 }
 
 async fn send(provider: &dyn Provider) {
     let request = ChatRequest {
         messages: vec![Message::new(Role::User, "hi")],
+        tools: vec![],
     };
     let mut stream = provider.stream(request).await.unwrap();
     while stream.next().await.is_some() {}

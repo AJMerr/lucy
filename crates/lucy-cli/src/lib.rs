@@ -6,4 +6,5 @@ pub mod commands;
 pub mod core_process;
 pub mod markdown;
 pub mod terminal;
+pub mod tool_display;
 pub mod wizard;

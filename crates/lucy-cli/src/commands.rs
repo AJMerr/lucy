@@ -24,6 +24,10 @@ pub enum Command {
     Plain(Option<bool>),
     /// Show, or switch.
     Mode(Option<Mode>),
+    /// List tools and whether each runs by itself or asks.
+    Tools,
+    /// Show the last tool call in full.
+    Last,
 }
 
 /// Every command with its usage, for /help and Tab completion.
@@ -38,6 +42,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "[on|off]  drop Lucy's voice (toggles without an argument)",
     ),
     ("/mode", "[assist|agent]  show or switch mode"),
+    ("/tools", "list Lucy's tools and which ones ask first"),
+    ("/last", "show the last tool call's full input and output"),
     ("/new", "start a new chat"),
     ("/sessions", "list saved chats"),
     (
@@ -72,6 +78,8 @@ pub fn parse(line: &str) -> Result<Input, String> {
         ("quit" | "exit", _) => Command::Quit,
         ("new", _) => Command::New,
         ("sessions", _) => Command::Sessions,
+        ("tools", _) => Command::Tools,
+        ("last", _) => Command::Last,
         ("resume", Some(id)) => Command::Resume(id.to_owned()),
         ("resume", None) => return usage("/resume <session id>"),
         ("delete", Some(id)) => Command::Delete(id.to_owned()),

@@ -5,6 +5,7 @@
 pub mod rpc;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -19,6 +20,15 @@ pub enum Role {
 pub struct Message {
     pub role: Role,
     pub content: String,
+    /// Tools the assistant asked to run (assistant messages only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+    /// The call this message answers (tool messages only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// The tool failed and `content` says why (tool messages only).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_error: bool,
 }
 
 impl Message {
@@ -26,8 +36,42 @@ impl Message {
         Self {
             role,
             content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            is_error: false,
         }
     }
+
+    /// An assistant turn that asks to run tools, possibly after some text.
+    pub fn assistant_with_tools(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            tool_calls,
+            ..Self::new(Role::Assistant, content)
+        }
+    }
+
+    /// The outcome of running one tool call.
+    pub fn tool_result(
+        call_id: impl Into<String>,
+        content: impl Into<String>,
+        is_error: bool,
+    ) -> Self {
+        Self {
+            tool_call_id: Some(call_id.into()),
+            is_error,
+            ..Self::new(Role::Tool, content)
+        }
+    }
+}
+
+/// A model's request to run one tool.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCall {
+    /// Provider-assigned ID that the result must quote back.
+    pub id: String,
+    pub name: String,
+    /// A JSON object matching the tool's input schema.
+    pub arguments: Value,
 }
 
 /// How much freedom Lucy has to run tools without asking.

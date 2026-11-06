@@ -12,26 +12,30 @@ use interprocess::local_socket::ListenerOptions;
 use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
 use lucy_client::Endpoint;
 use lucy_protocol::rpc::{
-    self, CancelResult, ChatSendParams, ChatSendResult, Event, HelloParams, HelloResult,
-    Notification, PROTOCOL_VERSION, ProfileInfo, RenameParams, Request, ResolveParams, Response,
-    RpcError, SessionParams, SessionSettings, SetPlainParams, SetProfileParams, TurnOutcome, code,
-    method,
+    self, ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event,
+    HelloParams, HelloResult, Notification, PROTOCOL_VERSION, ProfileInfo, RenameParams, Request,
+    ResolveParams, Response, RpcError, SessionParams, SessionSettings, SetPlainParams,
+    SetProfileParams, ToolsListParams, TurnOutcome, code, method,
 };
-use lucy_protocol::{Message, Role};
+use lucy_protocol::{Message, Role, ToolCall};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{Notify, broadcast, mpsc};
+use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{Config, ProviderKind};
+use crate::config::{Config, ProviderKind, ToolSettings};
 use crate::persona::{Personas, PromptContext, build_system_prompt, detect_machine};
 use crate::provider::build_provider;
 
 use crate::secrets::{SecretStore, Secrets};
 use crate::sessions::{NewMessage, Origin, SessionId, SessionStore, StoreError};
+use crate::tools::{ToolBox, Verdict, close_dangling_calls};
+
+/// How long a tool call waits for the user's approval before it's treated as declined.
+const APPROVAL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 pub type DynSecrets =
     Secrets<Box<dyn SecretStore + Send + Sync>, Box<dyn Fn(&str) -> Option<String> + Send + Sync>>;
@@ -96,12 +100,16 @@ struct Core {
     next_turn: AtomicU64,
     events: broadcast::Sender<Event>,
     activity: Activity,
+    /// Tool calls waiting for the user, by (session, call ID).
+    approvals: Mutex<HashMap<(String, String), oneshot::Sender<Decision>>>,
 }
 
 #[derive(Default, Clone)]
 struct Overrides {
     profile: Option<String>,
     plain: Option<bool>,
+    /// Tools approved with "always" in this session.
+    allowed_tools: HashSet<String>,
 }
 
 /// Per-connection state shared by its reader and event forwarder.
@@ -128,6 +136,7 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         next_turn: AtomicU64::new(1),
         events,
         activity: Activity::default(),
+        approvals: Mutex::default(),
     });
 
     // Accept in a task of its own: cancelling a pending accept would close the waiting pipe
@@ -419,6 +428,46 @@ async fn handle(
                     .collect::<Vec<_>>(),
             )
         }
+        method::TOOL_APPROVE => {
+            let p: ApproveParams = params(request.params)?;
+            let key = core.resolve_key(&p.session_id)?;
+            let waiting = core
+                .approvals
+                .lock()
+                .unwrap()
+                .remove(&(key, p.call_id.clone()));
+            match waiting {
+                Some(tx) => {
+                    let _ = tx.send(p.decision);
+                    result(Value::Null)
+                }
+                None => Err(RpcError::app(format!(
+                    "no tool call `{}` is waiting for approval (already answered?)",
+                    p.call_id
+                ))),
+            }
+        }
+        method::TOOLS_LIST => {
+            let p: ToolsListParams = params(request.params)?;
+            let config = core.config()?;
+            let allowed = match &p.session_id {
+                Some(prefix) => {
+                    let key = core.resolve_key(prefix)?;
+                    core.overrides
+                        .lock()
+                        .unwrap()
+                        .get(&key)
+                        .map(|o| o.allowed_tools.clone())
+                        .unwrap_or_default()
+                }
+                None => HashSet::new(),
+            };
+            let cwd = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
+            let toolbox = ToolBox::open(&config.tools, cwd).await.map_err(app)?;
+            let infos = toolbox.infos(&allowed);
+            toolbox.close().await;
+            result(infos)
+        }
         other => Err(RpcError::new(
             code::METHOD_NOT_FOUND,
             format!("unknown method `{other}`"),
@@ -521,6 +570,7 @@ fn chat_send(
         text: p.text,
     });
 
+    let cwd = working_folder(p.cwd.as_deref());
     let system = build_system_prompt(
         &persona,
         &PromptContext {
@@ -529,94 +579,312 @@ fn chat_send(
             machine: Some(core.machine.clone()),
             user_name: config.user.name.clone(),
             origin: Some(origin.clone()),
+            cwd: Some(cwd.display().to_string()),
         },
     );
     let messages = std::iter::once(Message::new(Role::System, system))
-        .chain(history.into_iter().map(|m| m.message))
+        .chain(close_dangling_calls(
+            history.into_iter().map(|m| m.message).collect(),
+        ))
         .collect();
 
     let turn_id = core.next_turn.fetch_add(1, Ordering::Relaxed);
     state.lock().unwrap().own_sessions.insert(key.clone());
     core.activity.add(&core.activity.turns, 1);
-    tokio::spawn(run_turn(
-        Arc::clone(core),
+    let turn = Turn {
+        core: Arc::clone(core),
         session_id,
-        turn_id,
-        provider,
-        ChatRequest { messages },
+        key: key.clone(),
+        id: turn_id,
         origin,
+    };
+    tokio::spawn(turn.run(Plan {
+        provider,
+        messages,
+        tools: profile.tools.then(|| (config.tools.clone(), cwd)),
         cancel,
-    ));
+    }));
     result(ChatSendResult {
         session_id: key,
         turn_id,
     })
 }
 
-async fn run_turn(
+/// The folder a client says it's working in, if it exists; otherwise home.
+fn working_folder(cwd: Option<&str>) -> PathBuf {
+    cwd.map(PathBuf::from)
+        .filter(|dir| dir.is_absolute() && dir.is_dir())
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// One reply in progress: model steps, with tool calls in between.
+struct Turn {
     core: Arc<Core>,
     session_id: SessionId,
-    turn_id: u64,
-    provider: Box<dyn Provider>,
-    request: ChatRequest,
+    key: String,
+    id: u64,
     origin: Origin,
-    cancel: CancellationToken,
-) {
-    let key = session_id.to_string();
-    let _ = core.events.send(Event::TurnStarted {
-        session_id: key.clone(),
-        turn_id,
-        profile: origin.profile.clone(),
-        model: origin.model.clone(),
-    });
+}
 
-    let mut text = String::new();
-    let streamed = async {
+struct Plan {
+    provider: Box<dyn Provider>,
+    messages: Vec<Message>,
+    /// Tool settings and working folder, when this profile uses tools.
+    tools: Option<(ToolSettings, PathBuf)>,
+    cancel: CancellationToken,
+}
+
+impl Turn {
+    fn emit(&self, event: Event) {
+        let _ = self.core.events.send(event);
+    }
+
+    /// The session may have been deleted mid-reply; there's nothing to save to then.
+    fn save(&self, message: NewMessage) {
+        let _ = self
+            .core
+            .store
+            .lock()
+            .unwrap()
+            .append(&self.session_id, message);
+    }
+
+    async fn run(self, plan: Plan) {
+        self.emit(Event::TurnStarted {
+            session_id: self.key.clone(),
+            turn_id: self.id,
+            profile: self.origin.profile.clone(),
+            model: self.origin.model.clone(),
+        });
+
+        let toolbox = match plan.tools {
+            Some((settings, cwd)) => match ToolBox::open(&settings, cwd).await {
+                Ok(toolbox) => Some((toolbox, settings.max_rounds)),
+                Err(err) => {
+                    eprintln!("tools unavailable for this reply: {err}");
+                    None
+                }
+            },
+            None => None,
+        };
+
+        // The text of the model step in progress; finished steps are saved as they end.
+        let mut text = String::new();
+        let steps = self.steps(&*plan.provider, plan.messages, toolbox.as_ref(), &mut text);
+        let (outcome, error) = tokio::select! {
+            _ = plan.cancel.cancelled() => (TurnOutcome::Cancelled, None),
+            steps = steps => match steps {
+                Ok(()) => (TurnOutcome::Complete, None),
+                Err(err) => (TurnOutcome::Failed, Some(err)),
+            },
+        };
+        // Keep whatever arrived; a cut-off reply is saved and marked incomplete.
+        if outcome != TurnOutcome::Complete && !text.is_empty() {
+            self.save(NewMessage::assistant(text, self.origin.clone()).incomplete());
+        }
+
+        self.core
+            .approvals
+            .lock()
+            .unwrap()
+            .retain(|(session, _), _| *session != self.key);
+        if let Some((toolbox, _)) = toolbox {
+            toolbox.close().await;
+        }
+        // Free the session before announcing, so a client can send its next message right away.
+        self.core.turns.lock().unwrap().remove(&self.key);
+        self.emit(Event::TurnFinished {
+            session_id: self.key.clone(),
+            turn_id: self.id,
+            outcome,
+            error,
+        });
+        self.core.activity.add(&self.core.activity.turns, -1);
+    }
+
+    /// Ask the model, run any tools it calls, and repeat until it answers without tools.
+    async fn steps(
+        &self,
+        provider: &dyn Provider,
+        mut messages: Vec<Message>,
+        toolbox: Option<&(ToolBox, u32)>,
+        text: &mut String,
+    ) -> Result<(), String> {
+        let specs = toolbox.map(|(t, _)| t.specs()).unwrap_or_default();
+        let max_rounds = toolbox.map_or(0, |(_, max)| *max);
+        let mut round = 0;
+        loop {
+            text.clear();
+            let request = ChatRequest {
+                messages: messages.clone(),
+                tools: specs.clone(),
+            };
+            let calls = self
+                .stream_step(provider, request, text)
+                .await
+                .map_err(|err| err.to_string())?;
+            let said = std::mem::take(text);
+            let Some((toolbox, _)) = toolbox.filter(|_| !calls.is_empty()) else {
+                self.save(NewMessage::assistant(said, self.origin.clone()));
+                return Ok(());
+            };
+
+            round += 1;
+            self.save(NewMessage::assistant_with_tools(
+                said.clone(),
+                calls.clone(),
+                self.origin.clone(),
+            ));
+            messages.push(Message::assistant_with_tools(said, calls.clone()));
+            if round > max_rounds + 1 {
+                return Err(format!(
+                    "Lucy kept calling tools after the limit of {max_rounds} rounds"
+                ));
+            }
+            for call in calls {
+                let (output, is_error) = if round > max_rounds {
+                    let refusal = format!(
+                        "Tool limit reached ({max_rounds} rounds for one message). Answer with \
+                         what you have, and say what's left to do."
+                    );
+                    self.announce(&call, refusal, true)
+                } else {
+                    self.run_call(toolbox, &call).await
+                };
+                self.save(NewMessage::tool_result(&call.id, &output, is_error));
+                messages.push(Message::tool_result(&call.id, output, is_error));
+            }
+        }
+    }
+
+    /// Stream one model response, returning the tool calls it made.
+    async fn stream_step(
+        &self,
+        provider: &dyn Provider,
+        request: ChatRequest,
+        text: &mut String,
+    ) -> Result<Vec<ToolCall>, ProviderError> {
+        let mut calls = Vec::new();
         let mut stream = provider.stream(request).await?;
         while let Some(event) = stream.next().await {
             match event? {
                 StreamEvent::TextDelta(delta) => {
                     text.push_str(&delta);
-                    let _ = core.events.send(Event::Delta {
-                        session_id: key.clone(),
-                        turn_id,
+                    self.emit(Event::Delta {
+                        session_id: self.key.clone(),
+                        turn_id: self.id,
                         text: delta,
                     });
                 }
-                StreamEvent::Done => return Ok(()),
+                StreamEvent::ToolCall(call) => calls.push(call),
+                StreamEvent::Done => return Ok(calls),
             }
         }
         Err(ProviderError::Protocol(
             "stream ended without finishing".into(),
         ))
-    };
-    let (outcome, error) = tokio::select! {
-        _ = cancel.cancelled() => (TurnOutcome::Cancelled, None),
-        streamed = streamed => match streamed {
-            Ok(()) => (TurnOutcome::Complete, None),
-            Err(err) => (TurnOutcome::Failed, Some(err.to_string())),
-        },
-    };
-
-    // Keep whatever arrived; a cut-off reply is saved and marked incomplete.
-    let reply = match outcome {
-        TurnOutcome::Complete => Some(NewMessage::assistant(text, origin)),
-        _ if !text.is_empty() => Some(NewMessage::assistant(text, origin).incomplete()),
-        _ => None,
-    };
-    if let Some(reply) = reply {
-        // The session may have been deleted mid-reply; nothing to save it to then.
-        let _ = core.store.lock().unwrap().append(&session_id, reply);
     }
-    // Free the session before announcing, so a client can send its next message right away.
-    core.turns.lock().unwrap().remove(&key);
-    let _ = core.events.send(Event::TurnFinished {
-        session_id: key,
-        turn_id,
-        outcome,
-        error,
-    });
-    core.activity.add(&core.activity.turns, -1);
+
+    /// Check permissions (asking the user if needed), then run the call.
+    async fn run_call(&self, toolbox: &ToolBox, call: &ToolCall) -> (String, bool) {
+        let allowed = self
+            .core
+            .overrides
+            .lock()
+            .unwrap()
+            .get(&self.key)
+            .map(|o| o.allowed_tools.clone())
+            .unwrap_or_default();
+        let go_ahead = match toolbox.verdict(call, &allowed) {
+            Verdict::Run => Ok(()),
+            Verdict::Refuse(reason) => Err(reason),
+            Verdict::Ask { reason, preview } => match self.approval(call, reason, preview).await {
+                Some(Decision::Once) => Ok(()),
+                Some(Decision::Always) => {
+                    self.core
+                        .overrides
+                        .lock()
+                        .unwrap()
+                        .entry(self.key.clone())
+                        .or_default()
+                        .allowed_tools
+                        .insert(call.name.clone());
+                    Ok(())
+                }
+                Some(Decision::Deny) => Err(
+                    "The user declined this tool call. Don't try it again unless they ask.".into(),
+                ),
+                None => Err(format!(
+                    "Nobody answered the approval prompt within {} minutes, so this didn't run.",
+                    APPROVAL_TIMEOUT.as_secs() / 60
+                )),
+            },
+        };
+        match go_ahead {
+            Ok(()) => {
+                self.emit(Event::ToolStarted {
+                    session_id: self.key.clone(),
+                    turn_id: self.id,
+                    call: call.clone(),
+                });
+                let (output, is_error) = toolbox.call(call).await;
+                self.finished(call, &output, is_error);
+                (output, is_error)
+            }
+            Err(reason) => self.announce(call, reason, true),
+        }
+    }
+
+    /// Wait for a client to approve or decline; `None` if nobody answers in time.
+    async fn approval(
+        &self,
+        call: &ToolCall,
+        reason: String,
+        preview: Option<String>,
+    ) -> Option<Decision> {
+        let (tx, rx) = oneshot::channel();
+        self.core
+            .approvals
+            .lock()
+            .unwrap()
+            .insert((self.key.clone(), call.id.clone()), tx);
+        self.emit(Event::ToolApproval {
+            session_id: self.key.clone(),
+            turn_id: self.id,
+            call: call.clone(),
+            reason,
+            preview,
+        });
+        let decision = tokio::time::timeout(APPROVAL_TIMEOUT, rx).await;
+        self.core
+            .approvals
+            .lock()
+            .unwrap()
+            .remove(&(self.key.clone(), call.id.clone()));
+        decision.ok().and_then(Result::ok)
+    }
+
+    /// Report a call that didn't run, as if it ran and failed with `output`.
+    fn announce(&self, call: &ToolCall, output: String, is_error: bool) -> (String, bool) {
+        self.emit(Event::ToolStarted {
+            session_id: self.key.clone(),
+            turn_id: self.id,
+            call: call.clone(),
+        });
+        self.finished(call, &output, is_error);
+        (output, is_error)
+    }
+
+    fn finished(&self, call: &ToolCall, output: &str, is_error: bool) {
+        self.emit(Event::ToolFinished {
+            session_id: self.key.clone(),
+            turn_id: self.id,
+            call_id: call.id.clone(),
+            output: output.to_owned(),
+            is_error,
+        });
+    }
 }
 
 fn session_dto(session: crate::sessions::Session) -> rpc::Session {
@@ -628,6 +896,9 @@ fn session_dto(session: crate::sessions::Session) -> rpc::Session {
             .map(|m| rpc::StoredMessage {
                 role: m.message.role,
                 content: m.message.content,
+                tool_calls: m.message.tool_calls,
+                tool_call_id: m.message.tool_call_id,
+                is_error: m.message.is_error,
                 profile: m.origin.as_ref().map(|o| o.profile.clone()),
                 model: m.origin.map(|o| o.model),
                 incomplete: m.incomplete,

@@ -1,12 +1,12 @@
 //! Anthropic Messages API adapter (raw HTTP; there is no official Rust SDK).
 
 use async_trait::async_trait;
-use lucy_protocol::Role;
+use lucy_protocol::{Message, Role, ToolCall};
 use serde_json::{Value, json};
 
 use crate::http::{check_status, error_message, send_error};
 use crate::sse::{self, EventParser, SseEvent};
-use crate::{ChatRequest, EventStream, Provider, ProviderError, StreamEvent};
+use crate::{ChatRequest, EventStream, Provider, ProviderError, StreamEvent, parse_arguments};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
@@ -53,26 +53,28 @@ impl Provider for Anthropic {
             .iter()
             .partition(|m| m.role == Role::System);
         let system: Vec<&str> = system.iter().map(|m| m.content.as_str()).collect();
-        let messages: Vec<Value> = turns
-            .iter()
-            .map(|m| {
-                let role = if m.role == Role::Assistant {
-                    "assistant"
-                } else {
-                    "user"
-                };
-                json!({"role": role, "content": m.content})
-            })
-            .collect();
 
         let mut body = json!({
             "model": self.config.model,
             "max_tokens": MAX_TOKENS,
             "stream": true,
-            "messages": messages,
+            "messages": messages(&turns),
         });
         if !system.is_empty() {
             body["system"] = json!(system.join("\n\n"));
+        }
+        if !request.tools.is_empty() {
+            body["tools"] = request
+                .tools
+                .iter()
+                .map(|tool| {
+                    json!({
+                        "name": tool.name,
+                        "description": tool.description,
+                        "input_schema": tool.input_schema,
+                    })
+                })
+                .collect();
         }
 
         let response = self
@@ -86,24 +88,111 @@ impl Provider for Anthropic {
             .map_err(|err| send_error(&url, err))?;
         Ok(sse::event_stream(
             check_status(response).await?,
-            MessageParser,
+            MessageParser::default(),
         ))
     }
 }
 
-struct MessageParser;
+fn messages(turns: &[&Message]) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for m in turns {
+        match m.role {
+            Role::Tool => {
+                let mut result = json!({
+                    "type": "tool_result",
+                    "tool_use_id": m.tool_call_id,
+                    "content": m.content,
+                });
+                if m.is_error {
+                    result["is_error"] = json!(true);
+                }
+                // Results of one turn's calls share a single user message.
+                match out.last_mut() {
+                    Some(last) if last["role"] == "user" && last["content"].is_array() => {
+                        last["content"].as_array_mut().unwrap().push(result);
+                    }
+                    _ => out.push(json!({"role": "user", "content": [result]})),
+                }
+            }
+            Role::Assistant if !m.tool_calls.is_empty() => {
+                let mut blocks = Vec::new();
+                if !m.content.is_empty() {
+                    blocks.push(json!({"type": "text", "text": m.content}));
+                }
+                for call in &m.tool_calls {
+                    blocks.push(json!({
+                        "type": "tool_use",
+                        "id": call.id,
+                        "name": call.name,
+                        "input": input(&call.arguments),
+                    }));
+                }
+                out.push(json!({"role": "assistant", "content": blocks}));
+            }
+            Role::Assistant => out.push(json!({"role": "assistant", "content": m.content})),
+            _ => out.push(json!({"role": "user", "content": m.content})),
+        }
+    }
+    out
+}
+
+/// `input` must be an object; garbled arguments (kept as a string) are wrapped in one.
+fn input(arguments: &Value) -> Value {
+    if arguments.is_object() {
+        arguments.clone()
+    } else {
+        json!({"_unparsed": arguments})
+    }
+}
+
+/// A tool_use block whose input JSON is still arriving.
+struct PartialCall {
+    id: String,
+    name: String,
+    input: String,
+}
+
+#[derive(Default)]
+struct MessageParser {
+    call: Option<PartialCall>,
+}
 
 impl EventParser for MessageParser {
     fn on_event(&mut self, event: SseEvent) -> Result<Vec<StreamEvent>, ProviderError> {
         let value: Value = serde_json::from_str(&event.data)
             .map_err(|err| ProviderError::Protocol(format!("bad event: {err}")))?;
+        let delta = &value["delta"];
         let events = match value["type"].as_str() {
-            // Thinking, signature and tool-input deltas are skipped; only text is streamed.
-            Some("content_block_delta") if value["delta"]["type"] == "text_delta" => {
-                let text = value["delta"]["text"].as_str().unwrap_or_default();
+            // Thinking and signature deltas are skipped; text streams, tool calls arrive whole.
+            Some("content_block_delta") if delta["type"] == "text_delta" => {
+                let text = delta["text"].as_str().unwrap_or_default();
                 vec![StreamEvent::TextDelta(text.to_owned())]
             }
-            Some("message_delta") if value["delta"]["stop_reason"] == "refusal" => {
+            Some("content_block_start") if value["content_block"]["type"] == "tool_use" => {
+                let block = &value["content_block"];
+                self.call = Some(PartialCall {
+                    id: block["id"].as_str().unwrap_or_default().to_owned(),
+                    name: block["name"].as_str().unwrap_or_default().to_owned(),
+                    input: String::new(),
+                });
+                vec![]
+            }
+            Some("content_block_delta") if delta["type"] == "input_json_delta" => {
+                if let Some(call) = &mut self.call {
+                    call.input
+                        .push_str(delta["partial_json"].as_str().unwrap_or_default());
+                }
+                vec![]
+            }
+            Some("content_block_stop") => match self.call.take() {
+                Some(call) => vec![StreamEvent::ToolCall(ToolCall {
+                    id: call.id,
+                    name: call.name,
+                    arguments: parse_arguments(&call.input),
+                })],
+                None => vec![],
+            },
+            Some("message_delta") if delta["stop_reason"] == "refusal" => {
                 return Err(ProviderError::Refused(
                     "stopped by Anthropic's safety classifiers".into(),
                 ));

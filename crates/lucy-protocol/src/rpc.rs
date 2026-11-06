@@ -4,10 +4,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::Role;
+use crate::{Role, ToolCall};
 
 /// Bumped on any incompatible change; `hello` refuses mismatched clients.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 pub mod method {
     pub const HELLO: &str = "hello";
@@ -24,6 +24,8 @@ pub mod method {
     pub const SESSION_SET_PROFILE: &str = "session.set_profile";
     pub const SESSION_SET_PLAIN: &str = "session.set_plain";
     pub const PROFILES_LIST: &str = "profiles.list";
+    pub const TOOLS_LIST: &str = "tools.list";
+    pub const TOOL_APPROVE: &str = "tool.approve";
     /// Notification carrying an [`Event`](super::Event).
     pub const EVENT: &str = "event";
 }
@@ -146,6 +148,9 @@ pub struct ChatSendParams {
     #[serde(default)]
     pub session_id: Option<String>,
     pub text: String,
+    /// The user's working folder: relative paths and commands start here. Defaults to home.
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -208,6 +213,12 @@ pub struct SessionSummary {
 pub struct StoredMessage {
     pub role: Role,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub is_error: bool,
     pub profile: Option<String>,
     pub model: Option<String>,
     pub incomplete: bool,
@@ -226,6 +237,51 @@ pub struct ProfileInfo {
     pub provider: String,
     pub model: String,
     pub is_default: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolsListParams {
+    /// Show this session's rules, including tools approved with "always".
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolInfo {
+    pub name: String,
+    /// Which server provides it: `builtin`, or an MCP server's name from config.
+    pub server: String,
+    pub description: String,
+    /// What happens when Lucy calls it in Assist mode.
+    pub rule: ToolRuleInfo,
+}
+
+/// How a call is handled: run straight away, ask first, or refuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolRuleInfo {
+    Auto,
+    /// Read-only, but asks for private files or anything outside home.
+    AutoInHome,
+    Ask,
+    Deny,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApproveParams {
+    pub session_id: String,
+    pub call_id: String,
+    pub decision: Decision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Decision {
+    /// Run this call.
+    Once,
+    /// Run this call, and later calls of the same tool in this session without asking.
+    Always,
+    Deny,
 }
 
 // --- Events -------------------------------------------------------------------------------
@@ -249,6 +305,31 @@ pub enum Event {
         turn_id: u64,
         text: String,
     },
+    /// A tool call needs the user's go-ahead; answer with `tool.approve`. Any connected
+    /// client may answer; the first answer counts.
+    ToolApproval {
+        session_id: String,
+        turn_id: u64,
+        call: ToolCall,
+        /// Why it needs approval, e.g. "can change files".
+        reason: String,
+        /// What it would change, e.g. a diff for a file edit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preview: Option<String>,
+    },
+    ToolStarted {
+        session_id: String,
+        turn_id: u64,
+        call: ToolCall,
+    },
+    ToolFinished {
+        session_id: String,
+        turn_id: u64,
+        call_id: String,
+        /// Exactly what the model was given.
+        output: String,
+        is_error: bool,
+    },
     TurnFinished {
         session_id: String,
         turn_id: u64,
@@ -264,6 +345,9 @@ impl Event {
             Event::UserMessage { session_id, .. }
             | Event::TurnStarted { session_id, .. }
             | Event::Delta { session_id, .. }
+            | Event::ToolApproval { session_id, .. }
+            | Event::ToolStarted { session_id, .. }
+            | Event::ToolFinished { session_id, .. }
             | Event::TurnFinished { session_id, .. } => session_id,
         }
     }

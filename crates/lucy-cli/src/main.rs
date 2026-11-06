@@ -31,6 +31,9 @@ enum Command {
     Ask {
         /// The prompt. Reads stdin when omitted.
         prompt: Option<String>,
+        /// Approve every tool call without asking (for scripts you trust).
+        #[arg(short, long)]
+        yes: bool,
     },
     /// Set up or inspect Lucy's config file.
     Config {
@@ -106,12 +109,12 @@ fn main() -> Result<()> {
             };
             terminal::run(start)
         }
-        Some(Command::Ask { prompt }) => {
+        Some(Command::Ask { prompt, yes }) => {
             let path = config_path()?;
             if Config::load(&path)?.is_none() {
                 bail!(no_config_message(&path));
             }
-            ask::run(prompt)
+            ask::run(prompt, yes)
         }
         Some(Command::Core {
             action: CoreAction::Run,

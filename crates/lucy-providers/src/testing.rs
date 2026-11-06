@@ -51,6 +51,17 @@ impl FakeResponse {
         }
     }
 
+    /// Any other response, e.g. a web page for the fetch tool.
+    pub fn body(status: u16, content_type: &'static str, body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            status,
+            content_type,
+            body: body.into(),
+            chunk_size: Self::DEFAULT_CHUNK,
+            stall: false,
+        }
+    }
+
     /// Write the body in pieces of `size` bytes (large captures are slow at the default).
     pub fn chunk_size(mut self, size: usize) -> Self {
         self.chunk_size = size;

@@ -175,6 +175,7 @@ async fn send(client: &Client, session: Option<&str>, text: &str) -> ChatSendRes
             ChatSendParams {
                 session_id: session.map(Into::into),
                 text: text.into(),
+                cwd: None,
             },
         )
         .await
@@ -536,6 +537,7 @@ async fn cancel_stops_the_reply_and_keeps_the_partial_text() {
             ChatSendParams {
                 session_id: Some(sent.session_id.clone()),
                 text: "hurry".into(),
+                cwd: None,
             },
         )
         .await
@@ -619,6 +621,7 @@ async fn missing_api_key_is_reported_before_anything_is_saved() {
             ChatSendParams {
                 session_id: Some(first.session_id.clone()),
                 text: "again".into(),
+                cwd: None,
             },
         )
         .await

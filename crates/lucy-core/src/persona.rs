@@ -122,6 +122,8 @@ pub struct PromptContext {
     pub user_name: Option<String>,
     /// The profile and model answering, so Lucy can say what she runs on.
     pub origin: Option<Origin>,
+    /// The folder the user is working in; tools resolve relative paths against it.
+    pub cwd: Option<String>,
 }
 
 /// The persona text for this mode, followed by a context section. Context goes last so the
@@ -146,6 +148,9 @@ pub fn build_system_prompt(persona: &Persona, ctx: &PromptContext) -> String {
             "- You are running as profile `{}` (model `{}`).",
             origin.profile, origin.model
         ));
+    }
+    if let Some(cwd) = &ctx.cwd {
+        lines.push(format!("- Working folder: {cwd}"));
     }
     format!(
         "{}\n\n{}",

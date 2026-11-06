@@ -24,6 +24,7 @@ workspace = "~/Projects"        # only used at agent_level = 2
 provider = "openai_compat"
 base_url = "http://localhost:11434/v1"   # Ollama
 model = "qwen3:14b"
+# tools = false                 # for models that can't call tools
 
 [profiles.qwen-cloud]
 provider = "openai_compat"
@@ -41,6 +42,22 @@ key_name = "openrouter"
 provider = "anthropic"
 model = "claude-sonnet-5-5"
 key_name = "anthropic"          # env override: LUCY_KEY_ANTHROPIC (or ANTHROPIC_API_KEY)
+
+# --- Tools (Assist mode) ------------------------------------------------------------------
+# Read-only tools run by themselves for files in your home folder. Anything that changes
+# files, runs commands or goes online asks first: y (once), a (always, this chat), n (no).
+
+[tools]
+builtin = true                  # Lucy's own tools: read_file, list_dir, search_files,
+                                # fetch_url, run_command, write_file, edit_file
+max_rounds = 10                 # tool rounds per message before Lucy must answer
+# Never read without asking. `~/` is your home; `**/` matches anywhere. Setting this replaces
+# the built-in list, so copy the defaults you want to keep:
+# private_paths = ["~/.ssh/**", "~/.gnupg/**", "~/.aws/**", "**/.env", "**/*.pem", "**/*.key"]
+
+[tools.rules]                   # override the usual rule for a tool: "auto" | "ask" | "deny"
+# run_command = "deny"
+# fetch_url = "auto"
 
 # --- Remote access (off by default) -------------------------------------------------------
 

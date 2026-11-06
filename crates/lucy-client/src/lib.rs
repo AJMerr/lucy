@@ -74,7 +74,8 @@ pub enum ClientError {
     },
     #[error(
         "the running Lucy core speaks protocol v{core} but this client needs v{client}; \
-         stop the old core (it exits after being idle) and try again"
+         stop the old core with `pkill -f \"lucy core run\"` (on Windows, end the lucy.exe \
+         running `core run`) and try again"
     )]
     VersionMismatch { core: u32, client: u32 },
     #[error("lost connection to the Lucy core")]

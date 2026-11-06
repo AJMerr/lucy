@@ -64,6 +64,7 @@ mod tests {
     fn request(text: &str) -> ChatRequest {
         ChatRequest {
             messages: vec![Message::new(Role::User, text)],
+            tools: vec![],
         }
     }
 

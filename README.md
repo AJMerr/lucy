@@ -4,9 +4,10 @@ A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her 
 today; later she'll live on your desktop as an animated sprite with speech bubbles that you can
 toggle on and off.
 
-> **Status:** v0.1.0, the first working version: terminal chat with any OpenAI-compatible or
-> Anthropic model. Tools, agent mode and the desktop sprite are next. See
-> [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
+> **Status:** v0.1.0 plus tools (unreleased): terminal chat with any OpenAI-compatible or
+> Anthropic model, now able to read, search, run and edit with your approval. External MCP
+> servers, agent mode and the desktop sprite are next. See [release notes](CHANGELOG.md) and the
+> [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -17,6 +18,10 @@ toggle on and off.
   can override.
 - **Streaming chat with Markdown.** Headings, lists, inline code and syntax-highlighted code
   blocks render as the reply arrives. Ctrl+C stops a reply and keeps what was said.
+- **Tools, with your say-so.** Lucy can read, list and search files, fetch web pages, run
+  commands, and write or edit files. Reads in your home folder just happen; anything that
+  changes files, runs a command or goes online asks first (`y`, `a` for always this chat, `n`).
+  Private paths like `~/.ssh` and `.env` files always ask.
 - **Saved conversations.** Every chat is stored locally in SQLite. Continue the last one with
   `lucy -c`, or resume any by ID prefix.
 - **Keys kept out of files.** API keys live in your OS keyring, with environment-variable
@@ -51,6 +56,7 @@ lucy                       # new chat
 lucy -c                    # continue your most recent chat
 lucy -r 01m6ne             # resume a chat by any unique ID prefix
 lucy ask "what's a flake?" # one answer, plain text, then exit
+lucy ask -y "tidy todo.md" # approve every tool call (only for scripts you trust)
 git diff | lucy ask        # the prompt can come from stdin
 ```
 
@@ -62,6 +68,8 @@ In the chat:
 | `/plain [on\|off]` | drop Lucy's voice (toggles without an argument) |
 | `/new`, `/sessions` | start a new chat, list saved chats |
 | `/resume <id>`, `/rename <title>`, `/delete <id>` | manage saved chats |
+| `/tools` | list tools and whether each runs by itself or asks |
+| `/last` | show the last tool call's full input and output |
 | `/mode` | show the mode (agent mode arrives in a later version) |
 | `/help`, `/quit` | the list of commands, leave |
 
@@ -69,6 +77,10 @@ Keys: Tab completes commands and profile names, Alt+Enter (or a trailing `\`) st
 Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a literal `/`.
 
 Other commands: `lucy config path`, `lucy auth set|remove|status`.
+
+`lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
+it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
+declines, unless you pass `--yes`.
 
 ### Configuration
 
@@ -81,6 +93,10 @@ that file. Instead:
 - `LUCY_KEY_<NAME>` overrides it, and vendor variables like `ANTHROPIC_API_KEY` are used as a
   fallback.
 - `lucy auth status` shows where each key comes from, without printing it.
+
+Tools are set up under `[tools]`: turn the built-ins off, change the private-path list, or
+set a tool to `auto`, `ask` or `deny`. Add `tools = false` to a profile whose model can't
+call tools. See [ADR 0008](docs/adr/0008-tools-over-mcp.md).
 
 To change Lucy's voice, copy [`persona/lucy.md`](persona/lucy.md) to
 `~/.config/lucy/personas/lucy.md` and edit it. Text between `<!-- voice -->` markers is dropped in
@@ -108,9 +124,10 @@ plain mode.
 crates/
   lucy-protocol/   JSON-RPC messages and events shared by every side
   lucy-providers/  the Provider trait + openai_compat and anthropic streaming adapters
-  lucy-core/       the background core: config, keys, sessions, personas, the socket server
+  lucy-core/       the background core: config, keys, sessions, personas, tool rules, socket
   lucy-client/     connects front ends to the core (and starts it on demand)
   lucy-cli/        the `lucy` command: chat loop, Markdown renderer, setup wizard
+  lucy-tools/      built-in tools (files, search, fetch, shell) as an in-process MCP server
 apps/sprite/       Tauri desktop overlay (milestone 2)
 persona/           built-in personas
 packs/placeholder/ the only sprite pack tracked in git

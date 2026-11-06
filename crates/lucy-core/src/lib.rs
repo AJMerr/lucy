@@ -10,6 +10,7 @@ pub mod provider;
 pub mod secrets;
 pub mod server;
 pub mod sessions;
+pub mod tools;
 
 pub use lucy_protocol as protocol;
 pub use lucy_providers as providers;
