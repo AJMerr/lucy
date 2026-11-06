@@ -107,6 +107,18 @@ enum McpAction {
         /// Folder to start it in (default: home).
         #[arg(long)]
         cwd: Option<PathBuf>,
+        /// A remote server's address, instead of a command.
+        #[arg(long)]
+        url: Option<String>,
+        /// Keyring entry to send as `Authorization: Bearer <key>` (remote servers).
+        #[arg(long, value_name = "KEYNAME")]
+        bearer_key: Option<String>,
+        /// Send a header filled from the keyring: HEADER=keyname (remote servers).
+        #[arg(long = "header-key", value_name = "HEADER=KEYNAME")]
+        header_keys: Vec<String>,
+        /// Send a plain header: HEADER=value (remote servers).
+        #[arg(long = "header", value_name = "HEADER=VALUE")]
+        headers: Vec<String>,
         /// The command that starts the server, after `--`.
         #[arg(last = true)]
         command: Vec<String>,
@@ -115,6 +127,10 @@ enum McpAction {
     List,
     /// Remove a server from the config.
     Remove { name: String },
+    /// Sign in to a remote server in your browser (OAuth); tokens go in the keyring.
+    Login { name: String },
+    /// Forget a remote server's sign-in.
+    Logout { name: String },
     /// Serve Lucy's built-in tools over stdio, for other MCP clients.
     #[command(hide = true)]
     Serve,
@@ -200,6 +216,10 @@ fn mcp_command(action: McpAction) -> Result<()> {
             keys,
             env,
             cwd,
+            url,
+            bearer_key,
+            header_keys,
+            headers,
             command,
         } => {
             let args = mcp::AddArgs {
@@ -208,6 +228,10 @@ fn mcp_command(action: McpAction) -> Result<()> {
                 keys,
                 env,
                 cwd,
+                url,
+                bearer_key,
+                header_keys,
+                headers,
             };
             let (name, server) = if std::io::stdin().is_terminal() {
                 mcp::complete_add(args, &mut TerminalPrompter)?
@@ -216,7 +240,20 @@ fn mcp_command(action: McpAction) -> Result<()> {
             };
             mcp::add_to_config(&path, &name, &server)?;
             println!("Added `{name}` to {}.", path.display());
-            runtime.block_on(mcp::check(&name, &server))
+            let checked = runtime.block_on(mcp::check(&name, &server))?;
+            if matches!(checked, mcp::Checked::NeedsLogin) {
+                if std::io::stdin().is_terminal()
+                    && Confirm::new()
+                        .with_prompt("Log in now?")
+                        .default(true)
+                        .interact()?
+                {
+                    runtime.block_on(mcp::login(&name, &server))?;
+                } else {
+                    println!("Sign in later with `lucy mcp login {name}`.");
+                }
+            }
+            Ok(())
         }
         McpAction::List => {
             let config = Config::load(&path)?.with_context(|| no_config_message(&path))?;
@@ -227,6 +264,15 @@ fn mcp_command(action: McpAction) -> Result<()> {
             println!("Removed `{name}`. New chats won't offer its tools.");
             Ok(())
         }
+        McpAction::Login { name } => {
+            let config = Config::load(&path)?.with_context(|| no_config_message(&path))?;
+            let server =
+                config.mcp.servers.get(&name).with_context(|| {
+                    format!("no MCP server named `{name}`; see `lucy mcp list`")
+                })?;
+            runtime.block_on(mcp::login(&name, server))
+        }
+        McpAction::Logout { name } => mcp::logout(&name),
         McpAction::Serve => runtime.block_on(mcp::serve()),
     }
 }
@@ -284,7 +330,12 @@ fn auth_status() -> Result<()> {
         }
     }
     for (server, settings) in &config.mcp.servers {
-        for key_name in settings.env_keys.values() {
+        let keys = settings
+            .env_keys
+            .values()
+            .chain(settings.header_keys.values())
+            .chain(&settings.bearer_key);
+        for key_name in keys {
             key_names.entry(key_name).or_default().push(server);
         }
     }

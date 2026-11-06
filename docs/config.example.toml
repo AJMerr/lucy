@@ -61,10 +61,11 @@ max_rounds = 10                 # tool rounds per message before Lucy must answe
 # fetch_url = "auto"
 
 # --- External MCP servers -----------------------------------------------------------------
-# Programs Lucy starts the first time a chat needs tools, then keeps running. Their tools
-# appear as `<server>__<tool>`, and follow the same rules as the built-ins (labels decide
-# what runs by itself; [tools.rules] can name a whole server, e.g. github = "ask").
-# `lucy mcp add|list|remove` edits this section for you.
+# Programs Lucy starts, or URLs she connects to, the first time a chat needs tools; then kept
+# for every chat. Their tools appear as `<server>__<tool>` and follow the same rules as the
+# built-ins (labels decide what runs by itself; [tools.rules] can name a whole server, e.g.
+# github = "ask"). Remote servers' read-only tools run without local path checks.
+# `lucy mcp add|list|remove|login|logout` manage this section for you.
 
 [mcp.servers.github]
 command = "npx"
@@ -73,6 +74,16 @@ env_keys = { GITHUB_PERSONAL_ACCESS_TOKEN = "github" }   # from `lucy auth set g
 # env = { GITHUB_HOST = "github.com" }                  # plain, non-secret values
 # cwd = "~/Projects"                                     # default: home
 # enabled = false                                        # keep it configured but off
+
+# A remote server, reached at a URL. Sign in with `lucy mcp login linear` (OAuth, opens your
+# browser; tokens go in the keyring), or give it a key:
+[mcp.servers.linear]
+url = "https://mcp.linear.app/mcp"
+# bearer_key = "linear"                                  # sends `Authorization: Bearer <key>`
+# header_keys = { X-Api-Key = "acme" }                   # other headers, filled from the keyring
+# headers = { X-Region = "eu" }                          # plain headers
+# oauth_client_id = "your-app-id"                        # if the server won't register Lucy itself
+# oauth_redirect_port = 8976                             # if that app needs a fixed redirect
 
 # --- Remote access (off by default) -------------------------------------------------------
 

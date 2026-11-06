@@ -292,9 +292,17 @@ impl Config {
         }
         for (name, server) in &self.mcp.servers {
             validate_server_name(name).map_err(ConfigError::Invalid)?;
-            if server.command.trim().is_empty() {
+            let command = server
+                .command
+                .as_deref()
+                .is_some_and(|c| !c.trim().is_empty());
+            let url = server
+                .url
+                .as_deref()
+                .is_some_and(|u| u.starts_with("http://") || u.starts_with("https://"));
+            if command == url {
                 return Err(ConfigError::Invalid(format!(
-                    "MCP server `{name}` needs a command"
+                    "MCP server `{name}` needs either a command or an http(s) url, not both"
                 )));
             }
         }
@@ -315,12 +323,14 @@ impl McpSettings {
     }
 }
 
-/// A server Lucy starts as a program and talks to over stdin/stdout.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// A server Lucy either starts as a program (`command`, talking over stdin/stdout) or
+/// reaches at a URL (`url`, streamable HTTP). Exactly one of the two is set.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpServer {
     /// The program, e.g. `npx`. Looked up on `PATH`.
-    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
     /// Plain environment variables (nothing secret).
@@ -333,8 +343,61 @@ pub struct McpServer {
     /// Folder to start in; defaults to home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
+    /// A remote server's address, e.g. `https://mcp.linear.app/mcp`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Keyring entry sent as `Authorization: Bearer <key>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bearer_key: Option<String>,
+    /// Headers filled from keyring entries, e.g. `{ X-Api-Key = "acme" }`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub header_keys: BTreeMap<String, String>,
+    /// Plain headers (nothing secret).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    /// For sign-in with an app you registered yourself, instead of automatic registration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+    /// Fixed port for the sign-in redirect (`http://127.0.0.1:<port>/callback`), when your
+    /// registered app needs one. Default: any free port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_redirect_port: Option<u16>,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub enabled: bool,
+}
+
+impl McpServer {
+    /// A server started as `command args…`, enabled.
+    pub fn program(command: impl Into<String>, args: Vec<String>) -> Self {
+        Self {
+            command: Some(command.into()),
+            args,
+            enabled: true,
+            ..Self::default()
+        }
+    }
+
+    /// A remote server at `url`, enabled.
+    pub fn remote(url: impl Into<String>) -> Self {
+        Self {
+            url: Some(url.into()),
+            enabled: true,
+            ..Self::default()
+        }
+    }
+
+    /// Where it runs, for listings: the command line or the URL.
+    pub fn describe(&self) -> String {
+        match (&self.command, &self.url) {
+            (Some(command), _) => std::iter::once(command)
+                .chain(&self.args)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" "),
+            (None, Some(url)) => url.clone(),
+            (None, None) => "(no command or url)".into(),
+        }
+    }
 }
 
 /// Server names become tool-name prefixes (`github__create_issue`), so keep them simple.

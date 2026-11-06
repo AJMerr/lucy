@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod mcp;
+pub mod oauth;
 pub mod persona;
 pub mod provider;
 pub mod secrets;

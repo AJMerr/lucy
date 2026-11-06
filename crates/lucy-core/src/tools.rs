@@ -154,6 +154,7 @@ impl ToolBox {
             Some(ToolRule::Ask) => ToolRuleInfo::Ask,
             Some(ToolRule::Deny) => ToolRuleInfo::Deny,
             None if allowed.contains(&tool.name) => ToolRuleInfo::Auto,
+            None if is_remote(tool) && is_read_only(tool) => ToolRuleInfo::Auto,
             None if reads_locally(tool) => ToolRuleInfo::AutoInHome,
             None => ToolRuleInfo::Ask,
         }
@@ -185,6 +186,10 @@ impl ToolBox {
             None => {}
         }
         if allowed.contains(&call.name) {
+            return Verdict::Run;
+        }
+        // A remote server you connected: its read-only tools run, and its paths aren't local.
+        if is_remote(tool) && is_read_only(tool) {
             return Verdict::Run;
         }
         if reads_locally(tool) {
@@ -235,7 +240,7 @@ impl ToolBox {
     /// Where a tool's relative paths start: the turn's folder, or the server's.
     fn base_dir(&self, tool: &Tool) -> PathBuf {
         match &tool.external {
-            Some(server) => server.cwd().to_owned(),
+            Some(server) => server.cwd().unwrap_or(&self.cwd).to_owned(),
             None => self.cwd.clone(),
         }
     }
@@ -293,6 +298,15 @@ impl ToolBox {
             .is_some_and(|home| real.starts_with(real_path(home)));
         (!inside_home).then(|| format!("reads outside your home folder ({})", path.display()))
     }
+}
+
+/// Reached over the network rather than started on this machine.
+fn is_remote(tool: &Tool) -> bool {
+    tool.external.as_ref().is_some_and(|s| s.cwd().is_none())
+}
+
+fn is_read_only(tool: &Tool) -> bool {
+    tool.def.annotations.as_ref().and_then(|h| h.read_only_hint) == Some(true)
 }
 
 /// Read-only and stays on this machine: runs without asking (paths permitting).

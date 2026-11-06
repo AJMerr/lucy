@@ -50,6 +50,8 @@ pub struct CoreOptions {
     pub secrets: DynSecrets,
     /// Exit after this long with no connections and no reply streaming.
     pub idle_timeout: Duration,
+    /// Where remote MCP servers' OAuth tokens live; `None` keeps them in memory (tests).
+    pub token_store: Option<crate::oauth::TokenStore>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -129,6 +131,10 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
     let store = SessionStore::open(&options.db_path)?;
     let (events, _) = broadcast::channel(1024);
     let idle_timeout = options.idle_timeout;
+    let mcp = match &options.token_store {
+        Some(store) => McpHost::with_token_store(Arc::clone(store)),
+        None => McpHost::new(),
+    };
     let core = Arc::new(Core {
         personas: Personas::new(options.personas_dir.clone()),
         options,
@@ -140,7 +146,7 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         events,
         activity: Activity::default(),
         approvals: Mutex::default(),
-        mcp: McpHost::new(),
+        mcp,
     });
 
     // Accept in a task of its own: cancelling a pending accept would close the waiting pipe

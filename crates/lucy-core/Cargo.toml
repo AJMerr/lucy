@@ -12,6 +12,9 @@ lucy-providers.workspace = true
 lucy-client.workspace = true
 lucy-tools.workspace = true
 rmcp.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+url.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 futures.workspace = true
@@ -29,3 +32,6 @@ rusqlite.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 lucy-providers = { workspace = true, features = ["testing"] }
+axum.workspace = true
+rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
+tokio = { workspace = true, features = ["net"] }

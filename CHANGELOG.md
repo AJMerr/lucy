@@ -38,6 +38,21 @@
 - `/tools` and `lucy mcp list` show servers that failed to start, and why.
 - `lucy mcp serve` offers Lucy's built-in tools to other MCP clients over stdio.
 
+### Remote MCP servers (step 8c)
+
+- **Servers at a URL.** `lucy mcp add linear --url https://mcp.linear.app/mcp`; or type the
+  URL when `lucy mcp add` asks for the command.
+- **Sign-in (OAuth).** If a server wants one, `add` offers to log in. `lucy mcp login <name>`
+  opens your browser and catches the redirect on localhost. Lucy registers herself
+  automatically, or uses `oauth_client_id` for an app you registered.
+- **Tokens:** kept in the keyring and refreshed when they expire. If a refresh is refused,
+  Lucy says to log in again. `lucy mcp logout <name>` forgets a sign-in.
+- **API keys instead:** `--bearer-key keyname` (sent as `Authorization: Bearer`), or
+  `--header-key HEADER=keyname`, from the keyring. Plain `--header`s work too. A rejected key
+  names the keyring entry to fix.
+- A remote server's read-only tools run by themselves. Their paths aren't on your machine, so
+  the home-folder checks don't apply.
+
 ### Upgrading
 
 - **Protocol v2.** Stop the old core after installing (`pkill -f "lucy core run"`); the new

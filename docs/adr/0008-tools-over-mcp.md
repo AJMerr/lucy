@@ -1,6 +1,6 @@
 # 8. Tools over MCP, with built-ins and core-enforced approvals
 
-Date: 2026-11-06 · Status: Accepted (8a and 8b built; 8c planned)
+Date: 2026-11-06 · Status: Accepted (built in steps 8a, 8b and 8c)
 
 ## Context
 
@@ -79,11 +79,23 @@ servers' stderr goes to the core log.
   wouldn't load, then starts the server once and lists its tools. `lucy mcp serve` offers the
   built-ins to other MCP clients over stdio.
 
-## Planned
+**Remote servers (8c).** `url = "https://…"` instead of `command`; rmcp's streamable HTTP
+client does the talking. Credentials, in order:
 
-- **8c:** remote MCP servers over streamable HTTP, with an API key from the keyring, or OAuth
-  via `lucy mcp login <server>`. That opens a browser, catches the redirect on a temporary
-  localhost port, and keeps the tokens in the keyring, refreshing them automatically.
+- `bearer_key` (keyring entry, sent as `Authorization: Bearer …`), `header_keys` (header →
+  keyring entry) and plain `headers`. A 401 then names the entries to fix with `lucy auth set`.
+- Otherwise OAuth, through rmcp's `OAuthState`: discovery (protected-resource and
+  authorization-server metadata), client registration (dynamic, unless `oauth_client_id` names
+  a pre-registered app), PKCE, code exchange and refresh. `lucy mcp login <name>` binds a
+  localhost port (`oauth_redirect_port`, or any free one), opens the browser and waits up to
+  5 minutes for the redirect. Tokens and the client registration are stored as JSON in the
+  keyring entry `mcp-oauth-<name>` (a custom rmcp `CredentialStore`), and refreshed by rmcp's
+  `AuthClient` when they expire or the server rejects them. A refused refresh, or no sign-in
+  at all, gives "run `lucy mcp login <name>`". `lucy mcp logout` deletes the entry.
+- `lucy mcp add --url` checks the server and, if it wants a sign-in, offers to log in.
+
+Remote tools follow their labels like any other, but read-only ones skip the home-folder
+path checks: their paths name the remote service's data, not this machine's files.
 
 ## Consequences
 

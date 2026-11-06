@@ -26,6 +26,7 @@ pub fn run() -> Result<()> {
         personas_dir: persona::default_user_dir(),
         secrets: Secrets::new(Box::new(OsKeyring), Box::new(|var| std::env::var(var).ok())),
         idle_timeout,
+        token_store: Some(std::sync::Arc::new(OsKeyring)),
     };
     let endpoint = options.endpoint.to_string();
     log(&format!(

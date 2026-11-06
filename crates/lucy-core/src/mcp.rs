@@ -8,14 +8,20 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
-use rmcp::transport::TokioChildProcess;
+use rmcp::transport::auth::{AuthClient, AuthorizationManager};
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
 use rmcp::{RoleClient, ServiceExt};
 use serde_json::Value;
 
 use crate::config::McpServer;
-use crate::secrets::{self, SecretStore, Secrets};
+use crate::oauth::{self, KeyringCredentials, TokenStore};
+use crate::secrets::{self, MemoryStore, SecretStore, Secrets};
+
+type Client = RunningService<RoleClient, ()>;
 
 /// How long a server gets to start and answer the MCP handshake (`npx` may download first).
 const START_TIMEOUT: Duration = Duration::from_secs(60);
@@ -23,7 +29,8 @@ const START_TIMEOUT: Duration = Duration::from_secs(60);
 /// One running server and the tools it offered when it started.
 pub struct ExternalServer {
     name: String,
-    cwd: PathBuf,
+    /// Where a local server runs; `None` for remote servers.
+    cwd: Option<PathBuf>,
     client: RunningService<RoleClient, ()>,
     tools: Vec<rmcp::model::Tool>,
 }
@@ -37,9 +44,10 @@ impl ExternalServer {
         &self.tools
     }
 
-    /// The folder it was started in; its relative paths start here.
-    pub fn cwd(&self) -> &Path {
-        &self.cwd
+    /// The folder a local server was started in (its relative paths start here); `None` for a
+    /// remote server, whose paths aren't on this machine.
+    pub fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
     }
 
     pub fn is_alive(&self) -> bool {
@@ -82,15 +90,30 @@ struct Running {
 
 type Slot = Arc<tokio::sync::Mutex<Option<Running>>>;
 
-#[derive(Default)]
 pub struct McpHost {
     /// One slot per server name, so slow starts don't block other servers.
     slots: Mutex<HashMap<String, Slot>>,
+    /// Where OAuth tokens for remote servers live (the OS keyring in production).
+    tokens: TokenStore,
+}
+
+impl Default for McpHost {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl McpHost {
+    /// A host whose OAuth tokens live only in memory.
     pub fn new() -> Self {
-        Self::default()
+        Self::with_token_store(Arc::new(MemoryStore::default()))
+    }
+
+    pub fn with_token_store(tokens: TokenStore) -> Self {
+        Self {
+            slots: Mutex::default(),
+            tokens,
+        }
     }
 
     /// The running server `name`, starting it (or restarting it, if it died or its config
@@ -122,7 +145,7 @@ impl McpHost {
         if let Some(old) = slot.take() {
             stop(old.server).await;
         }
-        let server = Arc::new(start(name, config, secrets).await?);
+        let server = Arc::new(start(name, config, secrets, &self.tokens).await?);
         *slot = Some(Running {
             config: config.clone(),
             server: Arc::clone(&server),
@@ -189,31 +212,72 @@ async fn start<S, E>(
     name: &str,
     config: &McpServer,
     secrets: &Secrets<S, E>,
+    tokens: &TokenStore,
 ) -> Result<ExternalServer, String>
 where
     S: SecretStore,
     E: Fn(&str) -> Option<String>,
 {
+    let (client, cwd) = match (&config.command, &config.url) {
+        (Some(command), _) => start_program(name, command, config, secrets).await?,
+        (None, Some(url)) => (
+            start_remote(name, url, config, secrets, tokens).await?,
+            None,
+        ),
+        (None, None) => return Err(format!("MCP server `{name}` has no command or url")),
+    };
+    let tools = tokio::time::timeout(START_TIMEOUT, client.list_all_tools())
+        .await
+        .map_err(|_| format!("MCP server `{name}` didn't list its tools in time"))?
+        .map_err(|err| format!("MCP server `{name}`: couldn't list its tools: {err}"))?;
+    Ok(ExternalServer {
+        name: name.to_owned(),
+        cwd,
+        client,
+        tools,
+    })
+}
+
+/// A key from the keyring (or its `LUCY_KEY_*` override), or how to provide it.
+fn key<S, E>(
+    secrets: &Secrets<S, E>,
+    server: &str,
+    key_name: &str,
+    purpose: &str,
+) -> Result<String, String>
+where
+    S: SecretStore,
+    E: Fn(&str) -> Option<String>,
+{
+    Ok(secrets
+        .resolve(key_name)
+        .map_err(|err| format!("MCP server `{server}`: {err}"))?
+        .ok_or_else(|| {
+            format!(
+                "MCP server `{server}` needs keyring entry `{key_name}` for {purpose}: run `lucy \
+                 auth set {key_name}` or set {}",
+                secrets::env_var_name(key_name)
+            )
+        })?
+        .value)
+}
+
+async fn start_program<S, E>(
+    name: &str,
+    program: &str,
+    config: &McpServer,
+    secrets: &Secrets<S, E>,
+) -> Result<(Client, Option<PathBuf>), String>
+where
+    S: SecretStore,
+    E: Fn(&str) -> Option<String>,
+{
     // Resolve through PATH the way a shell would (`npx` is `npx.cmd` on Windows).
-    let mut command = rmcp::transport::which_command(&config.command).map_err(|err| {
-        format!(
-            "MCP server `{name}`: can't find `{}` ({err})",
-            config.command
-        )
-    })?;
+    let mut command = rmcp::transport::which_command(program)
+        .map_err(|err| format!("MCP server `{name}`: can't find `{program}` ({err})"))?;
     command.args(&config.args).envs(&config.env);
     for (var, key_name) in &config.env_keys {
-        let key = secrets
-            .resolve(key_name)
-            .map_err(|err| format!("MCP server `{name}`: {err}"))?
-            .ok_or_else(|| {
-                format!(
-                    "MCP server `{name}` needs keyring entry `{key_name}` for {var}: run `lucy \
-                     auth set {key_name}` or set {}",
-                    secrets::env_var_name(key_name)
-                )
-            })?;
-        command.env(var, key.value);
+        command.env(var, key(secrets, name, key_name, var)?);
     }
     let cwd = config
         .cwd
@@ -226,21 +290,8 @@ where
     let (transport, _) = TokioChildProcess::builder(command)
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|err| {
-            format!(
-                "MCP server `{name}`: couldn't start `{}`: {err}",
-                config.command
-            )
-        })?;
-    let handshake = async {
-        let client = ().serve(transport).await.map_err(|err| err.to_string())?;
-        let tools = client
-            .list_all_tools()
-            .await
-            .map_err(|err| format!("couldn't list its tools: {err}"))?;
-        Ok::<_, String>((client, tools))
-    };
-    let (client, tools) = tokio::time::timeout(START_TIMEOUT, handshake)
+        .map_err(|err| format!("MCP server `{name}`: couldn't start `{program}`: {err}"))?;
+    let client = tokio::time::timeout(START_TIMEOUT, ().serve(transport))
         .await
         .map_err(|_| {
             format!(
@@ -249,12 +300,105 @@ where
             )
         })?
         .map_err(|err| format!("MCP server `{name}`: {err}"))?;
-    Ok(ExternalServer {
-        name: name.to_owned(),
-        cwd,
-        client,
-        tools,
-    })
+    Ok((client, Some(cwd)))
+}
+
+async fn start_remote<S, E>(
+    name: &str,
+    url: &str,
+    config: &McpServer,
+    secrets: &Secrets<S, E>,
+    tokens: &TokenStore,
+) -> Result<Client, String>
+where
+    S: SecretStore,
+    E: Fn(&str) -> Option<String>,
+{
+    let mut headers = HashMap::new();
+    let plain = config
+        .headers
+        .iter()
+        .map(|(h, v)| Ok::<_, String>((h, v.clone())));
+    let keyed = config
+        .header_keys
+        .iter()
+        .map(|(h, key_name)| Ok((h, key(secrets, name, key_name, &format!("header {h}"))?)));
+    for pair in plain.chain(keyed) {
+        let (header, value): (&String, String) = pair?;
+        let header = HeaderName::try_from(header.as_str())
+            .map_err(|err| format!("MCP server `{name}`: bad header name `{header}`: {err}"))?;
+        let value = HeaderValue::try_from(value)
+            .map_err(|err| format!("MCP server `{name}`: bad value for header {header}: {err}"))?;
+        headers.insert(header, value);
+    }
+    let mut transport_config =
+        StreamableHttpClientTransportConfig::with_uri(url).custom_headers(headers);
+
+    let connected = if let Some(key_name) = &config.bearer_key {
+        transport_config = transport_config.auth_header(key(secrets, name, key_name, "its token")?);
+        let transport =
+            StreamableHttpClientTransport::with_client(reqwest::Client::new(), transport_config);
+        tokio::time::timeout(START_TIMEOUT, ().serve(transport)).await
+    } else if oauth::has_login(tokens, name) {
+        let mut manager = AuthorizationManager::new(url)
+            .await
+            .map_err(|err| format!("MCP server `{name}`: {err}"))?;
+        manager.set_credential_store(KeyringCredentials::new(Arc::clone(tokens), name));
+        manager
+            .initialize_from_store()
+            .await
+            .map_err(|err| signed_out(name, &err.to_string()))?;
+        let client = AuthClient::new(reqwest::Client::new(), manager);
+        let transport = StreamableHttpClientTransport::with_client(client, transport_config);
+        tokio::time::timeout(START_TIMEOUT, ().serve(transport)).await
+    } else {
+        let transport =
+            StreamableHttpClientTransport::with_client(reqwest::Client::new(), transport_config);
+        tokio::time::timeout(START_TIMEOUT, ().serve(transport)).await
+    };
+    connected
+        .map_err(|_| format!("MCP server `{name}` at {url} didn't answer in time"))?
+        .map_err(|err| {
+            let detail = format!("{err:?}");
+            let keys: Vec<&String> = config
+                .bearer_key
+                .iter()
+                .chain(config.header_keys.values())
+                .collect();
+            if needs_login(&detail) && !keys.is_empty() {
+                let fixes: Vec<String> = keys
+                    .iter()
+                    .map(|k| format!("`lucy auth set {k}`"))
+                    .collect();
+                format!(
+                    "MCP server `{name}` refused its key; check it with {}",
+                    fixes.join(" or ")
+                )
+            } else if needs_login(&detail) {
+                signed_out(name, &err.to_string())
+            } else {
+                format!(
+                    "couldn't reach MCP server `{name}` at {url}: {}",
+                    root_cause(&err)
+                )
+            }
+        })
+}
+
+/// Whether a connection error means the server wants (new) credentials.
+fn needs_login(detail: &str) -> bool {
+    [
+        "AuthRequired",
+        "AuthorizationRequired",
+        "TokenRefresh",
+        "401",
+    ]
+    .iter()
+    .any(|needle| detail.contains(needle))
+}
+
+fn signed_out(name: &str, err: &str) -> String {
+    format!("MCP server `{name}` needs you to sign in: run `lucy mcp login {name}` ({err})")
 }
 
 /// Close the connection; the child process is killed when its transport drops.
@@ -266,4 +410,28 @@ async fn stop(server: Arc<ExternalServer>) {
         // Still in use by a turn; it goes away when that turn drops it.
         Err(server) => server.client.cancellation_token().cancel(),
     }
+}
+
+/// A readable reason: rmcp's transport errors embed Rust type names in brackets, and bury
+/// "couldn't connect" inside them.
+fn root_cause(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut deepest = err;
+    while let Some(source) = deepest.source() {
+        deepest = source;
+    }
+    let text = deepest.to_string();
+    if text.contains("error sending request") {
+        return "no connection (check the URL, and that the server is up)".into();
+    }
+    let mut readable = String::new();
+    let mut depth = 0usize;
+    for c in text.chars() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth = depth.saturating_sub(1),
+            c if depth == 0 => readable.push(c),
+            _ => {}
+        }
+    }
+    readable.split_whitespace().collect::<Vec<_>>().join(" ")
 }

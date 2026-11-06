@@ -1,7 +1,6 @@
 //! External MCP servers, started as real processes. The server under test is Lucy's own
 //! `lucy mcp serve`, which offers the built-in tools over stdio like any third-party server.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,14 +26,12 @@ fn secrets(entries: &[(&str, &str)]) -> TestSecrets {
 
 /// `lucy mcp serve`, working in `dir`.
 fn lucy_server(dir: &std::path::Path) -> McpServer {
-    McpServer {
-        command: env!("CARGO_BIN_EXE_lucy").into(),
-        args: vec!["mcp".into(), "serve".into()],
-        env: BTreeMap::new(),
-        env_keys: BTreeMap::new(),
-        cwd: Some(dir.to_owned()),
-        enabled: true,
-    }
+    let mut server = McpServer::program(
+        env!("CARGO_BIN_EXE_lucy"),
+        vec!["mcp".into(), "serve".into()],
+    );
+    server.cwd = Some(dir.to_owned());
+    server
 }
 
 #[tokio::test]
@@ -172,7 +169,7 @@ async fn a_missing_keyring_entry_says_how_to_add_it() {
 async fn a_command_that_does_not_exist_is_reported_by_name() {
     let dir = tempfile::tempdir().unwrap();
     let mut config = lucy_server(dir.path());
-    config.command = "lucy-no-such-mcp-server".into();
+    config.command = Some("lucy-no-such-mcp-server".into());
     let host = McpHost::new();
 
     let err = host

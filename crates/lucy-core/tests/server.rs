@@ -66,6 +66,7 @@ impl Harness {
             personas_dir: None,
             secrets: Secrets::new(Box::new(MemoryStore::default()), Box::new(|_: &str| None)),
             idle_timeout,
+            token_store: None,
         };
         let core = tokio::spawn(async move { serve(options).await.unwrap() });
         let harness = Self {

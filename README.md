@@ -6,8 +6,8 @@ toggle on and off.
 
 > **Status:** v0.1.0 plus tools (unreleased): terminal chat with any OpenAI-compatible or
 > Anthropic model, now able to read, search, run and edit with your approval, and to use any
-> MCP server you add. Remote MCP servers, agent mode and the desktop sprite are next. See [release notes](CHANGELOG.md) and the
-> [roadmap](docs/ROADMAP.md).
+> local or remote MCP server you add. Agent mode and the desktop sprite are next. See
+> [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -79,7 +79,8 @@ In the chat:
 Keys: Tab completes commands and profile names, Alt+Enter (or a trailing `\`) starts a new line,
 Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a literal `/`.
 
-Other commands: `lucy config path`, `lucy auth set|remove|status`, `lucy mcp add|list|remove`.
+Other commands: `lucy config path`, `lucy auth set|remove|status`,
+`lucy mcp add|list|remove|login|logout`.
 
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
@@ -110,6 +111,11 @@ lucy mcp add github --key GITHUB_PERSONAL_ACCESS_TOKEN=github \
 lucy mcp add                             # or answer a few questions instead
 lucy mcp list                            # which servers start, and how many tools each has
 lucy mcp remove github
+
+# a remote server: offers to sign in (browser, OAuth); `lucy mcp login linear` does it later
+lucy mcp add linear --url https://mcp.linear.app/mcp
+# or one that takes an API key from the keyring
+lucy mcp add acme --url https://mcp.acme.dev/mcp --bearer-key acme
 ```
 
 A server's tools show up as `<server>__<tool>` (e.g. `github__create_issue`). Servers start
@@ -118,6 +124,14 @@ restarted on next use. Tools the server labels read-only run by themselves (with
 path checks as the built-ins); everything else asks. Set `github = "ask"` (or `"deny"`) under
 `[tools.rules]` to override a whole server. `lucy mcp add` keeps your config's comments and
 layout.
+
+Remote servers are reached over streamable HTTP. Sign-in uses OAuth: Lucy registers herself
+with the server, opens your browser, catches the redirect on localhost, and keeps the tokens in
+your keyring, refreshing them when they expire. If a refresh is refused, `/tools` and `lucy mcp
+list` say to run `lucy mcp login` again; `lucy mcp logout` forgets a sign-in. Servers that use
+API keys take `--bearer-key` or `--header-key HEADER=keyname` instead. A remote server's
+read-only tools run by themselves; its file paths aren't on your machine, so the home-folder
+checks don't apply.
 
 `lucy mcp serve` works the other way round: it offers Lucy's built-in tools to any MCP client
 over stdio, working in the current folder.
