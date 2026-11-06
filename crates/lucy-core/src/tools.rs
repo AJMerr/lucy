@@ -2,7 +2,7 @@
 //! (ADR 0004 and 0008). Permission checks live here, in the core, never in front ends.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use lucy_protocol::rpc::{ToolInfo, ToolRuleInfo};
@@ -16,8 +16,11 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
 use serde_json::Value;
 
+use lucy_protocol::{AgentLevel, Mode};
+
 use crate::config::{ToolRule, ToolSettings};
 use crate::mcp::ExternalServer;
+use crate::policy::{self, CallFacts, CallKind, Decision, Policy};
 
 pub const BUILTIN: &str = "builtin";
 /// Longest tool output passed to the model.
@@ -56,6 +59,16 @@ pub struct ToolBox {
     home: Option<PathBuf>,
     private: PrivatePaths,
     settings: ToolSettings,
+    access: Access,
+}
+
+/// The chat's mode and agent level, which decide how much runs without asking.
+#[derive(Debug, Clone, Default)]
+pub struct Access {
+    pub mode: Mode,
+    pub level: AgentLevel,
+    /// `[agent] workspace`, home-expanded.
+    pub workspace: Option<PathBuf>,
 }
 
 impl ToolBox {
@@ -107,7 +120,14 @@ impl ToolBox {
             home,
             private,
             settings: settings.clone(),
+            access: Access::default(),
         })
+    }
+
+    /// Apply a chat's mode and level (Assist by default).
+    pub fn with_access(mut self, access: Access) -> Self {
+        self.access = access;
+        self
     }
 
     pub fn is_empty(&self) -> bool {
@@ -150,13 +170,30 @@ impl ToolBox {
 
     fn rule_info(&self, tool: &Tool, allowed: &HashSet<String>) -> ToolRuleInfo {
         match self.rule(tool) {
-            Some(ToolRule::Auto) => ToolRuleInfo::Auto,
-            Some(ToolRule::Ask) => ToolRuleInfo::Ask,
-            Some(ToolRule::Deny) => ToolRuleInfo::Deny,
-            None if allowed.contains(&tool.name) => ToolRuleInfo::Auto,
-            None if is_remote(tool) && is_read_only(tool) => ToolRuleInfo::Auto,
-            None if reads_locally(tool) => ToolRuleInfo::AutoInHome,
-            None => ToolRuleInfo::Ask,
+            Some(ToolRule::Auto) => return ToolRuleInfo::Auto,
+            Some(ToolRule::Ask) => return ToolRuleInfo::Ask,
+            Some(ToolRule::Deny) => return ToolRuleInfo::Deny,
+            None if allowed.contains(&tool.name) => return ToolRuleInfo::Auto,
+            None => {}
+        }
+        // How a typical call would go: reads and writes at the working folder.
+        let kind = self.kind(tool);
+        let facts = CallFacts {
+            kind,
+            remote: is_remote(tool),
+            paths: match kind {
+                CallKind::Read | CallKind::Write if !is_remote(tool) => vec![self.cwd.clone()],
+                _ => vec![],
+            },
+        };
+        match (policy::decide(&facts, &self.policy()), kind) {
+            (Decision::Ask(_), _) => ToolRuleInfo::Ask,
+            (Decision::Run, _) if facts.remote || self.access.level == AgentLevel::Unrestricted => {
+                ToolRuleInfo::Auto
+            }
+            (Decision::Run, CallKind::Read) => ToolRuleInfo::AutoInHome,
+            (Decision::Run, CallKind::Write) => ToolRuleInfo::AutoInFolder,
+            (Decision::Run, _) => ToolRuleInfo::Auto,
         }
     }
 
@@ -173,8 +210,8 @@ impl ToolBox {
                 call.arguments
             ));
         }
-        let ask = |reason: &str| Verdict::Ask {
-            reason: reason.to_owned(),
+        let ask = |reason: String| Verdict::Ask {
+            reason,
             preview: self.preview(tool, call),
         };
         match self.rule(tool) {
@@ -182,29 +219,73 @@ impl ToolBox {
                 return Verdict::Refuse("The user's settings don't allow this tool.".into());
             }
             Some(ToolRule::Auto) => return Verdict::Run,
-            Some(ToolRule::Ask) => return ask("your settings say to ask"),
+            Some(ToolRule::Ask) => return ask("your settings say to ask".into()),
             None => {}
         }
         if allowed.contains(&call.name) {
             return Verdict::Run;
         }
-        // A remote server you connected: its read-only tools run, and its paths aren't local.
-        if is_remote(tool) && is_read_only(tool) {
-            return Verdict::Run;
+        let facts = CallFacts {
+            kind: self.kind(tool),
+            remote: is_remote(tool),
+            paths: if is_remote(tool) {
+                vec![]
+            } else {
+                self.paths(tool, &call.arguments).collect()
+            },
+        };
+        match policy::decide(&facts, &self.policy()) {
+            Decision::Run => Verdict::Run,
+            Decision::Ask(reason) => ask(reason),
         }
-        if reads_locally(tool) {
-            return match self
-                .paths(tool, &call.arguments)
-                .find_map(|p| self.concern(&p))
-            {
-                Some(reason) => ask(&reason),
-                None => Verdict::Run,
-            };
-        }
-        ask(&risk(tool))
     }
 
-    /// Run a call, returning what to tell the model and whether it failed.
+    /// The paths a built-in write or edit will change, for undo.
+    pub fn changed_files(&self, call: &ToolCall) -> Vec<PathBuf> {
+        match self.find(&call.name) {
+            Some(tool) if tool.external.is_none() && self.kind(tool) == CallKind::Write => {
+                self.paths(tool, &call.arguments).collect()
+            }
+            _ => vec![],
+        }
+    }
+
+    fn policy(&self) -> Policy<'_> {
+        Policy {
+            mode: self.access.mode,
+            level: self.access.level,
+            folder: &self.cwd,
+            home: self.home.as_deref(),
+            workspace: self.access.workspace.as_deref(),
+            private: &self.private,
+        }
+    }
+
+    /// What a tool does, for the rules: known for built-ins, from labels for the rest.
+    fn kind(&self, tool: &Tool) -> CallKind {
+        if tool.external.is_none() {
+            match tool.def.name.as_ref() {
+                "read_file" | "list_dir" | "search_files" => return CallKind::Read,
+                "write_file" | "edit_file" => return CallKind::Write,
+                "run_command" => return CallKind::Command,
+                "fetch_url" => return CallKind::Online,
+                _ => {}
+            }
+        }
+        let hints = tool.def.annotations.clone().unwrap_or_default();
+        let read_only = hints.read_only_hint == Some(true);
+        match (read_only, hints.open_world_hint) {
+            // A remote service's own data: reading it is what you connected it for.
+            (true, _) if is_remote(tool) => CallKind::Read,
+            (true, Some(true)) => CallKind::Online,
+            (true, _) => CallKind::Read,
+            // Unlabelled tools are treated as the MCP spec says: open world, possibly
+            // destructive.
+            (false, Some(false)) => CallKind::Write,
+            (false, _) => CallKind::Other,
+        }
+    }
+
     pub async fn call(&self, call: &ToolCall) -> (String, bool) {
         let Some(tool) = self.find(&call.name) else {
             return (format!("There is no tool named `{}`.", call.name), true);
@@ -285,62 +366,11 @@ impl ToolBox {
         }
         paths.into_iter()
     }
-
-    /// Why reading `path` needs approval, if it does.
-    fn concern(&self, path: &Path) -> Option<String> {
-        let real = real_path(path);
-        if self.private.contains(path) || self.private.contains(&real) {
-            return Some(format!("reads a private path ({})", path.display()));
-        }
-        let inside_home = self
-            .home
-            .as_deref()
-            .is_some_and(|home| real.starts_with(real_path(home)));
-        (!inside_home).then(|| format!("reads outside your home folder ({})", path.display()))
-    }
 }
 
 /// Reached over the network rather than started on this machine.
 fn is_remote(tool: &Tool) -> bool {
     tool.external.as_ref().is_some_and(|s| s.cwd().is_none())
-}
-
-fn is_read_only(tool: &Tool) -> bool {
-    tool.def.annotations.as_ref().and_then(|h| h.read_only_hint) == Some(true)
-}
-
-/// Read-only and stays on this machine: runs without asking (paths permitting).
-fn reads_locally(tool: &Tool) -> bool {
-    let hints = tool.def.annotations.as_ref();
-    hints.and_then(|h| h.read_only_hint) == Some(true)
-        && hints.and_then(|h| h.open_world_hint) != Some(true)
-}
-
-/// Why a tool that isn't a local read needs approval.
-fn risk(tool: &Tool) -> String {
-    let hints = tool.def.annotations.clone().unwrap_or_default();
-    let reason = match (tool.server.as_str(), tool.def.name.as_ref()) {
-        (BUILTIN, "run_command") => "runs a shell command",
-        (BUILTIN, "write_file" | "edit_file") => "changes a file",
-        (BUILTIN, "fetch_url") => "goes online",
-        _ if hints.read_only_hint == Some(true) => "reaches outside this computer",
-        // Unlabelled tools are treated as the MCP spec says: possibly destructive.
-        _ if hints.destructive_hint != Some(false) => "can change or delete things",
-        _ => "can change things",
-    };
-    reason.to_owned()
-}
-
-/// `path` with symlinks resolved, so a link can't smuggle a private file past the rules. Paths
-/// that don't exist yet resolve through their nearest existing parent.
-fn real_path(path: &Path) -> PathBuf {
-    if let Ok(real) = path.canonicalize() {
-        return real;
-    }
-    match (path.parent(), path.file_name()) {
-        (Some(parent), Some(name)) if parent != path => real_path(parent).join(name),
-        _ => path.to_owned(),
-    }
 }
 
 fn first_sentence(text: &str) -> String {

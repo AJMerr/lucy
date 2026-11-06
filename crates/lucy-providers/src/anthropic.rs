@@ -6,7 +6,9 @@ use serde_json::{Value, json};
 
 use crate::http::{check_status, error_message, send_error};
 use crate::sse::{self, EventParser, SseEvent};
-use crate::{ChatRequest, EventStream, Provider, ProviderError, StreamEvent, parse_arguments};
+use crate::{
+    ChatRequest, EventStream, Provider, ProviderError, StreamEvent, Usage, parse_arguments,
+};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
@@ -155,6 +157,7 @@ struct PartialCall {
 #[derive(Default)]
 struct MessageParser {
     call: Option<PartialCall>,
+    usage: Option<Usage>,
 }
 
 impl EventParser for MessageParser {
@@ -197,7 +200,36 @@ impl EventParser for MessageParser {
                     "stopped by Anthropic's safety classifiers".into(),
                 ));
             }
-            Some("message_stop") => vec![StreamEvent::Done],
+            // Output tokens so far (cumulative), sent with the stop reason.
+            Some("message_delta") => {
+                if let (Some(usage), Some(output)) =
+                    (&mut self.usage, value["usage"]["output_tokens"].as_u64())
+                {
+                    usage.output_tokens = output;
+                }
+                vec![]
+            }
+            Some("message_start") => {
+                let usage = &value["message"]["usage"];
+                let count = |field: &str| usage[field].as_u64().unwrap_or(0);
+                self.usage = Some(Usage {
+                    input_tokens: count("input_tokens")
+                        + count("cache_creation_input_tokens")
+                        + count("cache_read_input_tokens"),
+                    output_tokens: count("output_tokens"),
+                });
+                vec![]
+            }
+            Some("message_stop") => {
+                let mut events: Vec<StreamEvent> = self
+                    .usage
+                    .take()
+                    .map(StreamEvent::Usage)
+                    .into_iter()
+                    .collect();
+                events.push(StreamEvent::Done);
+                events
+            }
             Some("error") => {
                 let message = error_message(&value).unwrap_or_else(|| event.data.clone());
                 return Err(ProviderError::Unavailable(message));

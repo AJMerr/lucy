@@ -4,10 +4,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Role, ToolCall};
+use crate::{AgentLevel, Mode, Role, ToolCall};
 
 /// Bumped on any incompatible change; `hello` refuses mismatched clients.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 pub mod method {
     pub const HELLO: &str = "hello";
@@ -23,6 +23,10 @@ pub mod method {
     pub const SESSION_SETTINGS: &str = "session.settings";
     pub const SESSION_SET_PROFILE: &str = "session.set_profile";
     pub const SESSION_SET_PLAIN: &str = "session.set_plain";
+    pub const SESSION_SET_MODE: &str = "session.set_mode";
+    pub const SESSION_SET_LEVEL: &str = "session.set_level";
+    /// Show (and optionally restore) the files the last reply with changes touched.
+    pub const SESSION_UNDO: &str = "session.undo";
     pub const PROFILES_LIST: &str = "profiles.list";
     pub const TOOLS_LIST: &str = "tools.list";
     pub const TOOL_APPROVE: &str = "tool.approve";
@@ -195,9 +199,44 @@ pub struct SetPlainParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetModeParams {
+    pub session_id: String,
+    pub mode: Mode,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetLevelParams {
+    pub session_id: String,
+    pub level: AgentLevel,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UndoParams {
+    pub session_id: String,
+    /// Restore the files; `false` only lists them.
+    pub apply: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UndoResult {
+    /// Empty when there's nothing left to undo.
+    pub files: Vec<UndoFile>,
+    pub applied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UndoFile {
+    pub path: String,
+    /// The reply created it, so undo deletes it.
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionSettings {
     pub profile: String,
     pub plain: bool,
+    pub mode: Mode,
+    pub level: AgentLevel,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -277,6 +316,8 @@ pub enum ToolRuleInfo {
     Auto,
     /// Read-only, but asks for private files or anything outside home.
     AutoInHome,
+    /// Agent mode: changes files inside the working folder (or workspace); asks elsewhere.
+    AutoInFolder,
     Ask,
     Deny,
 }
@@ -348,8 +389,12 @@ pub enum Event {
         session_id: String,
         turn_id: u64,
         outcome: TurnOutcome,
+        /// Why it failed, or which cap stopped it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// Model steps and tokens the reply used (agent mode shows it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<TurnUsage>,
     },
 }
 
@@ -371,6 +416,19 @@ impl Event {
 #[serde(rename_all = "snake_case")]
 pub enum TurnOutcome {
     Complete,
+    /// Agent mode hit its step, cost or token cap; the reply ends with a summary.
+    Capped,
     Cancelled,
     Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TurnUsage {
+    /// Model responses in this reply (one per tool round, plus the answer).
+    pub steps: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    /// When the profile's prices are known (local models are free).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
 }

@@ -8,10 +8,10 @@ use lucy_client::{Client, ClientError};
 use lucy_protocol::rpc::{
     ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event, ProfileInfo,
     RenameParams, ResolveParams, Session, SessionParams, SessionSettings, SessionSummary,
-    SetPlainParams, SetProfileParams, ToolRuleInfo, ToolsList, ToolsListParams, TurnOutcome,
-    method,
+    SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams, ToolRuleInfo, ToolsList,
+    ToolsListParams, TurnOutcome, UndoParams, UndoResult, method,
 };
-use lucy_protocol::{Mode, Role, ToolCall};
+use lucy_protocol::{AgentLevel, Mode, Role, ToolCall};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -95,7 +95,7 @@ pub async fn run_chat<S: LineSource, W: Write>(
             Err(message) => chat.error(&message).map_err(Into::into),
             Ok(Input::Nothing) => Ok(()),
             Ok(Input::Command(Command::Quit)) => break,
-            Ok(Input::Command(command)) => chat.command(command).await,
+            Ok(Input::Command(command)) => chat.command(command, input).await,
             Ok(Input::Message(text)) => chat.send(text, &mut events, interrupts, input).await,
         };
         if let Err(err) = outcome {
@@ -334,10 +334,13 @@ impl<W: Write> Chat<'_, W> {
                             self.last_tool = Some((call, output, is_error));
                         }
                     }
-                    Some(Event::TurnFinished { outcome, error, .. }) => {
+                    Some(Event::TurnFinished { outcome, error, usage, .. }) => {
                         self.end_text(&mut renderer, &mut printer)?;
                         if running.take().is_some() {
                             self.say("")?;
+                        }
+                        if let Some(usage) = usage.filter(|u| u.steps > 1) {
+                            self.note(&tool_display::usage(&usage))?;
                         }
                         break (outcome, error);
                     }
@@ -350,6 +353,10 @@ impl<W: Write> Chat<'_, W> {
             TurnOutcome::Complete => {}
             TurnOutcome::Cancelled => self.note("(stopped)")?,
             TurnOutcome::Failed => self.error(error.as_deref().unwrap_or("the reply failed"))?,
+            TurnOutcome::Capped => self.note(&format!(
+                "({}; say \"continue\" to keep going with a fresh budget)",
+                error.as_deref().unwrap_or("stopped at a cap")
+            ))?,
         }
         self.say("")?;
         Ok(())
@@ -376,6 +383,72 @@ impl<W: Write> Chat<'_, W> {
         Ok(())
     }
 
+    fn describe_mode(&mut self, settings: &SessionSettings) -> Result<()> {
+        let text = match settings.mode {
+            Mode::Assist => "Mode: assist. Chat with tools; anything risky asks first.".to_owned(),
+            Mode::Agent => format!(
+                "Mode: agent, level {}. Lucy works through tasks on her own, within her step and \
+                 cost limits (/level to change, /undo to roll back file changes).",
+                level_name(settings.level)
+            ),
+        };
+        self.note(&text)?;
+        Ok(())
+    }
+
+    /// Show the files the last reply with changes touched; restore them if the user agrees.
+    async fn undo<S: LineSource>(&mut self, input: &mut S) -> Result<()> {
+        let Some(session_id) = self.session.clone() else {
+            self.note("Nothing to undo yet.")?;
+            return Ok(());
+        };
+        let preview: UndoResult = self
+            .call(
+                method::SESSION_UNDO,
+                UndoParams {
+                    session_id: session_id.clone(),
+                    apply: false,
+                },
+            )
+            .await?;
+        if preview.files.is_empty() {
+            self.note("Nothing to undo: no file changes recorded in this chat.")?;
+            return Ok(());
+        }
+        self.say("The last reply that changed files:")?;
+        for file in &preview.files {
+            let action = if file.created { "delete" } else { "restore" };
+            let line = format!("  {action:7}  {}", file.path);
+            let line = self.styled(if file.created { "31" } else { "33" }, &line);
+            self.say(&line)?;
+        }
+        let answer = match input.read_line("Undo these changes? [y/N] › ").await {
+            ReadLine::Text(answer) => answer,
+            _ => String::new(),
+        };
+        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            self.note("Left as they are.")?;
+            return Ok(());
+        }
+        let done: UndoResult = self
+            .call(
+                method::SESSION_UNDO,
+                UndoParams {
+                    session_id,
+                    apply: true,
+                },
+            )
+            .await?;
+        self.note(&format!(
+            "Undone ({}). /undo again to go further back.",
+            match done.files.len() {
+                1 => "1 file".to_owned(),
+                n => format!("{n} files"),
+            }
+        ))?;
+        Ok(())
+    }
+
     /// Show what a tool wants to do and ask. `None` means Ctrl+C: decline and stop the reply.
     async fn approval<S: LineSource>(
         &mut self,
@@ -399,7 +472,7 @@ impl<W: Write> Chat<'_, W> {
         }
     }
 
-    async fn command(&mut self, command: Command) -> Result<()> {
+    async fn command<S: LineSource>(&mut self, command: Command, input: &mut S) -> Result<()> {
         match command {
             Command::Help => {
                 let width = COMMANDS
@@ -518,9 +591,38 @@ impl<W: Write> Chat<'_, W> {
                     "Plain mode off."
                 })?;
             }
-            Command::Mode(None) | Command::Mode(Some(Mode::Assist)) => {
-                self.note("Mode: assist (chat with tools; risky ones ask first).")?;
+            Command::Mode(None) => {
+                let session_id = self.ensure_session().await?;
+                let settings: SessionSettings = self
+                    .call(method::SESSION_SETTINGS, SessionParams { session_id })
+                    .await?;
+                self.describe_mode(&settings)?;
             }
+            Command::Mode(Some(mode)) => {
+                let session_id = self.ensure_session().await?;
+                let settings: SessionSettings = self
+                    .call(method::SESSION_SET_MODE, SetModeParams { session_id, mode })
+                    .await?;
+                self.describe_mode(&settings)?;
+            }
+            Command::Level(None) => {
+                let session_id = self.ensure_session().await?;
+                let settings: SessionSettings = self
+                    .call(method::SESSION_SETTINGS, SessionParams { session_id })
+                    .await?;
+                self.note(&format!("Agent level: {}.", level_name(settings.level)))?;
+            }
+            Command::Level(Some(level)) => {
+                let session_id = self.ensure_session().await?;
+                let settings: SessionSettings = self
+                    .call(
+                        method::SESSION_SET_LEVEL,
+                        SetLevelParams { session_id, level },
+                    )
+                    .await?;
+                self.describe_mode(&settings)?;
+            }
+            Command::Undo => self.undo(input).await?,
             Command::Tools => {
                 let list: ToolsList = self
                     .call(
@@ -543,6 +645,7 @@ impl<W: Write> Chat<'_, W> {
                     let (rule, color) = match tool.rule {
                         ToolRuleInfo::Auto => ("runs", "32"),
                         ToolRuleInfo::AutoInHome => ("runs*", "32"),
+                        ToolRuleInfo::AutoInFolder => ("runs†", "32"),
                         ToolRuleInfo::Ask => ("asks", "33"),
                         ToolRuleInfo::Deny => ("blocked", "31"),
                     };
@@ -553,6 +656,9 @@ impl<W: Write> Chat<'_, W> {
                 }
                 if tools.iter().any(|t| t.rule == ToolRuleInfo::AutoInHome) {
                     self.note("  * runs by itself in your home folder; asks for private files and anywhere else")?;
+                }
+                if tools.iter().any(|t| t.rule == ToolRuleInfo::AutoInFolder) {
+                    self.note("  † changes files in the working folder (the workspace at level 2) by itself; asks elsewhere")?;
                 }
             }
             Command::Last => match self.last_tool.clone() {
@@ -566,11 +672,17 @@ impl<W: Write> Chat<'_, W> {
                     self.say(output.trim_end())?;
                 }
             },
-            Command::Mode(Some(Mode::Agent)) => {
-                self.note("Agent mode isn't built yet (milestone 1, step 9); staying in assist.")?;
-            }
         }
         Ok(())
+    }
+}
+
+fn level_name(level: AgentLevel) -> &'static str {
+    match level {
+        AgentLevel::Supervised => "0 (supervised: every tool call asks)",
+        AgentLevel::Guarded => "1 (guarded: changes inside the working folder run by themselves)",
+        AgentLevel::Workspace => "2 (workspace: anything local inside the workspace runs)",
+        AgentLevel::Unrestricted => "3 (unrestricted: everything runs except private files)",
     }
 }
 

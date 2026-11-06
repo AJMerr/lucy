@@ -1,20 +1,38 @@
-//! `lucy ask`: one question, the answer streamed to stdout as plain text. Tool activity and
-//! approval prompts go to the terminal (stderr), so stdout stays clean for scripts.
+//! `lucy ask` and `lucy agent`: one question or task, the answer streamed to stdout as plain
+//! text. Tool activity and approval prompts go to the terminal (stderr), so stdout stays clean
+//! for scripts.
 
 use std::io::{BufRead, IsTerminal, Read, Write};
 
 use anyhow::{Result, bail};
-use lucy_protocol::ToolCall;
 use lucy_protocol::rpc::{
     ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event, SessionParams,
-    TurnOutcome, method,
+    SessionSettings, SetLevelParams, SetModeParams, TurnOutcome, method,
 };
-use serde_json::Value;
+use lucy_protocol::{AgentLevel, Mode, ToolCall};
+use serde_json::{Value, json};
 
 use crate::core_process;
 use crate::tool_display;
 
-pub fn run(prompt: Option<String>, yes: bool) -> Result<()> {
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AskOptions {
+    /// Approve every tool call without asking.
+    pub yes: bool,
+    /// Run as an agent task (`lucy agent`), optionally at a given level.
+    pub agent: bool,
+    pub level: Option<AgentLevel>,
+}
+
+/// How a one-shot reply ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finish {
+    Complete,
+    /// An agent task hit its step or cost cap (exit code 2).
+    Capped,
+}
+
+pub fn run(prompt: Option<String>, options: AskOptions) -> Result<Finish> {
     let text = match prompt {
         Some(prompt) => prompt,
         None if !std::io::stdin().is_terminal() => {
@@ -22,22 +40,50 @@ pub fn run(prompt: Option<String>, yes: bool) -> Result<()> {
             std::io::stdin().read_to_string(&mut input)?;
             input
         }
-        None => bail!("nothing to ask: pass a prompt or pipe one in"),
+        None => bail!("nothing to do: pass a prompt or pipe one in"),
     };
     if text.trim().is_empty() {
-        bail!("nothing to ask: the prompt is empty");
+        bail!("nothing to do: the prompt is empty");
     }
-    tokio::runtime::Runtime::new()?.block_on(ask(text, yes))
+    tokio::runtime::Runtime::new()?.block_on(ask(text, options))
 }
 
-async fn ask(text: String, yes: bool) -> Result<()> {
+async fn ask(text: String, options: AskOptions) -> Result<Finish> {
+    let yes = options.yes;
     let mut client = core_process::connect().await?;
     let mut events = client.take_events().expect("fresh client has its events");
+    // An agent task gets its own chat, switched to agent mode first.
+    let session_id = if options.agent {
+        let id: String = client.call(method::SESSIONS_CREATE, json!({})).await?;
+        let _: SessionSettings = client
+            .call(
+                method::SESSION_SET_MODE,
+                SetModeParams {
+                    session_id: id.clone(),
+                    mode: Mode::Agent,
+                },
+            )
+            .await?;
+        if let Some(level) = options.level {
+            let _: SessionSettings = client
+                .call(
+                    method::SESSION_SET_LEVEL,
+                    SetLevelParams {
+                        session_id: id.clone(),
+                        level,
+                    },
+                )
+                .await?;
+        }
+        Some(id)
+    } else {
+        None
+    };
     let sent: ChatSendResult = client
         .call(
             method::CHAT_SEND,
             ChatSendParams {
-                session_id: None,
+                session_id,
                 text,
                 cwd: std::env::current_dir()
                     .ok()
@@ -102,12 +148,22 @@ async fn ask(text: String, yes: bool) -> Result<()> {
                 {
                     eprintln!("  {}", dim(&tool_display::finished(&output, is_error)));
                 }
-                Some(Event::TurnFinished { turn_id, outcome, error, .. })
+                Some(Event::TurnFinished { turn_id, outcome, error, usage, .. })
                     if turn_id == sent.turn_id =>
                 {
                     writeln!(out)?;
+                    if let Some(usage) = usage.filter(|u| options.agent || u.steps > 1) {
+                        eprintln!("{}", dim(&tool_display::usage(&usage)));
+                    }
                     return match outcome {
-                        TurnOutcome::Complete => Ok(()),
+                        TurnOutcome::Complete => Ok(Finish::Complete),
+                        TurnOutcome::Capped => {
+                            eprintln!(
+                                "lucy: {}; run it again or continue with `lucy -c`",
+                                error.as_deref().unwrap_or("stopped at a cap")
+                            );
+                            Ok(Finish::Capped)
+                        }
                         TurnOutcome::Cancelled => bail!("cancelled"),
                         TurnOutcome::Failed => bail!(error.unwrap_or_else(|| "reply failed".into())),
                     };

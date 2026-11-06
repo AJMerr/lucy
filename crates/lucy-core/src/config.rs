@@ -56,6 +56,35 @@ pub struct Profile {
     /// Offer tools to this model. Turn off for models that can't call them.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub tools: bool,
+    /// USD per million input tokens, for agent-mode cost caps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_in: Option<f64>,
+    /// USD per million output tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_out: Option<f64>,
+}
+
+impl Profile {
+    /// Prices per million tokens (in, out). Unpriced models on this machine are free;
+    /// `None` means unknown, so agent tasks fall back to `[agent] max_tokens`.
+    pub fn prices(&self) -> Option<(f64, f64)> {
+        match (self.price_in, self.price_out) {
+            (Some(i), Some(o)) => Some((i, o)),
+            (Some(i), None) => Some((i, i)),
+            (None, Some(o)) => Some((o, o)),
+            (None, None) if self.is_local() => Some((0.0, 0.0)),
+            (None, None) => None,
+        }
+    }
+
+    fn is_local(&self) -> bool {
+        let host = self
+            .base_url
+            .as_deref()
+            .and_then(|base| url::Url::parse(base).ok())
+            .and_then(|url| url.host_str().map(str::to_owned));
+        matches!(host.as_deref(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    }
 }
 
 fn yes() -> bool {
@@ -116,6 +145,8 @@ pub enum ProviderKind {
 pub struct AgentSettings {
     pub max_steps: u32,
     pub max_cost_usd: f64,
+    /// Token cap per task for models without a price.
+    pub max_tokens: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<PathBuf>,
 }
@@ -125,6 +156,7 @@ impl Default for AgentSettings {
         Self {
             max_steps: 25,
             max_cost_usd: 1.0,
+            max_tokens: 1_000_000,
             workspace: None,
         }
     }

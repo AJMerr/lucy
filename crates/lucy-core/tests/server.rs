@@ -412,7 +412,9 @@ async fn set_profile_switches_the_model_for_that_session_only() {
         settings,
         SessionSettings {
             profile: "other".into(),
-            plain: false
+            plain: false,
+            mode: lucy_protocol::Mode::Assist,
+            level: lucy_protocol::AgentLevel::Guarded,
         }
     );
 

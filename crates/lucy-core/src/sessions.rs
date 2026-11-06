@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lucy_protocol::{Message, Role};
+use lucy_protocol::{AgentLevel, Message, Mode, Role};
 use rusqlite::{Connection, OptionalExtension, params};
 use ulid::Ulid;
 
@@ -38,6 +38,21 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE messages ADD COLUMN tool_calls TEXT;  -- JSON array, assistant messages only
     ALTER TABLE messages ADD COLUMN tool_call_id TEXT;
     ALTER TABLE messages ADD COLUMN is_error INTEGER NOT NULL DEFAULT 0;
+"#,
+    r#"
+    -- Per-chat settings (step 9); NULL means "use the config default".
+    ALTER TABLE sessions ADD COLUMN profile TEXT;
+    ALTER TABLE sessions ADD COLUMN plain INTEGER;
+    ALTER TABLE sessions ADD COLUMN mode TEXT;
+    ALTER TABLE sessions ADD COLUMN agent_level INTEGER;
+    -- What files looked like before a reply changed them, for /undo.
+    CREATE TABLE file_backups (
+        session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        reply       TEXT NOT NULL,  -- ULID per reply, so they sort by time
+        path        TEXT NOT NULL,
+        content     BLOB,           -- NULL: the reply created the file
+        PRIMARY KEY (session_id, reply, path)
+    );
 "#,
 ];
 
@@ -279,6 +294,102 @@ impl SessionStore {
         found(changed, id)
     }
 
+    /// This chat's own settings; `None` fields follow the config.
+    pub fn settings(&self, id: &SessionId) -> Result<ChatSettings, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT profile, plain, mode, agent_level FROM sessions WHERE id = ?1",
+                [id.to_string()],
+                |row| {
+                    let mode: Option<String> = row.get(2)?;
+                    let level: Option<u8> = row.get(3)?;
+                    Ok(ChatSettings {
+                        profile: row.get(0)?,
+                        plain: row.get(1)?,
+                        mode: mode.map(|m| {
+                            if m == "agent" {
+                                Mode::Agent
+                            } else {
+                                Mode::Assist
+                            }
+                        }),
+                        level: level.and_then(|l| AgentLevel::try_from(l).ok()),
+                    })
+                },
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(id.to_string()))
+    }
+
+    pub fn set_settings(&self, id: &SessionId, settings: &ChatSettings) -> Result<(), StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE sessions SET profile = ?2, plain = ?3, mode = ?4, agent_level = ?5 WHERE id = ?1",
+            params![
+                id.to_string(),
+                settings.profile,
+                settings.plain,
+                settings.mode.map(|m| match m {
+                    Mode::Assist => "assist",
+                    Mode::Agent => "agent",
+                }),
+                settings.level.map(u8::from),
+            ],
+        )?;
+        found(changed, id)
+    }
+
+    /// Remember a file's contents (`None`: it didn't exist) before `reply` changes it. Only the
+    /// first backup per file and reply counts, and only the last [`UNDO_REPLIES`] replies with
+    /// changes are kept.
+    pub fn record_backup(
+        &self,
+        id: &SessionId,
+        reply: &str,
+        path: &Path,
+        before: Option<&[u8]>,
+    ) -> Result<(), StoreError> {
+        let id_text = id.to_string();
+        self.conn.execute(
+            "INSERT OR IGNORE INTO file_backups (session_id, reply, path, content)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id_text, reply, path.to_string_lossy(), before],
+        )?;
+        self.conn.execute(
+            "DELETE FROM file_backups WHERE session_id = ?1 AND reply NOT IN (
+                 SELECT DISTINCT reply FROM file_backups WHERE session_id = ?1
+                 ORDER BY reply DESC LIMIT ?2)",
+            params![id_text, UNDO_REPLIES],
+        )?;
+        Ok(())
+    }
+
+    /// The files the most recent recorded reply changed, and what they were before.
+    pub fn last_backups(&self, id: &SessionId) -> Result<Vec<FileBackup>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT reply, path, content FROM file_backups
+             WHERE session_id = ?1 AND reply = (
+                 SELECT MAX(reply) FROM file_backups WHERE session_id = ?1)
+             ORDER BY path",
+        )?;
+        let rows = stmt.query_map([id.to_string()], |row| {
+            Ok(FileBackup {
+                reply: row.get(0)?,
+                path: PathBuf::from(row.get::<_, String>(1)?),
+                before: row.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Forget one reply's backups (once they've been restored).
+    pub fn drop_backups(&self, id: &SessionId, reply: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "DELETE FROM file_backups WHERE session_id = ?1 AND reply = ?2",
+            params![id.to_string(), reply],
+        )?;
+        Ok(())
+    }
+
     /// Delete a session and all its messages.
     pub fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
         let changed = self
@@ -446,4 +557,30 @@ fn now_ms() -> i64 {
 
 fn from_ms(ms: i64) -> SystemTime {
     UNIX_EPOCH + std::time::Duration::from_millis(ms.max(0) as u64)
+}
+
+/// How many replies' file changes `/undo` can step back through, per chat.
+pub const UNDO_REPLIES: u32 = 20;
+
+/// A chat's own choices; `None` means "follow the config".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChatSettings {
+    pub profile: Option<String>,
+    pub plain: Option<bool>,
+    pub mode: Option<Mode>,
+    pub level: Option<AgentLevel>,
+}
+
+/// A file as it was before a reply changed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileBackup {
+    pub reply: String,
+    pub path: PathBuf,
+    /// `None`: the reply created the file.
+    pub before: Option<Vec<u8>>,
+}
+
+/// A new ID for a reply's backups (ULIDs sort by time).
+pub fn new_reply_id() -> String {
+    Ulid::generate().to_string()
 }

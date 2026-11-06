@@ -2,7 +2,7 @@ use futures::StreamExt;
 use lucy_protocol::{Message, Role, ToolCall};
 use lucy_providers::openai_compat::{OpenAiCompat, OpenAiCompatConfig};
 use lucy_providers::testing::{FakeResponse, FakeServer};
-use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, ToolSpec};
+use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, ToolSpec, Usage};
 use serde_json::json;
 
 const TEXT: &str = include_str!("fixtures/openai_compat/text.sse");
@@ -74,6 +74,7 @@ async fn sends_a_streaming_chat_completions_request() {
         json!({
             "model": "qwen3:14b",
             "stream": true,
+            "stream_options": {"include_usage": true},
             "messages": [
                 {"role": "system", "content": "You are Lucy."},
                 {"role": "user", "content": "hi"},
@@ -407,4 +408,75 @@ async fn real_ollama_qwen3_tool_call_capture_yields_just_the_call() {
             StreamEvent::Done,
         ]
     );
+}
+
+// --- Usage ---------------------------------------------------------------------------------
+
+/// A real stream recorded from Ollama + qwen3:14b with `stream_options.include_usage`.
+/// Usage arrives in a final chunk with no choices, after the finish chunk.
+#[tokio::test]
+async fn real_ollama_capture_reports_token_usage_before_done() {
+    let capture = include_str!("fixtures/openai_compat/captured_ollama_qwen3_usage.sse");
+    let server = FakeServer::start([FakeResponse::sse(capture).chunk_size(8192)]).await;
+
+    let (events, err) = collect(&provider(&server, None)).await;
+
+    assert!(err.is_none(), "{err:?}");
+    // Expected values read from the capture's last chunk.
+    assert_eq!(
+        events[events.len() - 2..],
+        [
+            StreamEvent::Usage(Usage {
+                input_tokens: 30,
+                output_tokens: 1037,
+            }),
+            StreamEvent::Done,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn servers_that_report_no_usage_just_finish() {
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+
+    let (events, _) = collect(&provider(&server, None)).await;
+
+    assert!(
+        !events.iter().any(|e| matches!(e, StreamEvent::Usage(_))),
+        "{events:?}"
+    );
+    assert_eq!(events.last(), Some(&StreamEvent::Done));
+}
+
+#[test]
+fn cost_is_priced_per_million_tokens() {
+    let usage = Usage {
+        input_tokens: 1_000_000,
+        output_tokens: 500_000,
+    };
+
+    assert_eq!(usage.cost_usd(3.0, 15.0), 10.5);
+    assert_eq!(Usage::default().cost_usd(3.0, 15.0), 0.0);
+}
+
+#[test]
+fn usage_adds_up_across_steps() {
+    let mut total = Usage::default();
+    total += Usage {
+        input_tokens: 100,
+        output_tokens: 20,
+    };
+    total += Usage {
+        input_tokens: 150,
+        output_tokens: 30,
+    };
+
+    assert_eq!(
+        total,
+        Usage {
+            input_tokens: 250,
+            output_tokens: 50,
+        }
+    );
+    assert_eq!(total.total(), 300);
 }

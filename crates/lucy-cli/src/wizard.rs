@@ -85,6 +85,8 @@ pub fn run(prompter: &mut impl Prompter) -> Result<Config> {
             model: prompter.input("Model", Some(endpoint.model))?,
             key_name: endpoint.key_name.map(Into::into),
             tools: true,
+            price_in: None,
+            price_out: None,
         },
         None => {
             let base_url = prompter.input("Base URL (e.g. http://localhost:8080/v1)", None)?;
@@ -96,6 +98,8 @@ pub fn run(prompter: &mut impl Prompter) -> Result<Config> {
                 model,
                 key_name: Some(key_name).filter(|name| !name.is_empty()),
                 tools: true,
+                price_in: None,
+                price_out: None,
             }
         }
     };
@@ -175,6 +179,8 @@ mod tests {
                     model: "qwen3:14b".into(),
                     key_name: None,
                     tools: true,
+                    price_in: None,
+                    price_out: None,
                 },
             )
         );
@@ -226,6 +232,8 @@ mod tests {
                         model: model.into(),
                         key_name: key_name.map(Into::into),
                         tools: true,
+                        price_in: None,
+                        price_out: None,
                     },
                 ),
                 "preset {preset}"
@@ -267,6 +275,8 @@ mod tests {
                     model: "llama-3.3-70b".into(),
                     key_name: None,
                     tools: true,
+                    price_in: None,
+                    price_out: None,
                 },
             )
         );

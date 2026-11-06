@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -15,10 +15,11 @@ use lucy_protocol::rpc::{
     self, ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event,
     HelloParams, HelloResult, Notification, PROTOCOL_VERSION, ProfileInfo, RenameParams, Request,
     ResolveParams, Response, RpcError, ServerProblem, SessionParams, SessionSettings,
-    SetPlainParams, SetProfileParams, ToolsList, ToolsListParams, TurnOutcome, code, method,
+    SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams, ToolsList, ToolsListParams,
+    TurnOutcome, TurnUsage, UndoFile, UndoParams, UndoResult, code, method,
 };
-use lucy_protocol::{Message, Role, ToolCall};
-use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent};
+use lucy_protocol::{AgentLevel, Message, Mode, Role, ToolCall};
+use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, Usage};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -32,8 +33,10 @@ use crate::persona::{Personas, PromptContext, build_system_prompt, detect_machin
 use crate::provider::build_provider;
 
 use crate::secrets::{SecretStore, Secrets};
-use crate::sessions::{NewMessage, Origin, SessionId, SessionStore, StoreError};
-use crate::tools::{ToolBox, Verdict, close_dangling_calls};
+use crate::sessions::{
+    ChatSettings, NewMessage, Origin, SessionId, SessionStore, StoreError, new_reply_id,
+};
+use crate::tools::{Access, ToolBox, Verdict, close_dangling_calls};
 
 /// How long a tool call waits for the user's approval before it's treated as declined.
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -96,7 +99,7 @@ struct Core {
     store: Mutex<SessionStore>,
     personas: Personas,
     machine: String,
-    /// Per-session `/model` and `/plain` choices (not persisted; defaults come from config).
+    /// Per-session state that isn't saved (chat settings live in the session store).
     overrides: Mutex<HashMap<String, Overrides>>,
     /// Sessions with a reply in progress, and how to cancel it.
     turns: Mutex<HashMap<String, CancellationToken>>,
@@ -111,8 +114,6 @@ struct Core {
 
 #[derive(Default, Clone)]
 struct Overrides {
-    profile: Option<String>,
-    plain: Option<bool>,
     /// Tools approved with "always" in this session.
     allowed_tools: HashSet<String>,
 }
@@ -384,7 +385,7 @@ async fn handle(
         method::SESSION_SETTINGS => {
             let p: SessionParams = params(request.params)?;
             let key = core.resolve_key(&p.session_id)?;
-            result(core.settings(&key, &core.config()?))
+            result(core.settings(&key, &core.config()?)?)
         }
         method::SESSION_SET_PROFILE => {
             let p: SetProfileParams = params(request.params)?;
@@ -401,25 +402,29 @@ async fn handle(
                         .join(", ")
                 )));
             }
-            let key = core.resolve_key(&p.session_id)?;
-            core.overrides
-                .lock()
-                .unwrap()
-                .entry(key.clone())
-                .or_default()
-                .profile = Some(p.profile);
-            result(core.settings(&key, &config))
+            core.update_settings(&p.session_id, &config, |s| s.profile = Some(p.profile))
         }
         method::SESSION_SET_PLAIN => {
             let p: SetPlainParams = params(request.params)?;
+            core.update_settings(&p.session_id, &core.config()?, |s| s.plain = Some(p.plain))
+        }
+        method::SESSION_SET_MODE => {
+            let p: SetModeParams = params(request.params)?;
+            core.update_settings(&p.session_id, &core.config()?, |s| s.mode = Some(p.mode))
+        }
+        method::SESSION_SET_LEVEL => {
+            let p: SetLevelParams = params(request.params)?;
+            core.update_settings(&p.session_id, &core.config()?, |s| s.level = Some(p.level))
+        }
+        method::SESSION_UNDO => {
+            let p: UndoParams = params(request.params)?;
             let key = core.resolve_key(&p.session_id)?;
-            core.overrides
-                .lock()
-                .unwrap()
-                .entry(key.clone())
-                .or_default()
-                .plain = Some(p.plain);
-            result(core.settings(&key, &core.config()?))
+            if core.turns.lock().unwrap().contains_key(&key) {
+                return Err(RpcError::app(
+                    "Lucy is still replying in this session; wait or cancel first",
+                ));
+            }
+            result(core.undo(&key, p.apply).map_err(app)?)
         }
         method::PROFILES_LIST => {
             let config = core.config()?;
@@ -461,17 +466,26 @@ async fn handle(
         method::TOOLS_LIST => {
             let p: ToolsListParams = params(request.params)?;
             let config = core.config()?;
-            let allowed = match &p.session_id {
+            // With a session: its "always" approvals, mode and level.
+            let (allowed, access) = match &p.session_id {
                 Some(prefix) => {
                     let key = core.resolve_key(prefix)?;
-                    core.overrides
+                    let settings = core.settings(&key, &config)?;
+                    let allowed = core
+                        .overrides
                         .lock()
                         .unwrap()
                         .get(&key)
                         .map(|o| o.allowed_tools.clone())
-                        .unwrap_or_default()
+                        .unwrap_or_default();
+                    let access = Access {
+                        mode: settings.mode,
+                        level: settings.level,
+                        workspace: config.agent.workspace.as_deref().map(expand_home),
+                    };
+                    (allowed, access)
                 }
-                None => HashSet::new(),
+                None => (HashSet::new(), Access::default()),
             };
             let cwd = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
             let (external, failed) = core
@@ -480,7 +494,8 @@ async fn handle(
                 .await;
             let toolbox = ToolBox::open(&config.tools, cwd, external)
                 .await
-                .map_err(app)?;
+                .map_err(app)?
+                .with_access(access);
             let tools = toolbox.infos(&allowed);
             toolbox.close().await;
             result(ToolsList {
@@ -521,20 +536,89 @@ impl Core {
     }
 
     /// The profile and plain flag in effect for a session.
-    fn settings(&self, session: &str, config: &Config) -> SessionSettings {
-        let overrides = self
-            .overrides
-            .lock()
-            .unwrap()
-            .get(session)
-            .cloned()
-            .unwrap_or_default();
-        SessionSettings {
-            profile: overrides
+    /// The settings in effect for a session: its own choices, else the config's defaults.
+    /// Agent mode uses `agent_profile` unless the chat picked a profile itself.
+    fn settings(&self, session: &str, config: &Config) -> Result<SessionSettings, RpcError> {
+        let id: SessionId = session.parse().map_err(app)?;
+        let own = self.store.lock().unwrap().settings(&id).map_err(app)?;
+        let mode = own.mode.unwrap_or(config.defaults.mode);
+        let default_profile = match mode {
+            Mode::Agent => config
+                .defaults
+                .agent_profile
+                .clone()
+                .unwrap_or_else(|| config.defaults.profile.clone()),
+            Mode::Assist => config.defaults.profile.clone(),
+        };
+        Ok(SessionSettings {
+            profile: own
                 .profile
                 .filter(|p| config.profiles.contains_key(p))
-                .unwrap_or_else(|| config.defaults.profile.clone()),
-            plain: overrides.plain.unwrap_or(false),
+                .unwrap_or(default_profile),
+            plain: own.plain.unwrap_or(false),
+            mode,
+            level: own.level.unwrap_or(config.defaults.agent_level),
+        })
+    }
+
+    fn update_settings(
+        &self,
+        prefix: &str,
+        config: &Config,
+        change: impl FnOnce(&mut ChatSettings),
+    ) -> Result<Value, RpcError> {
+        let key = self.resolve_key(prefix)?;
+        let id: SessionId = key.parse().map_err(app)?;
+        {
+            let store = self.store.lock().unwrap();
+            let mut own = store.settings(&id).map_err(app)?;
+            change(&mut own);
+            store.set_settings(&id, &own).map_err(app)?;
+        }
+        result(self.settings(&key, config)?)
+    }
+
+    /// List, and with `apply` restore, the files the most recent reply with changes touched.
+    fn undo(&self, session: &str, apply: bool) -> Result<UndoResult, String> {
+        let id: SessionId = session.parse().map_err(|err| format!("{err}"))?;
+        let store = self.store.lock().unwrap();
+        let backups = store.last_backups(&id).map_err(|err| err.to_string())?;
+        let files = backups
+            .iter()
+            .map(|b| UndoFile {
+                path: b.path.display().to_string(),
+                created: b.before.is_none(),
+            })
+            .collect();
+        if !apply || backups.is_empty() {
+            return Ok(UndoResult {
+                files,
+                applied: false,
+            });
+        }
+        let mut problems = Vec::new();
+        for backup in &backups {
+            let restored = match &backup.before {
+                Some(content) => std::fs::write(&backup.path, content),
+                None => match std::fs::remove_file(&backup.path) {
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+                    other => other,
+                },
+            };
+            if let Err(err) = restored {
+                problems.push(format!("{}: {err}", backup.path.display()));
+            }
+        }
+        store
+            .drop_backups(&id, &backups[0].reply)
+            .map_err(|err| err.to_string())?;
+        if problems.is_empty() {
+            Ok(UndoResult {
+                files,
+                applied: true,
+            })
+        } else {
+            Err(format!("couldn't restore {}", problems.join("; ")))
         }
     }
 }
@@ -554,7 +638,7 @@ fn chat_send(
         .map_err(app)?
     };
     let key = session_id.to_string();
-    let settings = core.settings(&key, &config);
+    let settings = core.settings(&key, &config)?;
     let profile = &config.profiles[&settings.profile];
     let provider =
         build_provider(&settings.profile, profile, &core.options.secrets).map_err(app)?;
@@ -594,6 +678,25 @@ fn chat_send(
     });
 
     let cwd = working_folder(p.cwd.as_deref());
+    let agent = settings.mode == Mode::Agent;
+    let budget = if agent {
+        Budget {
+            agent: true,
+            max_steps: config.agent.max_steps.max(1),
+            max_cost: Some(config.agent.max_cost_usd),
+            max_tokens: Some(config.agent.max_tokens),
+            prices: profile.prices(),
+        }
+    } else {
+        Budget {
+            agent: false,
+            max_steps: config.tools.max_rounds,
+            max_cost: None,
+            max_tokens: None,
+            prices: profile.prices(),
+        }
+    };
+    let agent_note = agent.then(|| agent_note(&settings, &config, &budget));
     let system = build_system_prompt(
         &persona,
         &PromptContext {
@@ -603,6 +706,7 @@ fn chat_send(
             user_name: config.user.name.clone(),
             origin: Some(origin.clone()),
             cwd: Some(cwd.display().to_string()),
+            agent: agent_note,
         },
     );
     let messages = std::iter::once(Message::new(Role::System, system))
@@ -620,6 +724,12 @@ fn chat_send(
         key: key.clone(),
         id: turn_id,
         origin,
+        reply: new_reply_id(),
+    };
+    let access = Access {
+        mode: settings.mode,
+        level: settings.level,
+        workspace: config.agent.workspace.as_deref().map(expand_home),
     };
     tokio::spawn(turn.run(Plan {
         provider,
@@ -628,13 +738,58 @@ fn chat_send(
             settings: config.tools.clone(),
             servers: config.mcp.servers.clone(),
             cwd,
+            access,
         }),
+        budget,
         cancel,
     }));
     result(ChatSendResult {
         session_id: key,
         turn_id,
     })
+}
+
+/// What the model is told about agent mode: how far it may go, and its limits.
+fn agent_note(settings: &SessionSettings, config: &Config, budget: &Budget) -> String {
+    let level = match settings.level {
+        AgentLevel::Supervised => "0, Supervised: the user approves every tool call",
+        AgentLevel::Guarded => {
+            "1, Guarded: reads and file changes in the working folder run without asking; \
+             commands, going online and anything outside the folder need the user's approval"
+        }
+        AgentLevel::Workspace => {
+            "2, Workspace: anything local inside the workspace runs without asking; going \
+             online and anything outside it need approval"
+        }
+        AgentLevel::Unrestricted => {
+            "3, Unrestricted: tools run without asking, except on private files"
+        }
+    };
+    let workspace = match (&config.agent.workspace, settings.level) {
+        (Some(workspace), AgentLevel::Workspace) => format!(" Workspace: {}.", workspace.display()),
+        _ => String::new(),
+    };
+    let money = match budget.prices {
+        Some((i, o)) if i > 0.0 || o > 0.0 => {
+            format!(" and about ${:.2}", budget.max_cost.unwrap_or_default())
+        }
+        Some(_) => String::new(),
+        None => format!(" and {} tokens", budget.max_tokens.unwrap_or_default()),
+    };
+    format!(
+        "Agent mode (level {level}).{workspace} Work through the task yourself with tools, step \
+         by step, without asking the user for permission in chat; when it's done, report what \
+         you did. You have {} steps{money} for this task.",
+        budget.max_steps
+    )
+}
+
+/// `~/x` as an absolute path.
+fn expand_home(path: &Path) -> PathBuf {
+    match (path.strip_prefix("~"), dirs::home_dir()) {
+        (Ok(rest), Some(home)) => home.join(rest),
+        _ => path.to_owned(),
+    }
 }
 
 /// The folder a client says it's working in, if it exists; otherwise home.
@@ -652,6 +807,8 @@ struct Turn {
     key: String,
     id: u64,
     origin: Origin,
+    /// Groups this reply's file backups for `/undo`.
+    reply: String,
 }
 
 struct Plan {
@@ -659,6 +816,7 @@ struct Plan {
     messages: Vec<Message>,
     /// Tool settings and working folder, when this profile uses tools.
     tools: Option<ToolPlan>,
+    budget: Budget,
     cancel: CancellationToken,
 }
 
@@ -667,6 +825,61 @@ struct ToolPlan {
     servers: BTreeMap<String, McpServer>,
     /// The user's working folder.
     cwd: PathBuf,
+    access: Access,
+}
+
+/// How far one reply may go.
+struct Budget {
+    agent: bool,
+    /// Tool rounds (Assist) or model steps (Agent).
+    max_steps: u32,
+    max_cost: Option<f64>,
+    /// Used instead of the cost cap when the model's prices are unknown.
+    max_tokens: Option<u64>,
+    /// USD per million tokens (in, out), if known.
+    prices: Option<(f64, f64)>,
+}
+
+impl Budget {
+    fn cost(&self, usage: &Usage) -> Option<f64> {
+        self.prices.map(|(i, o)| usage.cost_usd(i, o))
+    }
+
+    /// Which agent cap, if any, `progress` has reached.
+    fn reached(&self, progress: &Progress) -> Option<String> {
+        if !self.agent {
+            return None;
+        }
+        if progress.steps >= self.max_steps {
+            return Some(format!("step cap ({} steps)", self.max_steps));
+        }
+        match (self.cost(&progress.usage), self.max_cost, self.max_tokens) {
+            (Some(cost), Some(max), _) if cost >= max => {
+                Some(format!("cost cap (${cost:.2} of ${max:.2})"))
+            }
+            (None, _, Some(max)) if progress.usage.total() >= max => Some(format!(
+                "token cap ({} of {max} tokens)",
+                progress.usage.total()
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// What a reply has done so far.
+#[derive(Default)]
+struct Progress {
+    /// The text of the model step in progress; finished steps are saved as they end.
+    text: String,
+    steps: u32,
+    usage: Usage,
+}
+
+/// How a reply ended, short of failing.
+enum Ending {
+    Complete,
+    /// Hit an agent cap (and summarised).
+    Capped(String),
 }
 
 impl Turn {
@@ -693,8 +906,8 @@ impl Turn {
         });
 
         let toolbox = match plan.tools {
-            Some(plan) => match self.open_tools(&plan).await {
-                Ok(toolbox) => Some((toolbox, plan.settings.max_rounds)),
+            Some(tools) => match self.open_tools(&tools).await {
+                Ok(toolbox) => Some(toolbox.with_access(tools.access)),
                 Err(err) => {
                     eprintln!("tools unavailable for this reply: {err}");
                     None
@@ -703,19 +916,28 @@ impl Turn {
             None => None,
         };
 
-        // The text of the model step in progress; finished steps are saved as they end.
-        let mut text = String::new();
-        let steps = self.steps(&*plan.provider, plan.messages, toolbox.as_ref(), &mut text);
+        let mut progress = Progress::default();
+        let steps = self.steps(
+            &*plan.provider,
+            plan.messages,
+            toolbox.as_ref(),
+            &plan.budget,
+            &mut progress,
+        );
         let (outcome, error) = tokio::select! {
             _ = plan.cancel.cancelled() => (TurnOutcome::Cancelled, None),
             steps = steps => match steps {
-                Ok(()) => (TurnOutcome::Complete, None),
+                Ok(Ending::Complete) => (TurnOutcome::Complete, None),
+                Ok(Ending::Capped(cap)) => (TurnOutcome::Capped, Some(format!("stopped at the {cap}"))),
                 Err(err) => (TurnOutcome::Failed, Some(err)),
             },
         };
         // Keep whatever arrived; a cut-off reply is saved and marked incomplete.
-        if outcome != TurnOutcome::Complete && !text.is_empty() {
-            self.save(NewMessage::assistant(text, self.origin.clone()).incomplete());
+        if outcome == TurnOutcome::Cancelled || outcome == TurnOutcome::Failed {
+            let text = std::mem::take(&mut progress.text);
+            if !text.is_empty() {
+                self.save(NewMessage::assistant(text, self.origin.clone()).incomplete());
+            }
         }
 
         self.core
@@ -723,9 +945,15 @@ impl Turn {
             .lock()
             .unwrap()
             .retain(|(session, _), _| *session != self.key);
-        if let Some((toolbox, _)) = toolbox {
+        if let Some(toolbox) = toolbox {
             toolbox.close().await;
         }
+        let usage = TurnUsage {
+            steps: progress.steps,
+            input_tokens: progress.usage.input_tokens,
+            output_tokens: progress.usage.output_tokens,
+            cost_usd: plan.budget.cost(&progress.usage),
+        };
         // Free the session before announcing, so a client can send its next message right away.
         self.core.turns.lock().unwrap().remove(&self.key);
         self.emit(Event::TurnFinished {
@@ -733,6 +961,7 @@ impl Turn {
             turn_id: self.id,
             outcome,
             error,
+            usage: Some(usage),
         });
         self.core.activity.add(&self.core.activity.turns, -1);
     }
@@ -750,31 +979,28 @@ impl Turn {
         ToolBox::open(&plan.settings, plan.cwd.clone(), external).await
     }
 
-    /// Ask the model, run any tools it calls, and repeat until it answers without tools.
+    /// Ask the model, run any tools it calls, and repeat until it answers without tools, or
+    /// (in agent mode) until a cap, when it gets one last turn to sum up.
     async fn steps(
         &self,
         provider: &dyn Provider,
         mut messages: Vec<Message>,
-        toolbox: Option<&(ToolBox, u32)>,
-        text: &mut String,
-    ) -> Result<(), String> {
-        let specs = toolbox.map(|(t, _)| t.specs()).unwrap_or_default();
-        let max_rounds = toolbox.map_or(0, |(_, max)| *max);
+        toolbox: Option<&ToolBox>,
+        budget: &Budget,
+        progress: &mut Progress,
+    ) -> Result<Ending, String> {
+        let specs = toolbox.map(ToolBox::specs).unwrap_or_default();
+        let max_rounds = budget.max_steps;
         let mut round = 0;
         loop {
-            text.clear();
-            let request = ChatRequest {
-                messages: messages.clone(),
-                tools: specs.clone(),
-            };
             let calls = self
-                .stream_step(provider, request, text)
+                .step(provider, &messages, &specs, progress)
                 .await
                 .map_err(|err| err.to_string())?;
-            let said = std::mem::take(text);
-            let Some((toolbox, _)) = toolbox.filter(|_| !calls.is_empty()) else {
+            let said = std::mem::take(&mut progress.text);
+            let Some(toolbox) = toolbox.filter(|_| !calls.is_empty()) else {
                 self.save(NewMessage::assistant(said, self.origin.clone()));
-                return Ok(());
+                return Ok(Ending::Complete);
             };
 
             round += 1;
@@ -784,40 +1010,94 @@ impl Turn {
                 self.origin.clone(),
             ));
             messages.push(Message::assistant_with_tools(said, calls.clone()));
-            if round > max_rounds + 1 {
+            if !budget.agent && round > max_rounds + 1 {
                 return Err(format!(
                     "Lucy kept calling tools after the limit of {max_rounds} rounds"
                 ));
             }
-            for call in calls {
-                let (output, is_error) = if round > max_rounds {
+            for call in &calls {
+                let (output, is_error) = if !budget.agent && round > max_rounds {
                     let refusal = format!(
                         "Tool limit reached ({max_rounds} rounds for one message). Answer with \
                          what you have, and say what's left to do."
                     );
-                    self.announce(&call, refusal, true)
+                    self.announce(call, refusal, true)
                 } else {
-                    self.run_call(toolbox, &call).await
+                    self.run_call(toolbox, call).await
                 };
                 self.save(NewMessage::tool_result(&call.id, &output, is_error));
                 messages.push(Message::tool_result(&call.id, output, is_error));
             }
+
+            if let Some(cap) = budget.reached(progress) {
+                self.wrap_up(provider, messages, &specs, &cap, progress)
+                    .await?;
+                return Ok(Ending::Capped(cap));
+            }
         }
     }
 
-    /// Stream one model response, returning the tool calls it made.
-    async fn stream_step(
+    /// At a cap: one more step, asking for a summary instead of more tool calls. Tools stay
+    /// offered (some providers require them once tool calls are in the history); any calls
+    /// it makes anyway are refused.
+    async fn wrap_up(
         &self,
         provider: &dyn Provider,
-        request: ChatRequest,
-        text: &mut String,
+        mut messages: Vec<Message>,
+        specs: &[lucy_providers::ToolSpec],
+        cap: &str,
+        progress: &mut Progress,
+    ) -> Result<(), String> {
+        messages.push(Message::new(
+            Role::User,
+            format!(
+                "[Lucy's core: this task reached its {cap}. Don't call any more tools. \
+                 Summarise what you've done and what's left, so the user can decide whether to \
+                 continue.]"
+            ),
+        ));
+        let calls = self
+            .step(provider, &messages, specs, progress)
+            .await
+            .map_err(|err| err.to_string())?;
+        let said = std::mem::take(&mut progress.text);
+        if calls.is_empty() {
+            self.save(NewMessage::assistant(said, self.origin.clone()));
+            return Ok(());
+        }
+        self.save(NewMessage::assistant_with_tools(
+            said,
+            calls.clone(),
+            self.origin.clone(),
+        ));
+        for call in &calls {
+            let refusal = format!("Not run: the task reached its {cap}.");
+            let (output, is_error) = self.announce(call, refusal, true);
+            self.save(NewMessage::tool_result(&call.id, &output, is_error));
+        }
+        Ok(())
+    }
+
+    /// One model response: streams its text, counts it, and returns the tool calls it made.
+    async fn step(
+        &self,
+        provider: &dyn Provider,
+        messages: &[Message],
+        specs: &[lucy_providers::ToolSpec],
+        progress: &mut Progress,
     ) -> Result<Vec<ToolCall>, ProviderError> {
+        progress.text.clear();
+        progress.steps += 1;
+        let request = ChatRequest {
+            messages: messages.to_vec(),
+            tools: specs.to_vec(),
+        };
         let mut calls = Vec::new();
         let mut stream = provider.stream(request).await?;
         while let Some(event) = stream.next().await {
             match event? {
                 StreamEvent::TextDelta(delta) => {
-                    text.push_str(&delta);
+                    progress.text.push_str(&delta);
                     self.emit(Event::Delta {
                         session_id: self.key.clone(),
                         turn_id: self.id,
@@ -825,6 +1105,7 @@ impl Turn {
                     });
                 }
                 StreamEvent::ToolCall(call) => calls.push(call),
+                StreamEvent::Usage(usage) => progress.usage += usage,
                 StreamEvent::Done => return Ok(calls),
             }
         }
@@ -875,11 +1156,33 @@ impl Turn {
                     turn_id: self.id,
                     call: call.clone(),
                 });
+                self.back_up(toolbox, call);
                 let (output, is_error) = toolbox.call(call).await;
                 self.finished(call, &output, is_error);
                 (output, is_error)
             }
             Err(reason) => self.announce(call, reason, true),
+        }
+    }
+
+    /// Keep what files looked like before a built-in write or edit, for `/undo`.
+    fn back_up(&self, toolbox: &ToolBox, call: &ToolCall) {
+        const MAX_BACKUP: u64 = 10 * 1024 * 1024;
+        for path in toolbox.changed_files(call) {
+            let before = match std::fs::metadata(&path) {
+                Ok(meta) if meta.len() > MAX_BACKUP => continue,
+                Ok(_) => match std::fs::read(&path) {
+                    Ok(bytes) => Some(bytes),
+                    Err(_) => continue,
+                },
+                Err(_) => None,
+            };
+            let _ = self.core.store.lock().unwrap().record_backup(
+                &self.session_id,
+                &self.reply,
+                &path,
+                before.as_deref(),
+            );
         }
     }
 

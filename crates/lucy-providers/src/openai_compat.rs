@@ -8,7 +8,9 @@ use serde_json::{Value, json};
 
 use crate::http::{check_status, error_message, send_error};
 use crate::sse::{self, EventParser, SseEvent};
-use crate::{ChatRequest, EventStream, Provider, ProviderError, StreamEvent, parse_arguments};
+use crate::{
+    ChatRequest, EventStream, Provider, ProviderError, StreamEvent, Usage, parse_arguments,
+};
 
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatConfig {
@@ -50,6 +52,8 @@ impl Provider for OpenAiCompat {
         let mut body = json!({
             "model": self.config.model,
             "stream": true,
+            // Ask for token counts in a final chunk; servers that don't support it ignore it.
+            "stream_options": {"include_usage": true},
             "messages": messages,
         });
         if !request.tools.is_empty() {
@@ -132,6 +136,16 @@ fn role_name(role: Role) -> &'static str {
 struct Chunk {
     #[serde(default)]
     choices: Vec<Choice>,
+    #[serde(default)]
+    usage: Option<ChunkUsage>,
+}
+
+#[derive(Deserialize)]
+struct ChunkUsage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
 }
 
 #[derive(Deserialize)]
@@ -175,6 +189,7 @@ struct PartialCall {
 struct ChunkParser {
     finished: bool,
     calls: Vec<PartialCall>,
+    usage: Option<Usage>,
 }
 
 impl ChunkParser {
@@ -223,6 +238,7 @@ impl ChunkParser {
                 })
             })
             .collect();
+        events.extend(self.usage.take().map(StreamEvent::Usage));
         events.push(StreamEvent::Done);
         events
     }
@@ -240,6 +256,12 @@ impl EventParser for ChunkParser {
         }
         let chunk: Chunk = serde_json::from_value(value)
             .map_err(|err| ProviderError::Protocol(format!("bad chunk: {err}")))?;
+        if let Some(usage) = chunk.usage {
+            self.usage = Some(Usage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+            });
+        }
         let mut events = Vec::new();
         for choice in chunk.choices {
             if let Some(text) = choice.delta.content.filter(|t| !t.is_empty()) {

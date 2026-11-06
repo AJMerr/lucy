@@ -32,7 +32,8 @@ Built test-first against the `mock` provider.
      from the keyring); tools named `<server>__<tool>`; `lucy mcp add|list|remove|serve`.
    - ✅ **8c** — remote MCP servers by URL (streamable HTTP), with keyring API keys or OAuth
      sign-in (`lucy mcp login|logout`, tokens in the keyring, refreshed automatically).
-9. **Agent mode** — `AgentLevel` enforcement, step and cost caps.
+9. ✅ **Agent mode** — `/mode agent`, `/level`, `lucy agent`; `AgentLevel` enforcement; step,
+   cost and token caps with a wrap-up summary; saved chat settings; `/undo` for file changes.
 10. **Service** — `lucy service install|uninstall`.
 11. **Optional HTTP/WebSocket** transport (off by default).
 

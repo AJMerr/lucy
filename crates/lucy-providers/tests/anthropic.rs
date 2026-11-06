@@ -2,7 +2,7 @@ use futures::StreamExt;
 use lucy_protocol::{Message, Role, ToolCall};
 use lucy_providers::anthropic::{Anthropic, AnthropicConfig};
 use lucy_providers::testing::{FakeResponse, FakeServer};
-use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, ToolSpec};
+use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, ToolSpec, Usage};
 use serde_json::json;
 
 const TEXT: &str = include_str!("fixtures/anthropic/text.sse");
@@ -56,6 +56,11 @@ async fn streams_text_and_skips_thinking() {
         vec![
             StreamEvent::TextDelta("Wake up,".into()),
             StreamEvent::TextDelta(" choom. 🌙".into()),
+            // input_tokens from message_start, output_tokens from the last message_delta.
+            StreamEvent::Usage(Usage {
+                input_tokens: 21,
+                output_tokens: 12,
+            }),
             StreamEvent::Done,
         ]
     );
@@ -257,6 +262,32 @@ async fn tool_use_streamed_in_fragments_arrives_whole() {
             StreamEvent::TextDelta("Let me look.".into()),
             StreamEvent::ToolCall(call("toolu_01A", "read_file", json!({"path": "notes.txt"}))),
             StreamEvent::ToolCall(call("toolu_01B", "list_dir", json!({}))),
+            StreamEvent::Usage(Usage {
+                input_tokens: 310,
+                output_tokens: 64,
+            }),
+            StreamEvent::Done,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn cached_prompt_tokens_count_as_input() {
+    let body = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"cache_creation_input_tokens\":100,\"cache_read_input_tokens\":2000,\"output_tokens\":1}}}\n\n\
+                event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n\
+                event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+    let server = FakeServer::start([FakeResponse::sse(body)]).await;
+
+    let (events, err) = collect(&provider(&server)).await;
+
+    assert!(err.is_none(), "{err:?}");
+    assert_eq!(
+        events,
+        vec![
+            StreamEvent::Usage(Usage {
+                input_tokens: 2105,
+                output_tokens: 7,
+            }),
             StreamEvent::Done,
         ]
     );

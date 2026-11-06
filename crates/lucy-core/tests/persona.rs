@@ -96,6 +96,7 @@ fn context(plain: bool) -> PromptContext {
             model: "qwen3:14b".into(),
         }),
         cwd: None,
+        agent: None,
     }
 }
 

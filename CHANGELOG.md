@@ -53,11 +53,30 @@
 - A remote server's read-only tools run by themselves. Their paths aren't on your machine, so
   the home-folder checks don't apply.
 
+### Agent mode (step 9)
+
+- **Lucy can work through tasks on her own.** `/mode agent` in a chat, or `lucy agent "task"`
+  from the terminal. `/level 0-3` sets how freely she works:
+  - 0 asks for everything.
+  - 1 (default) changes files in your folder by itself.
+  - 2 runs anything local in `[agent] workspace`, commands included.
+  - 3 runs everything except private paths.
+- **Caps:** each task stops at `max_steps`, and at `max_cost_usd` (using `price_in`/`price_out`
+  per profile; local models are free) or `max_tokens` for unpriced models. At a cap she sums
+  up what's done and what's left; say "continue" to carry on. `lucy agent` exits with 2.
+- **`/undo`** restores the files the last reply changed (and deletes ones it created). Repeat
+  it to step further back.
+- Replies that took several steps end with `· 7 steps · 12.3k tokens · $0.02`.
+- **Chats remember their model, plain mode, mode and level** across core restarts.
+- Token usage is now read from both providers' streams (`include_usage` for OpenAI-compatible
+  servers).
+
 ### Upgrading
 
-- **Protocol v2.** Stop the old core after installing (`pkill -f "lucy core run"`); the new
-  `lucy` says so if you forget.
-- The session database migrates itself (it adds tool-call columns).
+- **Protocol v3** (v2 brought tools, v3 agent mode). Stop the old core after installing
+  (`pkill -f "lucy core run"`); the new `lucy` says so if you forget.
+- The session database migrates itself (it adds tool-call columns, chat settings and undo
+  backups).
 - Ollama's default 4,096-token context fills faster with tools. Raise `OLLAMA_CONTEXT_LENGTH`
   (e.g. 16384) if replies lose track.
 

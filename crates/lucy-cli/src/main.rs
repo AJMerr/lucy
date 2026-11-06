@@ -35,6 +35,19 @@ enum Command {
         #[arg(short, long)]
         yes: bool,
     },
+    /// Give Lucy a task to work through on her own (agent mode), in the current folder.
+    ///
+    /// Exits with code 2 if the task stopped at its step or cost cap.
+    Agent {
+        /// The task. Reads stdin when omitted.
+        task: Option<String>,
+        /// How free she is: 0 supervised, 1 guarded (default), 2 workspace, 3 unrestricted.
+        #[arg(short, long, value_parser = parse_level)]
+        level: Option<lucy_protocol::AgentLevel>,
+        /// Approve every tool call that would ask (only for tasks you trust).
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// Set up or inspect Lucy's config file.
     Config {
         #[command(subcommand)]
@@ -165,7 +178,32 @@ fn main() -> Result<()> {
             if Config::load(&path)?.is_none() {
                 bail!(no_config_message(&path));
             }
-            ask::run(prompt, yes)
+            ask::run(
+                prompt,
+                ask::AskOptions {
+                    yes,
+                    ..Default::default()
+                },
+            )
+            .map(|_| ())
+        }
+        Some(Command::Agent { task, level, yes }) => {
+            let path = config_path()?;
+            if Config::load(&path)?.is_none() {
+                bail!(no_config_message(&path));
+            }
+            let finish = ask::run(
+                task,
+                ask::AskOptions {
+                    yes,
+                    agent: true,
+                    level,
+                },
+            )?;
+            if finish == ask::Finish::Capped {
+                std::process::exit(2);
+            }
+            Ok(())
         }
         Some(Command::Core {
             action: CoreAction::Run,
@@ -275,6 +313,13 @@ fn mcp_command(action: McpAction) -> Result<()> {
         McpAction::Logout { name } => mcp::logout(&name),
         McpAction::Serve => runtime.block_on(mcp::serve()),
     }
+}
+
+fn parse_level(text: &str) -> Result<lucy_protocol::AgentLevel, String> {
+    let number: u8 = text
+        .parse()
+        .map_err(|_| format!("`{text}` isn't a level; use 0, 1, 2 or 3"))?;
+    lucy_protocol::AgentLevel::try_from(number)
 }
 
 fn config_path() -> Result<PathBuf> {

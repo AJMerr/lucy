@@ -4,10 +4,10 @@ A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her 
 today; later she'll live on your desktop as an animated sprite with speech bubbles that you can
 toggle on and off.
 
-> **Status:** v0.1.0 plus tools (unreleased): terminal chat with any OpenAI-compatible or
-> Anthropic model, now able to read, search, run and edit with your approval, and to use any
-> local or remote MCP server you add. Agent mode and the desktop sprite are next. See
-> [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
+> **Status:** v0.1.0 plus tools and agent mode (unreleased): terminal chat with any
+> OpenAI-compatible or Anthropic model, able to read, search, run and edit with your approval,
+> use any MCP server you add, and work through tasks on her own within limits you set. The
+> desktop sprite is next. See [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -25,6 +25,9 @@ toggle on and off.
 - **Any MCP server.** Add tool servers with `lucy mcp add` (GitHub, databases, browsers…).
   Lucy starts them when needed, fills their tokens from your keyring, and applies the same
   approval rules.
+- **Agent mode.** `/mode agent` or `lucy agent "task"`: Lucy works through a task step by step
+  on her own, at a freedom level you choose (0–3), within step and cost caps. `/undo` rolls back
+  the files a reply changed.
 - **Saved conversations.** Every chat is stored locally in SQLite. Continue the last one with
   `lucy -c`, or resume any by ID prefix.
 - **Keys kept out of files.** API keys live in your OS keyring, with environment-variable
@@ -61,6 +64,8 @@ lucy -r 01m6ne             # resume a chat by any unique ID prefix
 lucy ask "what's a flake?" # one answer, plain text, then exit
 lucy ask -y "tidy todo.md" # approve every tool call (only for scripts you trust)
 git diff | lucy ask        # the prompt can come from stdin
+lucy agent "add tests for parser.rs"   # a task Lucy works through on her own (agent mode)
+lucy agent -l 2 "fix the build"        # …at level 2: anything local in the workspace runs
 ```
 
 In the chat:
@@ -73,7 +78,9 @@ In the chat:
 | `/resume <id>`, `/rename <title>`, `/delete <id>` | manage saved chats |
 | `/tools` | list tools and whether each runs by itself or asks |
 | `/last` | show the last tool call's full input and output |
-| `/mode` | show the mode (agent mode arrives in a later version) |
+| `/mode [assist\|agent]` | show or switch this chat's mode |
+| `/level [0-3]` | how freely Lucy works in agent mode (see below) |
+| `/undo` | restore the files the last reply changed; repeat to go further back |
 | `/help`, `/quit` | the list of commands, leave |
 
 Keys: Tab completes commands and profile names, Alt+Enter (or a trailing `\`) starts a new line,
@@ -85,6 +92,33 @@ Other commands: `lucy config path`, `lucy auth set|remove|status`,
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
 declines, unless you pass `--yes`.
+
+### Agent mode
+
+In agent mode Lucy works a task through on her own: she plans, uses tools, checks her work,
+and reports back. The level decides what she may do without asking you:
+
+| Level | Runs by itself | Still asks |
+| --- | --- | --- |
+| 0 Supervised | nothing | every tool call |
+| 1 Guarded (default) | reads; file changes inside the folder you started in | commands, going online, anything outside the folder |
+| 2 Workspace | anything local inside `[agent] workspace` (or the folder), commands included | going online, anything outside the workspace |
+| 3 Unrestricted | everything | — |
+
+Private paths (`~/.ssh`, keys, `.env` files) ask at every level. Commands run without asking at
+level 2 can still do anything a shell can, including installing software or downloading, so
+pick that level for workspaces you'd let a script loose in.
+
+Every task has caps: `[agent] max_steps` model steps, and `max_cost_usd` when the profile has
+`price_in`/`price_out` (local models count as free) or `max_tokens` when it doesn't. At a cap,
+Lucy gets one last turn to sum up what's done and what's left; say "continue" to give her a
+fresh budget. `lucy agent` exits with code 2 when that happens. Chats remember their mode,
+level and model across restarts.
+
+Every reply's file changes (from `write_file` and `edit_file`) are recorded. `/undo` lists the
+last reply's changes and, if you confirm, restores them, deleting files that reply created.
+Run it again to go further back (up to 20 replies per chat). Changes made through
+`run_command` or other servers' tools can't be undone this way.
 
 ### Configuration
 

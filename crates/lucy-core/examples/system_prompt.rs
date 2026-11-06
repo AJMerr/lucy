@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cwd: std::env::current_dir()
             .ok()
             .map(|dir| dir.display().to_string()),
+        agent: None,
     };
     println!("{}", build_system_prompt(&persona, &ctx));
     Ok(())

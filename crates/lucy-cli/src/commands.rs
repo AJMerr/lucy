@@ -1,6 +1,6 @@
 //! Parsing what the user types at the chat prompt.
 
-use lucy_protocol::Mode;
+use lucy_protocol::{AgentLevel, Mode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
@@ -24,6 +24,10 @@ pub enum Command {
     Plain(Option<bool>),
     /// Show, or switch.
     Mode(Option<Mode>),
+    /// Show, or set, the agent level.
+    Level(Option<AgentLevel>),
+    /// Restore the files the last reply changed.
+    Undo,
     /// List tools and whether each runs by itself or asks.
     Tools,
     /// Show the last tool call in full.
@@ -42,6 +46,14 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "[on|off]  drop Lucy's voice (toggles without an argument)",
     ),
     ("/mode", "[assist|agent]  show or switch mode"),
+    (
+        "/level",
+        "[0-3]  agent freedom: 0 supervised, 1 guarded, 2 workspace, 3 unrestricted",
+    ),
+    (
+        "/undo",
+        "restore the files Lucy's last reply changed (repeat to go further back)",
+    ),
     ("/tools", "list Lucy's tools and which ones ask first"),
     ("/last", "show the last tool call's full input and output"),
     ("/new", "start a new chat"),
@@ -80,6 +92,16 @@ pub fn parse(line: &str) -> Result<Input, String> {
         ("sessions", _) => Command::Sessions,
         ("tools", _) => Command::Tools,
         ("last", _) => Command::Last,
+        ("undo", _) => Command::Undo,
+        ("level", None) => Command::Level(None),
+        ("level", Some(arg)) => match arg
+            .parse::<u8>()
+            .ok()
+            .and_then(|n| AgentLevel::try_from(n).ok())
+        {
+            Some(level) => Command::Level(Some(level)),
+            None => return usage("/level [0-3]"),
+        },
         ("resume", Some(id)) => Command::Resume(id.to_owned()),
         ("resume", None) => return usage("/resume <session id>"),
         ("delete", Some(id)) => Command::Delete(id.to_owned()),

@@ -13,10 +13,12 @@ persona = "lucy"                # persona/<name>.md
 mode = "assist"                 # "assist" | "agent"
 agent_level = 1                 # 0 supervised, 1 guarded, 2 workspace, 3 unrestricted
 
-[agent]
-max_steps = 25
-max_cost_usd = 1.00
-workspace = "~/Projects"        # only used at agent_level = 2
+[agent]                         # `/mode agent` in a chat, or `lucy agent "task"`
+max_steps = 25                  # model steps per task; then Lucy sums up and stops
+max_cost_usd = 1.00             # for profiles with prices (local models are free)
+max_tokens = 1000000            # instead of cost, for profiles without prices
+workspace = "~/Projects"        # agent_level 2 runs anything local in here (default: the
+                                # folder you started in)
 
 # --- Provider profiles -------------------------------------------------------------------
 
@@ -42,6 +44,8 @@ key_name = "openrouter"
 provider = "anthropic"
 model = "claude-sonnet-5-5"
 key_name = "anthropic"          # env override: LUCY_KEY_ANTHROPIC (or ANTHROPIC_API_KEY)
+price_in = 3.00                 # USD per million tokens, for agent cost caps
+price_out = 15.00
 
 # --- Tools (Assist mode) ------------------------------------------------------------------
 # Read-only tools run by themselves for files in your home folder. Anything that changes

@@ -56,6 +56,7 @@ async fn main() -> ExitCode {
             let mut body = json!({
                 "model": model,
                 "stream": true,
+                "stream_options": {"include_usage": true},
                 "messages": [
                     {"role": "system", "content": SYSTEM},
                     {"role": "user", "content": prompt},

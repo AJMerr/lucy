@@ -24,6 +24,8 @@ fn profile(provider: ProviderKind, base_url: &str, key_name: Option<&str>) -> Pr
         model: "some-model".into(),
         key_name: key_name.map(Into::into),
         tools: true,
+        price_in: None,
+        price_out: None,
     }
 }
 

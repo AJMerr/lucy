@@ -124,6 +124,8 @@ pub struct PromptContext {
     pub origin: Option<Origin>,
     /// The folder the user is working in; tools resolve relative paths against it.
     pub cwd: Option<String>,
+    /// In agent mode: how far Lucy may go, and her limits for this task.
+    pub agent: Option<String>,
 }
 
 /// The persona text for this mode, followed by a context section. Context goes last so the
@@ -151,6 +153,9 @@ pub fn build_system_prompt(persona: &Persona, ctx: &PromptContext) -> String {
     }
     if let Some(cwd) = &ctx.cwd {
         lines.push(format!("- Working folder: {cwd}"));
+    }
+    if let Some(agent) = &ctx.agent {
+        lines.push(format!("- {agent}"));
     }
     format!(
         "{}\n\n{}",

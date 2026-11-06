@@ -114,3 +114,18 @@ fn size(bytes: usize) -> String {
         b => format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)),
     }
 }
+
+/// `· 7 steps · 12.3k tokens · $0.02` for a reply that took several model steps.
+pub fn usage(usage: &lucy_protocol::rpc::TurnUsage) -> String {
+    let tokens = usage.input_tokens + usage.output_tokens;
+    let tokens = if tokens >= 1000 {
+        format!("{:.1}k", tokens as f64 / 1000.0)
+    } else {
+        tokens.to_string()
+    };
+    let mut line = format!("· {} steps · {tokens} tokens", usage.steps);
+    if let Some(cost) = usage.cost_usd.filter(|c| *c > 0.0) {
+        line.push_str(&format!(" · ${cost:.2}"));
+    }
+    line
+}

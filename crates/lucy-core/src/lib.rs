@@ -8,6 +8,7 @@ pub mod config;
 pub mod mcp;
 pub mod oauth;
 pub mod persona;
+pub mod policy;
 pub mod provider;
 pub mod secrets;
 pub mod server;

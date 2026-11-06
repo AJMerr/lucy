@@ -42,6 +42,9 @@ pub enum StreamEvent {
     /// A complete tool call, emitted once all of its argument fragments have arrived. Arguments
     /// the model garbled are passed on as a JSON string so the caller can report it back.
     ToolCall(ToolCall),
+    /// Tokens this response used, as the provider counted them. Sent once, just before `Done`,
+    /// by providers that report it.
+    Usage(Usage),
     Done,
 }
 
@@ -80,4 +83,30 @@ pub(crate) fn parse_arguments(raw: &str) -> Value {
         return Value::Object(Default::default());
     }
     serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_owned()))
+}
+
+/// Tokens used by one or more model responses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    /// Prompt tokens, including any served from a prompt cache.
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+impl Usage {
+    pub fn total(&self) -> u64 {
+        self.input_tokens + self.output_tokens
+    }
+
+    /// Cost at the given prices, in USD per million tokens.
+    pub fn cost_usd(&self, price_in: f64, price_out: f64) -> f64 {
+        (self.input_tokens as f64 * price_in + self.output_tokens as f64 * price_out) / 1_000_000.0
+    }
+}
+
+impl std::ops::AddAssign for Usage {
+    fn add_assign(&mut self, other: Self) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+    }
 }
