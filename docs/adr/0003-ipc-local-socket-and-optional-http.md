@@ -33,3 +33,14 @@ Date: 2026-11-05 · Status: Accepted
 - `lucy-client` holds the client side so the sprite can reuse it.
 - Open: the Windows named pipe uses the default security descriptor; restrict it to the current
   user before the HTTP/remote work (step 11).
+
+## Implementation notes (step 10, protocol v4)
+
+- `core.status` (version, PID, `service`, busy chats) and `core.shutdown {force}` work before
+  `hello` and keep their shape across protocol versions, so a newer client can always see and
+  stop an older core. Shutdown refuses while replies are streaming unless forced; forced, it
+  cancels them (partial replies are kept, as with `chat.cancel`), stops accepting, waits up
+  to 2 s for replies and clients to wind down, then closes MCP servers and exits.
+- A client whose `hello` is refused by an older core asks for its status and, if it's idle,
+  shuts it down and starts its own (`lucy` prints that it did). A busy or newer core is left
+  alone with a message naming `lucy core stop`. Cores before v4 still need `pkill` once.

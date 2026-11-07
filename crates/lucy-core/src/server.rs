@@ -12,11 +12,12 @@ use interprocess::local_socket::ListenerOptions;
 use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
 use lucy_client::Endpoint;
 use lucy_protocol::rpc::{
-    self, ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event,
-    HelloParams, HelloResult, Notification, PROTOCOL_VERSION, ProfileInfo, RenameParams, Request,
-    ResolveParams, Response, RpcError, ServerProblem, SessionParams, SessionSettings,
-    SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams, ToolsList, ToolsListParams,
-    TurnOutcome, TurnUsage, UndoFile, UndoParams, UndoResult, code, method,
+    self, ApproveParams, BusyChat, CancelResult, ChatSendParams, ChatSendResult, CoreStatus,
+    Decision, Event, HelloParams, HelloResult, Notification, PROTOCOL_VERSION, ProfileInfo,
+    RenameParams, Request, ResolveParams, Response, RpcError, ServerProblem, SessionParams,
+    SessionSettings, SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams,
+    ShutdownParams, ShutdownResult, ToolsList, ToolsListParams, TurnOutcome, TurnUsage, UndoFile,
+    UndoParams, UndoResult, code, method,
 };
 use lucy_protocol::{AgentLevel, Message, Mode, Role, ToolCall};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, Usage};
@@ -51,8 +52,9 @@ pub struct CoreOptions {
     /// User persona folder; `None` uses only the built-in personas.
     pub personas_dir: Option<PathBuf>,
     pub secrets: DynSecrets,
-    /// Exit after this long with no connections and no reply streaming.
-    pub idle_timeout: Duration,
+    /// Exit after this long with no connections and no reply streaming. `None` runs until
+    /// stopped with `core.shutdown` (the login service).
+    pub idle_timeout: Option<Duration>,
     /// Where remote MCP servers' OAuth tokens live; `None` keeps them in memory (tests).
     pub token_store: Option<crate::oauth::TokenStore>,
 }
@@ -110,6 +112,8 @@ struct Core {
     approvals: Mutex<HashMap<(String, String), oneshot::Sender<Decision>>>,
     /// External MCP servers, shared by every chat.
     mcp: McpHost,
+    /// Cancelled by `core.shutdown`.
+    shutdown: CancellationToken,
 }
 
 #[derive(Default, Clone)]
@@ -126,7 +130,10 @@ struct ConnState {
     own_sessions: HashSet<String>,
 }
 
-/// Run the core until it has been idle for `idle_timeout`.
+/// How long a stopping core waits for cancelled replies and open connections to wind down.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+
+/// Run the core until it has been idle for `idle_timeout`, or until `core.shutdown`.
 pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
     let listener = bind(&options.endpoint).await?;
     let store = SessionStore::open(&options.db_path)?;
@@ -148,6 +155,7 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         activity: Activity::default(),
         approvals: Mutex::default(),
         mcp,
+        shutdown: CancellationToken::new(),
     });
 
     // Accept in a task of its own: cancelling a pending accept would close the waiting pipe
@@ -175,13 +183,31 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         let idle = core.activity.is_idle();
         tokio::select! {
             _ = &mut changed => {}
-            _ = tokio::time::sleep(idle_timeout), if idle => break,
+            _ = core.shutdown.cancelled() => break,
+            _ = tokio::time::sleep(idle_timeout.unwrap_or_default()),
+                if idle && idle_timeout.is_some() => break,
         }
     }
-    core.mcp.shutdown().await;
     acceptor.abort();
     // Dropping the listener (inside the aborted task) removes the socket file.
     let _ = acceptor.await;
+    if core.shutdown.is_cancelled() {
+        // Let cancelled replies save what they had, and clients read their last answers.
+        let deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
+        while !core.activity.is_idle() {
+            let changed = core.activity.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if core.activity.is_idle() {
+                break;
+            }
+            tokio::select! {
+                _ = &mut changed => {}
+                _ = tokio::time::sleep_until(deadline) => break,
+            }
+        }
+    }
+    core.mcp.shutdown().await;
     Ok(())
 }
 
@@ -318,6 +344,34 @@ async fn handle(
             protocol_version: PROTOCOL_VERSION,
             core_version: env!("CARGO_PKG_VERSION").into(),
             pid: std::process::id(),
+        });
+    }
+    // These two work before `hello`, so any client version can see and stop the core.
+    if request.method == method::CORE_STATUS {
+        return result(CoreStatus {
+            protocol_version: PROTOCOL_VERSION,
+            core_version: env!("CARGO_PKG_VERSION").into(),
+            pid: std::process::id(),
+            service: core.options.idle_timeout.is_none(),
+            busy: core.busy(),
+        });
+    }
+    if request.method == method::CORE_SHUTDOWN {
+        let p: ShutdownParams = params(request.params)?;
+        let busy = core.busy();
+        if !busy.is_empty() && !p.force {
+            return result(ShutdownResult {
+                stopping: false,
+                busy,
+            });
+        }
+        for turn in core.turns.lock().unwrap().values() {
+            turn.cancel();
+        }
+        core.shutdown.cancel();
+        return result(ShutdownResult {
+            stopping: true,
+            busy,
         });
     }
     if !state.lock().unwrap().hello {
@@ -529,6 +583,30 @@ impl Core {
             })
     }
 
+    /// Chats with a reply in progress, with their titles.
+    fn busy(&self) -> Vec<BusyChat> {
+        let keys: HashSet<String> = self.turns.lock().unwrap().keys().cloned().collect();
+        if keys.is_empty() {
+            return Vec::new();
+        }
+        let titles: HashMap<String, Option<String>> = match self.store.lock().unwrap().list() {
+            Ok(sessions) => sessions
+                .into_iter()
+                .map(|s| (s.id.to_string(), s.title))
+                .collect(),
+            Err(_) => HashMap::new(),
+        };
+        let mut busy: Vec<BusyChat> = keys
+            .into_iter()
+            .map(|key| BusyChat {
+                title: titles.get(&key).cloned().flatten(),
+                session_id: key,
+            })
+            .collect();
+        busy.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+        busy
+    }
+
     /// The full ID of the session matching `prefix`.
     fn resolve_key(&self, prefix: &str) -> Result<String, RpcError> {
         let store = self.store.lock().unwrap();
@@ -651,6 +729,9 @@ fn chat_send(
     let cancel = CancellationToken::new();
     {
         let mut turns = core.turns.lock().unwrap();
+        if core.shutdown.is_cancelled() {
+            return Err(RpcError::app("Lucy's core is shutting down; try again"));
+        }
         if turns.contains_key(&key) {
             return Err(RpcError::app(
                 "Lucy is still replying in this session; wait or cancel first",

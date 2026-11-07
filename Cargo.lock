@@ -1727,6 +1727,8 @@ dependencies = [
  "chrono",
  "clap",
  "dialoguer",
+ "dirs",
+ "libc",
  "lucy-client",
  "lucy-core",
  "lucy-protocol",

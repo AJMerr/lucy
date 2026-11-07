@@ -34,7 +34,7 @@ Built test-first against the `mock` provider.
      sign-in (`lucy mcp login|logout`, tokens in the keyring, refreshed automatically).
 9. ✅ **Agent mode** — `/mode agent`, `/level`, `lucy agent`; `AgentLevel` enforcement; step,
    cost and token caps with a wrap-up summary; saved chat settings; `/undo` for file changes.
-10. **Service** — `lucy service install|uninstall`.
+10. ✅ **Service** — `lucy service install|uninstall|status|restart`, `lucy core stop`.
 11. **Optional HTTP/WebSocket** transport (off by default).
 
 ## Milestone 2 — Desktop sprite

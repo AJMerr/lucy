@@ -7,10 +7,17 @@ use serde_json::Value;
 use crate::{AgentLevel, Mode, Role, ToolCall};
 
 /// Bumped on any incompatible change; `hello` refuses mismatched clients.
-pub const PROTOCOL_VERSION: u32 = 3;
+/// `core.status` and `core.shutdown` keep their shape across versions, so a newer client can
+/// still stop an older core (from v4 on).
+pub const PROTOCOL_VERSION: u32 = 4;
 
 pub mod method {
     pub const HELLO: &str = "hello";
+    /// Version, PID and busy chats; allowed before `hello`, whatever the client's version.
+    pub const CORE_STATUS: &str = "core.status";
+    /// Stop the core (refused while replies are in progress unless forced); allowed before
+    /// `hello`.
+    pub const CORE_SHUTDOWN: &str = "core.shutdown";
     pub const SUBSCRIBE: &str = "subscribe";
     pub const CHAT_SEND: &str = "chat.send";
     pub const CHAT_CANCEL: &str = "chat.cancel";
@@ -144,6 +151,37 @@ pub struct HelloResult {
     pub protocol_version: u32,
     pub core_version: String,
     pub pid: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CoreStatus {
+    pub protocol_version: u32,
+    pub core_version: String,
+    pub pid: u32,
+    /// Started by the login service (runs until stopped) rather than on demand.
+    pub service: bool,
+    /// Chats with a reply in progress.
+    pub busy: Vec<BusyChat>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BusyChat {
+    pub session_id: String,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ShutdownParams {
+    /// Cancel replies in progress (keeping what was said) instead of refusing.
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShutdownResult {
+    /// False when replies are in progress and `force` wasn't set; the core keeps running.
+    pub stopping: bool,
+    pub busy: Vec<BusyChat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

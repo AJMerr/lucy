@@ -1,24 +1,45 @@
-//! Running the core (`lucy core run`) and starting it in the background on demand.
+//! Running the core (`lucy core run`), starting it on demand or through the login service,
+//! and stopping it.
 
 use std::fs::OpenOptions;
+use std::io::IsTerminal;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-use lucy_client::{Client, Endpoint};
+use anyhow::{Context, Result, bail};
+use dialoguer::Confirm;
+use lucy_client::{Client, ClientError, Endpoint};
 use lucy_core::secrets::{OsKeyring, Secrets};
 use lucy_core::server::{CoreError, CoreOptions, serve};
 use lucy_core::{config, persona, sessions};
+use lucy_protocol::rpc::{BusyChat, CoreStatus, PROTOCOL_VERSION};
+
+use crate::service::{ServiceManager, SystemRunner};
 
 /// Default idle timeout for an auto-started core (ADR 0001).
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// How long to wait for a core to stop, or to come up.
+const WAIT: Duration = Duration::from_secs(5);
+const CLIENT_NAME: &str = concat!("lucy-cli ", env!("CARGO_PKG_VERSION"));
 
-/// `lucy core run`: serve until idle. Exits quietly if another core already owns the socket.
-pub fn run() -> Result<()> {
-    let idle_timeout = std::env::var("LUCY_CORE_IDLE_SECS")
-        .ok()
-        .and_then(|secs| secs.parse().ok())
-        .map_or(IDLE_TIMEOUT, Duration::from_secs);
+/// `lucy core run`: serve until idle, or with `service` until stopped. Exits quietly if
+/// another core already owns the socket.
+pub fn run(service: bool) -> Result<()> {
+    if service {
+        #[cfg(windows)]
+        detach_and_log()?;
+    }
+    let idle_timeout = if service {
+        None
+    } else {
+        Some(
+            std::env::var("LUCY_CORE_IDLE_SECS")
+                .ok()
+                .and_then(|secs| secs.parse().ok())
+                .map_or(IDLE_TIMEOUT, Duration::from_secs),
+        )
+    };
     let options = CoreOptions {
         endpoint: Endpoint::default_for_user(),
         config_path: config::default_path().context("no config directory; set LUCY_CONFIG")?,
@@ -30,14 +51,19 @@ pub fn run() -> Result<()> {
     };
     let endpoint = options.endpoint.to_string();
     log(&format!(
-        "lucy core {} (pid {}) starting at {endpoint}",
+        "lucy core {} (pid {}) starting at {endpoint}{}",
         env!("CARGO_PKG_VERSION"),
-        std::process::id()
+        std::process::id(),
+        if service { " as a service" } else { "" }
     ));
     let outcome = tokio::runtime::Runtime::new()?.block_on(serve(options));
     match outcome {
         Ok(()) => {
-            log("exiting: idle");
+            log(if service {
+                "exiting: stopped"
+            } else {
+                "exiting: idle or stopped"
+            });
             Ok(())
         }
         Err(CoreError::AlreadyRunning(_)) => {
@@ -59,15 +85,18 @@ fn log(message: &str) {
     );
 }
 
-/// Connect to the core, starting it in the background if it isn't running.
+/// Connect to the core, starting it if it isn't running. A core from an older Lucy is
+/// replaced when it's idle.
 pub async fn connect() -> Result<Client> {
-    Client::connect_or_spawn(
-        &Endpoint::default_for_user(),
-        concat!("lucy-cli ", env!("CARGO_PKG_VERSION")),
-        spawn,
-    )
-    .await
-    .with_context(|| match log_path() {
+    let endpoint = Endpoint::default_for_user();
+    let connected = match Client::connect_or_spawn(&endpoint, CLIENT_NAME, spawn).await {
+        Err(err @ (ClientError::VersionMismatch { .. } | ClientError::Protocol(_))) => {
+            replace_old_core(&endpoint, err).await?;
+            Client::connect_or_spawn(&endpoint, CLIENT_NAME, spawn).await
+        }
+        other => other,
+    };
+    connected.with_context(|| match log_path() {
         Some(log) => format!(
             "could not reach the Lucy core; see its log at {}",
             log.display()
@@ -76,12 +105,149 @@ pub async fn connect() -> Result<Client> {
     })
 }
 
-fn log_path() -> Option<std::path::PathBuf> {
+/// Stop a core that speaks an older protocol, if nothing is in progress, so a new one starts.
+async fn replace_old_core(endpoint: &Endpoint, mismatch: ClientError) -> Result<()> {
+    let Ok(status) = Client::status(endpoint).await else {
+        // Cores before protocol v4 can't be asked to stop.
+        bail!(
+            "the running Lucy core is from an older version; stop it with \
+             `pkill -f \"lucy core run\"` (on Windows, end the lucy.exe running `core run`) \
+             and try again"
+        );
+    };
+    if status.protocol_version > PROTOCOL_VERSION {
+        bail!(
+            "the running Lucy core (v{}) is newer than this lucy (v{}); update lucy, or stop \
+             the core with `lucy core stop`",
+            status.core_version,
+            env!("CARGO_PKG_VERSION")
+        );
+    }
+    if !status.busy.is_empty() {
+        bail!(
+            "the running Lucy core is from an older version and is replying in {}; let it \
+             finish, then try again (or stop it now with `lucy core stop --force`)",
+            busy_list(&status.busy)
+        );
+    }
+    let stopped = Client::shutdown(endpoint, false).await?;
+    if !stopped.stopping || !Client::wait_until_gone(endpoint, WAIT).await {
+        return Err(mismatch.into());
+    }
+    eprintln!("Restarted Lucy's core (the running one was from an older build).");
+    Ok(())
+}
+
+/// The running core's status, or `None` if nothing answers.
+pub async fn status(endpoint: &Endpoint) -> Result<Option<CoreStatus>> {
+    match Client::status(endpoint).await {
+        Ok(status) => Ok(Some(status)),
+        Err(ClientError::Connect { .. }) => Ok(None),
+        // Cores before protocol v4 want `hello` first.
+        Err(_) => bail!(
+            "the running Lucy core is from an older version; stop it with \
+             `pkill -f \"lucy core run\"` (on Windows, end the lucy.exe running `core run`)"
+        ),
+    }
+}
+
+/// Stop the core at `endpoint` and wait until it's gone. Replies in progress are cancelled
+/// with `force`, or after asking on a terminal. False if no core was running.
+pub async fn stop(endpoint: &Endpoint, force: bool) -> Result<bool> {
+    if status(endpoint).await?.is_none() {
+        return Ok(false);
+    }
+    let mut result = Client::shutdown(endpoint, force).await?;
+    if !result.stopping {
+        let busy = busy_list(&result.busy);
+        let confirmed = std::io::stdin().is_terminal()
+            && Confirm::new()
+                .with_prompt(format!(
+                    "Lucy is replying in {busy}. Stop her anyway? (she keeps what she's said)"
+                ))
+                .default(false)
+                .interact()?;
+        if !confirmed {
+            bail!("Lucy is replying in {busy}; wait for her, or pass --force to stop anyway");
+        }
+        result = Client::shutdown(endpoint, true).await?;
+    }
+    if !result.stopping || !Client::wait_until_gone(endpoint, WAIT).await {
+        bail!(
+            "the Lucy core didn't stop{}",
+            log_path().map_or(String::new(), |log| format!("; see {}", log.display()))
+        );
+    }
+    Ok(true)
+}
+
+/// Busy chats by title, for messages.
+fn busy_list(busy: &[BusyChat]) -> String {
+    busy.iter()
+        .map(|chat| match &chat.title {
+            Some(title) => format!("\"{title}\""),
+            None => format!("chat {}", &chat.session_id[..chat.session_id.len().min(8)]),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Start the core: through the login service when one is installed for this socket, else on
+/// demand.
+pub fn start(endpoint: &Endpoint) -> std::io::Result<()> {
+    if let Some(manager) = service_for(endpoint) {
+        match manager.start() {
+            Ok(true) => return Ok(()),
+            Ok(false) => return spawn_core(true),
+            Err(err) => eprintln!(
+                "Couldn't start Lucy's service ({err:#}); starting the core on demand instead."
+            ),
+        }
+    }
+    spawn_core(false)
+}
+
+/// Wait until the core at `endpoint` answers, and return its status.
+pub async fn wait_until_up(endpoint: &Endpoint) -> Result<CoreStatus> {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        if let Ok(status) = Client::status(endpoint).await {
+            return Ok(status);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!(
+                "the Lucy core didn't start{}",
+                log_path().map_or(String::new(), |log| format!("; see {}", log.display()))
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// The login service that runs the core at `endpoint`, if one is installed. A service pins
+/// the socket it was installed for, so cores at other sockets (tests, `LUCY_SOCKET`) start
+/// on demand; on Windows it uses the default pipe.
+pub fn service_for(endpoint: &Endpoint) -> Option<ServiceManager<SystemRunner>> {
+    let manager = ServiceManager::for_this_os()?;
+    let installed = manager.installed().ok()??;
+    let ours = match (&installed.socket, endpoint) {
+        (Some(socket), Endpoint::Path(path)) => socket == path,
+        (None, Endpoint::Pipe(_)) => std::env::var_os("LUCY_SOCKET").is_none(),
+        _ => false,
+    };
+    ours.then_some(manager)
+}
+
+pub fn log_path() -> Option<PathBuf> {
     sessions::default_path().and_then(|db| db.parent().map(|dir| dir.join("core.log")))
 }
 
-/// Start `lucy core run` detached from this terminal, logging to `<data dir>/core.log`.
 fn spawn() -> std::io::Result<()> {
+    start(&Endpoint::default_for_user())
+}
+
+/// Start `lucy core run` detached from this terminal, logging to `<data dir>/core.log`.
+pub(crate) fn spawn_core(service: bool) -> std::io::Result<()> {
     let log =
         log_path().ok_or_else(|| std::io::Error::other("no data directory; set LUCY_DATA_DIR"))?;
     if let Some(dir) = log.parent() {
@@ -90,8 +256,11 @@ fn spawn() -> std::io::Result<()> {
     let log = OpenOptions::new().create(true).append(true).open(log)?;
 
     let mut command = Command::new(std::env::current_exe()?);
+    command.args(["core", "run"]);
+    if service {
+        command.arg("--service");
+    }
     command
-        .args(["core", "run"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(log);
@@ -110,6 +279,30 @@ fn spawn() -> std::io::Result<()> {
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
     }
     command.spawn()?;
+    Ok(())
+}
+
+/// Windows starts the `Run` value as a console program, so a window opens at login. Let go of
+/// it, and log to `core.log` instead of the console.
+#[cfg(windows)]
+fn detach_and_log() -> Result<()> {
+    use std::os::windows::io::IntoRawHandle;
+    use windows_sys::Win32::System::Console::{
+        FreeConsole, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+
+    let log = log_path().context("no data directory; set LUCY_DATA_DIR")?;
+    if let Some(dir) = log.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let file = OpenOptions::new().create(true).append(true).open(&log)?;
+    let handle = file.into_raw_handle();
+    // SAFETY: the handle stays open for the life of the process (into_raw_handle leaks it).
+    unsafe {
+        FreeConsole();
+        SetStdHandle(STD_OUTPUT_HANDLE, handle as _);
+        SetStdHandle(STD_ERROR_HANDLE, handle as _);
+    }
     Ok(())
 }
 

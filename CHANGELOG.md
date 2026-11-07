@@ -71,10 +71,29 @@
 - Token usage is now read from both providers' streams (`include_usage` for OpenAI-compatible
   servers).
 
+### Login service (step 10)
+
+- **`lucy service install`** keeps Lucy's core running from login: a systemd user unit on
+  Linux, a launchd agent on macOS, a `Run` registry value on Windows (no admin rights). It
+  starts the core right away, and restarts it if it crashes.
+- `lucy service status` shows whether the service is installed, how the core is running
+  (service or on demand), its version and PID, and any chat it's busy with.
+  `lucy service restart` picks up a new build, and `lucy service uninstall` goes back to on
+  demand.
+- **`lucy core stop`** stops whichever core is running. If Lucy is mid-reply it asks first
+  (`--force` cancels the reply, keeping what she'd said).
+- The service gets the `PATH` and `LUCY_*` settings of the shell you install it from, so tools
+  find the same programs. API keys in environment variables aren't copied; keep them in the
+  keyring.
+- **Upgrades restart the core by themselves.** A newer `lucy` that finds an older, idle core
+  stops it and starts its own, through the service if you use one.
+
 ### Upgrading
 
-- **Protocol v3** (v2 brought tools, v3 agent mode). Stop the old core after installing
-  (`pkill -f "lucy core run"`); the new `lucy` says so if you forget.
+- **Protocol v4** (v2 brought tools, v3 agent mode, v4 stopping the core). From now on a new
+  `lucy` replaces an idle older core by itself. The core you're running now predates that, so
+  stop it once after installing (`pkill -f "lucy core run"`); the new `lucy` says so if you
+  forget.
 - The session database migrates itself (it adds tool-call columns, chat settings and undo
   backups).
 - Ollama's default 4,096-token context fills faster with tools. Raise `OLLAMA_CONTEXT_LENGTH`

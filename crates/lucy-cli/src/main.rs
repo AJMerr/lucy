@@ -9,7 +9,7 @@ use lucy_core::config::{self, Config};
 use lucy_core::secrets::{self, KeySource, OsKeyring, SecretStore, Secrets, SecretsError};
 
 use lucy_cli::chat::Start;
-use lucy_cli::{ask, core_process, mcp, terminal, wizard};
+use lucy_cli::{ask, core_process, mcp, service, terminal, wizard};
 
 /// Lucy: a model-agnostic personal assistant.
 #[derive(Parser)]
@@ -63,13 +63,12 @@ enum Command {
         #[command(subcommand)]
         action: McpAction,
     },
-    /// Install or remove the core as a login service.
+    /// Run Lucy's core at login (systemd, launchd or Windows startup), or stop doing so.
     Service {
         #[command(subcommand)]
         action: ServiceAction,
     },
     /// Lucy's background core (started automatically when needed).
-    #[command(hide = true)]
     Core {
         #[command(subcommand)]
         action: CoreAction,
@@ -79,7 +78,18 @@ enum Command {
 #[derive(Subcommand)]
 enum CoreAction {
     /// Run the core in the foreground until it has been idle for a while.
-    Run,
+    #[command(hide = true)]
+    Run {
+        /// Run until stopped, as the login service does.
+        #[arg(long)]
+        service: bool,
+    },
+    /// Stop the running core. The next `lucy` starts a new one.
+    Stop {
+        /// Cancel replies in progress instead of asking (they keep what was said).
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -151,8 +161,26 @@ enum McpAction {
 
 #[derive(Subcommand)]
 enum ServiceAction {
-    Install,
-    Uninstall,
+    /// Start the core when you log in, and now. Re-run after changing PATH or LUCY_*.
+    Install {
+        /// Cancel replies in progress instead of asking.
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Stop the service's core and stop starting it at login.
+    Uninstall {
+        /// Cancel replies in progress instead of asking.
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Show whether the service is installed and how the core is running.
+    Status,
+    /// Restart the service's core, e.g. after upgrading Lucy.
+    Restart {
+        /// Cancel replies in progress instead of asking.
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -206,8 +234,23 @@ fn main() -> Result<()> {
             Ok(())
         }
         Some(Command::Core {
-            action: CoreAction::Run,
-        }) => core_process::run(),
+            action: CoreAction::Run { service },
+        }) => core_process::run(service),
+        Some(Command::Core {
+            action: CoreAction::Stop { force },
+        }) => {
+            let endpoint = lucy_client::Endpoint::default_for_user();
+            let stopped =
+                tokio::runtime::Runtime::new()?.block_on(core_process::stop(&endpoint, force))?;
+            match (stopped, core_process::service_for(&endpoint).is_some()) {
+                (false, _) => println!("Lucy's core isn't running."),
+                (true, false) => println!("Stopped Lucy's core. The next `lucy` starts a new one."),
+                (true, true) => println!(
+                    "Stopped Lucy's core. The next `lucy` starts it again through the service."
+                ),
+            }
+            Ok(())
+        }
         Some(Command::Config { action }) => match action {
             ConfigAction::Init => {
                 let path = config_path()?;
@@ -239,8 +282,14 @@ fn main() -> Result<()> {
             AuthAction::Status => auth_status(),
         },
         Some(Command::Mcp { action }) => mcp_command(action),
-        Some(Command::Service { .. }) => {
-            bail!("`lucy service` is not implemented yet (milestone 1)")
+        Some(Command::Service { action }) => {
+            let runtime = tokio::runtime::Runtime::new()?;
+            match action {
+                ServiceAction::Install { force } => runtime.block_on(service::install(force)),
+                ServiceAction::Uninstall { force } => runtime.block_on(service::uninstall(force)),
+                ServiceAction::Status => runtime.block_on(service::show_status()),
+                ServiceAction::Restart { force } => runtime.block_on(service::restart(force)),
+            }
         }
     }
 }

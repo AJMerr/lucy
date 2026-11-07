@@ -68,7 +68,7 @@ impl Harness {
             db_path: dir.path().join("lucy.sqlite"),
             personas_dir: None,
             secrets: Secrets::new(Box::new(MemoryStore::default()), Box::new(|_: &str| None)),
-            idle_timeout: Duration::from_secs(3600),
+            idle_timeout: Some(Duration::from_secs(3600)),
             token_store: None,
         };
         tokio::spawn(async move { serve(options).await.unwrap() });

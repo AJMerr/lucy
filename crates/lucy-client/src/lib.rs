@@ -10,7 +10,8 @@ use std::time::Duration;
 use interprocess::local_socket::tokio::{Stream, prelude::*};
 use interprocess::local_socket::{GenericFilePath, GenericNamespaced, Name};
 use lucy_protocol::rpc::{
-    Event, HelloParams, HelloResult, PROTOCOL_VERSION, Request, Response, RpcError, method,
+    CoreStatus, Event, HelloParams, HelloResult, PROTOCOL_VERSION, Request, Response, RpcError,
+    ShutdownParams, ShutdownResult, method,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -74,8 +75,7 @@ pub enum ClientError {
     },
     #[error(
         "the running Lucy core speaks protocol v{core} but this client needs v{client}; \
-         stop the old core with `pkill -f \"lucy core run\"` (on Windows, end the lucy.exe \
-         running `core run`) and try again"
+         stop it with `lucy core stop` and try again"
     )]
     VersionMismatch { core: u32, client: u32 },
     #[error("lost connection to the Lucy core")]
@@ -104,36 +104,7 @@ pub struct Client {
 impl Client {
     /// Connect and complete the `hello` handshake.
     pub async fn connect(endpoint: &Endpoint, client_name: &str) -> Result<Self, ClientError> {
-        let connect_err = |source| ClientError::Connect {
-            endpoint: endpoint.to_string(),
-            source,
-        };
-        let stream = Stream::connect(endpoint.name().map_err(connect_err)?)
-            .await
-            .map_err(connect_err)?;
-        let stream = Arc::new(stream);
-
-        let pending: Pending = Arc::default();
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
-        let reader = tokio::spawn(read_loop(
-            Arc::clone(&stream),
-            Arc::clone(&pending),
-            events_tx,
-        ));
-
-        let mut client = Self {
-            stream,
-            write_lock: Mutex::new(()),
-            reader,
-            pending,
-            next_id: AtomicU64::new(1),
-            events: Some(events_rx),
-            hello: HelloResult {
-                protocol_version: 0,
-                core_version: String::new(),
-                pid: 0,
-            },
-        };
+        let mut client = Self::open(endpoint).await?;
         client.hello = client
             .call(
                 method::HELLO,
@@ -156,6 +127,76 @@ impl Client {
             });
         }
         Ok(client)
+    }
+
+    /// The running core's version, PID and busy chats. Skips `hello`, so it works whatever
+    /// protocol the core speaks (from v4 on).
+    pub async fn status(endpoint: &Endpoint) -> Result<CoreStatus, ClientError> {
+        Self::open(endpoint)
+            .await?
+            .call(method::CORE_STATUS, serde_json::json!({}))
+            .await
+    }
+
+    /// Ask the core to stop. Unless `force`d, a core with replies in progress keeps running
+    /// and says which chats are busy. Skips `hello`, like [`Client::status`].
+    pub async fn shutdown(endpoint: &Endpoint, force: bool) -> Result<ShutdownResult, ClientError> {
+        Self::open(endpoint)
+            .await?
+            .call(method::CORE_SHUTDOWN, ShutdownParams { force })
+            .await
+    }
+
+    /// Wait until nothing answers at `endpoint`; false if something still does after `timeout`.
+    pub async fn wait_until_gone(endpoint: &Endpoint, timeout: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let answered = match endpoint.name() {
+                Ok(name) => Stream::connect(name).await.is_ok(),
+                Err(_) => false,
+            };
+            if !answered {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Connect without the handshake.
+    async fn open(endpoint: &Endpoint) -> Result<Self, ClientError> {
+        let connect_err = |source| ClientError::Connect {
+            endpoint: endpoint.to_string(),
+            source,
+        };
+        let stream = Stream::connect(endpoint.name().map_err(connect_err)?)
+            .await
+            .map_err(connect_err)?;
+        let stream = Arc::new(stream);
+
+        let pending: Pending = Arc::default();
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let reader = tokio::spawn(read_loop(
+            Arc::clone(&stream),
+            Arc::clone(&pending),
+            events_tx,
+        ));
+
+        Ok(Self {
+            stream,
+            write_lock: Mutex::new(()),
+            reader,
+            pending,
+            next_id: AtomicU64::new(1),
+            events: Some(events_rx),
+            hello: HelloResult {
+                protocol_version: 0,
+                core_version: String::new(),
+                pid: 0,
+            },
+        })
     }
 
     /// Connect, starting the core with `spawn` if nothing is listening yet.

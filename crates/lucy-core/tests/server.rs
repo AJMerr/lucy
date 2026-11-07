@@ -6,9 +6,9 @@ use lucy_client::{Client, Endpoint};
 use lucy_core::secrets::{MemoryStore, Secrets};
 use lucy_core::server::{CoreOptions, serve};
 use lucy_protocol::rpc::{
-    CancelResult, ChatSendParams, ChatSendResult, Event, ProfileInfo, RenameParams, ResolveParams,
-    Session, SessionParams, SessionSettings, SessionSummary, SetPlainParams, SetProfileParams,
-    TurnOutcome,
+    BusyChat, CancelResult, ChatSendParams, ChatSendResult, Event, ProfileInfo, RenameParams,
+    ResolveParams, Session, SessionParams, SessionSettings, SessionSummary, SetPlainParams,
+    SetProfileParams, TurnOutcome,
 };
 use lucy_providers::testing::{FakeResponse, FakeServer};
 use serde_json::{Value, json};
@@ -27,13 +27,13 @@ struct Harness {
 
 impl Harness {
     async fn start(responses: Vec<FakeResponse>) -> Self {
-        Self::start_with(responses, vec![], Duration::from_secs(3600)).await
+        Self::start_with(responses, vec![], Some(Duration::from_secs(3600))).await
     }
 
     async fn start_with(
         responses: Vec<FakeResponse>,
         other_responses: Vec<FakeResponse>,
-        idle_timeout: Duration,
+        idle_timeout: Option<Duration>,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let model = FakeServer::start(responses).await;
@@ -390,7 +390,7 @@ async fn set_profile_switches_the_model_for_that_session_only() {
     let harness = Harness::start_with(
         vec![reply(&["from fake"]), reply(&["fake again"])],
         vec![reply(&["from other"])],
-        Duration::from_secs(3600),
+        Some(Duration::from_secs(3600)),
     )
     .await;
     let mut client = harness.client().await;
@@ -637,7 +637,7 @@ async fn missing_api_key_is_reported_before_anything_is_saved() {
 
 #[tokio::test]
 async fn core_exits_once_idle_and_removes_its_socket() {
-    let harness = Harness::start_with(vec![], vec![], Duration::from_millis(300)).await;
+    let harness = Harness::start_with(vec![], vec![], Some(Duration::from_millis(300))).await;
     let client = harness.client().await;
 
     tokio::time::sleep(Duration::from_millis(700)).await;
@@ -659,7 +659,7 @@ async fn a_reply_in_progress_keeps_the_core_awake() {
     let harness = Harness::start_with(
         vec![stalled(&["thinking"])],
         vec![],
-        Duration::from_millis(300),
+        Some(Duration::from_millis(300)),
     )
     .await;
     let mut client = harness.client().await;
@@ -692,4 +692,84 @@ async fn sessions_create_makes_an_empty_session_that_settings_can_target() {
         .await
         .unwrap();
     assert!(settings.plain);
+}
+
+#[tokio::test]
+async fn status_answers_before_hello() {
+    let harness = Harness::start(vec![]).await;
+
+    let replies = raw_exchange(
+        &harness.endpoint,
+        &[json!({"jsonrpc": "2.0", "id": 1, "method": "core.status"})],
+    )
+    .await;
+
+    let status = &replies[0]["result"];
+    assert_eq!(status["protocol_version"], 4);
+    assert_eq!(status["core_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(status["pid"], std::process::id());
+    assert_eq!(status["service"], false);
+    assert_eq!(status["busy"], json!([]));
+}
+
+#[tokio::test]
+async fn a_service_core_never_goes_idle() {
+    let harness = Harness::start_with(vec![], vec![], None).await;
+    drop(harness.client().await);
+
+    tokio::time::sleep(Duration::from_millis(700)).await;
+
+    assert!(
+        !harness.core.is_finished(),
+        "a service core exited when idle"
+    );
+    let status = Client::status(&harness.endpoint).await.unwrap();
+    assert!(status.service);
+}
+
+/// Wait for the core task to end, then check it cleaned up its socket.
+async fn assert_core_exits(harness: Harness) {
+    let exited = tokio::time::timeout(Duration::from_secs(3), harness.core).await;
+    assert!(exited.is_ok(), "core did not exit");
+    if let Endpoint::Path(socket) = &harness.endpoint {
+        assert!(!socket.exists(), "socket file left behind");
+    }
+}
+
+#[tokio::test]
+async fn shutdown_stops_an_idle_core() {
+    let harness = Harness::start_with(vec![], vec![], None).await;
+
+    let result = Client::shutdown(&harness.endpoint, false).await.unwrap();
+
+    assert!(result.stopping);
+    assert_core_exits(harness).await;
+}
+
+#[tokio::test]
+async fn shutdown_waits_for_replies_unless_forced() {
+    let harness = Harness::start_with(vec![stalled(&["Once upon"])], vec![], None).await;
+    let mut client = harness.client().await;
+    let mut events = client.take_events().unwrap();
+    let sent = send(&client, None, "tell me a story").await;
+    while !matches!(events.recv().await, Some(Event::Delta { .. })) {}
+
+    let refused = Client::shutdown(&harness.endpoint, false).await.unwrap();
+    assert!(!refused.stopping);
+    assert_eq!(
+        refused.busy,
+        vec![BusyChat {
+            session_id: sent.session_id.clone(),
+            title: Some("tell me a story".into()),
+        }]
+    );
+    let status = Client::status(&harness.endpoint).await.unwrap();
+    assert_eq!(status.busy, refused.busy, "still running and still busy");
+
+    let forced = Client::shutdown(&harness.endpoint, true).await.unwrap();
+    assert!(forced.stopping);
+    let seen = turn_events(&mut events, sent.turn_id).await;
+    assert_eq!(outcome(&seen), (TurnOutcome::Cancelled, None));
+    drop(client);
+    assert_core_exits(harness).await;
 }

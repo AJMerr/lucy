@@ -108,7 +108,7 @@ impl Harness {
             db_path: self.dir.path().join("lucy.sqlite"),
             personas_dir: None,
             secrets: Secrets::new(Box::new(MemoryStore::default()), Box::new(|_: &str| None)),
-            idle_timeout,
+            idle_timeout: Some(idle_timeout),
             token_store: None,
         };
         tokio::spawn(async move { serve(options).await.unwrap() });
@@ -460,7 +460,7 @@ async fn chat_settings_survive_a_core_restart() {
         db_path: h.dir.path().join("lucy.sqlite"),
         personas_dir: None,
         secrets: Secrets::new(Box::new(MemoryStore::default()), Box::new(|_: &str| None)),
-        idle_timeout: Duration::from_secs(3600),
+        idle_timeout: Some(Duration::from_secs(3600)),
         token_store: None,
     };
     tokio::spawn(async move { serve(options).await.unwrap() });

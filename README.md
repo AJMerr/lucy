@@ -4,10 +4,10 @@ A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her 
 today; later she'll live on your desktop as an animated sprite with speech bubbles that you can
 toggle on and off.
 
-> **Status:** v0.1.0 plus tools and agent mode (unreleased): terminal chat with any
-> OpenAI-compatible or Anthropic model, able to read, search, run and edit with your approval,
-> use any MCP server you add, and work through tasks on her own within limits you set. The
-> desktop sprite is next. See [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
+> **Status:** v0.1.0 plus tools, agent mode and a login service (unreleased): terminal chat
+> with any OpenAI-compatible or Anthropic model, able to read, search, run and edit with your
+> approval, use any MCP server you add, and work through tasks on her own within limits you
+> set. The desktop sprite is next. See [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -32,8 +32,9 @@ toggle on and off.
   `lucy -c`, or resume any by ID prefix.
 - **Keys kept out of files.** API keys live in your OS keyring, with environment-variable
   overrides.
-- **One background core.** The `lucy` command starts it on demand. It exits after 30 idle minutes,
-  and future front ends (like the sprite) share it.
+- **One background core.** The `lucy` command starts it on demand and it exits after 30 idle
+  minutes, or `lucy service install` keeps it running from login. Future front ends (like the
+  sprite) share it.
 
 ## Quick start
 
@@ -87,7 +88,8 @@ Keys: Tab completes commands and profile names, Alt+Enter (or a trailing `\`) st
 Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a literal `/`.
 
 Other commands: `lucy config path`, `lucy auth set|remove|status`,
-`lucy mcp add|list|remove|login|logout`.
+`lucy mcp add|list|remove|login|logout`, `lucy service install|uninstall|status|restart`,
+`lucy core stop`.
 
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
@@ -170,6 +172,31 @@ checks don't apply.
 `lucy mcp serve` works the other way round: it offers Lucy's built-in tools to any MCP client
 over stdio, working in the current folder.
 
+### Running the core at login
+
+The `lucy` command starts Lucy's core in the background when it's needed, and the core exits
+after 30 idle minutes. To keep it running from login instead (the desktop sprite will want
+this), install it as a service:
+
+```sh
+lucy service install      # start now and at every login
+lucy service status       # installed? running how, which version, busy with what?
+lucy service restart      # after upgrading Lucy, to run the new build
+lucy service uninstall    # back to starting on demand
+lucy core stop            # stop whichever core is running (asks if Lucy is mid-reply; -f cancels)
+```
+
+It's a systemd user unit on Linux (`~/.config/systemd/user/lucy-core.service`), a launchd
+agent on macOS (`~/Library/LaunchAgents/io.github.ajmerr.lucy.core.plist`), and a value under
+`HKCU\…\CurrentVersion\Run` on Windows. None of them needs admin rights. The service runs with
+the `PATH` and `LUCY_*` settings of the shell you installed it from (so `run_command` and MCP
+servers find the same programs); re-run `install` if those change. API keys aren't copied
+into it, so keep them in the keyring. On Windows the service sees your user environment
+variables instead, and a console window may flash briefly at login.
+
+When a newer `lucy` finds an older core running, it restarts the core by itself as long as
+the core isn't in the middle of a reply.
+
 To change Lucy's voice, copy [`persona/lucy.md`](persona/lucy.md) to
 `~/.config/lucy/personas/lucy.md` and edit it. Text between `<!-- voice -->` markers is dropped in
 plain mode.
@@ -185,8 +212,13 @@ plain mode.
 ### Troubleshooting
 
 - **Something's wrong with the core:** check `~/.local/share/lucy/core.log`.
-- **You rebuilt Lucy but the old behaviour sticks:** the previous core is still running. Restart it
-  with `pkill -f "lucy core run"`, and the next `lucy` starts a fresh one.
+- **You rebuilt Lucy but the old behaviour sticks:** the previous core is still running. Run
+  `lucy service restart` (or `lucy core stop` if you don't use the service), and the next
+  `lucy` starts a fresh one. Cores from before this release don't know `core stop`: use
+  `pkill -f "lucy core run"` once.
+- **The service won't start:** `lucy service status`, then the log above. On Linux,
+  `systemctl --user status lucy-core` and `journalctl --user -u lucy-core` show what systemd
+  saw.
 - **Keyring errors on Linux:** you need a Secret Service provider (e.g. gnome-keyring), or set
   `LUCY_KEY_<NAME>` instead.
 
