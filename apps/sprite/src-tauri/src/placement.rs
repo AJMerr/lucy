@@ -51,6 +51,8 @@ fn resize_window(window: &WebviewWindow, width: f64, height: f64) -> tauri::Resu
 /// A part of the page that takes clicks, in logical pixels, placed by its distance from the
 /// window's bottom-right corner (where everything hangs), so it holds at any window size.
 #[derive(Debug, Clone, Copy, Deserialize)]
+// Only layer shell (Linux) reads them; elsewhere the window simply resizes.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub struct Region {
     pub right: f64,
     pub bottom: f64,

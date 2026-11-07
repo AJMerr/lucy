@@ -459,7 +459,7 @@ fn systemd_sprite_autostart_is_a_desktop_entry_added_and_removed() {
     let dir = tempfile::tempdir().unwrap();
     let runner = FakeRunner::default();
     let manager = systemd(dir.path(), &runner);
-    let entry = dir.path().join("autostart/lucy-sprite.desktop");
+    let entry = dir.path().join("autostart").join("lucy-sprite.desktop");
     assert_eq!(manager.sprite_installed().unwrap(), None);
 
     manager.install_sprite(&sprite_spec()).unwrap();
@@ -492,7 +492,8 @@ fn launchd_sprite_autostart_is_an_agent_for_the_next_login() {
     );
     let plist = dir
         .path()
-        .join("LaunchAgents/io.github.ajmerr.lucy.sprite.plist");
+        .join("LaunchAgents")
+        .join("io.github.ajmerr.lucy.sprite.plist");
 
     manager.install_sprite(&sprite_spec()).unwrap();
 
