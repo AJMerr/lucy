@@ -28,10 +28,14 @@ toml.workspace = true
 ulid.workspace = true
 keyring.workspace = true
 rusqlite.workspace = true
+axum.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+widestring.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 lucy-providers = { workspace = true, features = ["testing"] }
-axum.workspace = true
+tokio-tungstenite.workspace = true
 rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
-tokio = { workspace = true, features = ["net"] }

@@ -35,7 +35,8 @@ Built test-first against the `mock` provider.
 9. ✅ **Agent mode** — `/mode agent`, `/level`, `lucy agent`; `AgentLevel` enforcement; step,
    cost and token caps with a wrap-up summary; saved chat settings; `/undo` for file changes.
 10. ✅ **Service** — `lucy service install|uninstall|status|restart`, `lucy core stop`.
-11. **Optional HTTP/WebSocket** transport (off by default).
+11. ✅ **Remote access** — the core over WebSocket (off by default, token, capped level);
+    `lucy remote connect|disconnect|token`, `--remote`; Windows pipe restricted to its user.
 
 ## Milestone 2 — Desktop sprite
 

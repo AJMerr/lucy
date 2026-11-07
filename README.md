@@ -89,7 +89,7 @@ Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a lite
 
 Other commands: `lucy config path`, `lucy auth set|remove|status`,
 `lucy mcp add|list|remove|login|logout`, `lucy service install|uninstall|status|restart`,
-`lucy core stop`.
+`lucy core stop`, `lucy remote connect|disconnect|token`.
 
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
@@ -196,6 +196,45 @@ variables instead, and a console window may flash briefly at login.
 
 When a newer `lucy` finds an older core running, it restarts the core by itself as long as
 the core isn't in the middle of a reply.
+
+### Using Lucy from another machine
+
+Your laptop's `lucy` can use your desktop's core: the same chats, models, keys and MCP
+servers, with tools running on the desktop. On the desktop, turn remote access on in
+`config.toml` and restart the core:
+
+```toml
+[remote]
+enabled = true
+bind = "100.64.0.7:7077"    # your Tailscale address (or 127.0.0.1 behind an SSH tunnel)
+allow_network = true        # needed for anything beyond 127.0.0.1
+```
+
+```sh
+lucy service restart        # or `lucy core stop`
+lucy remote token           # prints the token the laptop needs
+```
+
+On the laptop (which needs no config or keys of its own):
+
+```sh
+lucy remote connect desktop:7077   # asks for the token; checks it works
+lucy                               # now chats with the desktop's core
+lucy remote disconnect             # back to the laptop's own core
+lucy --remote desktop:7077 ask "…" # or just once (LUCY_REMOTE works too)
+```
+
+Things to know:
+
+- **No TLS.** Traffic is plain WebSocket, so use a network you trust: Tailscale encrypts it
+  for you, or use an SSH tunnel, or put a TLS proxy in front and connect with `wss://`.
+  Binding beyond 127.0.0.1 needs `allow_network = true`.
+- **Tools run on the core's machine**, in `[agent] workspace` if you set one, else its home
+  folder; the chat banner says which. The laptop's current folder isn't used.
+- **Remote chats are capped at agent level 1** (`[remote] max_level`), so a leaked token
+  can't run commands without someone approving them.
+- `lucy remote token --rotate` replaces the token. A remote client can't stop the core.
+- The core only listens while it runs, so keep it running with `lucy service install`.
 
 To change Lucy's voice, copy [`persona/lucy.md`](persona/lucy.md) to
 `~/.config/lucy/personas/lucy.md` and edit it. Text between `<!-- voice -->` markers is dropped in

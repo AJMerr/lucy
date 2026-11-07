@@ -162,11 +162,17 @@ impl Default for AgentSettings {
     }
 }
 
+/// Access to the core over WebSocket (`[remote]`), for `lucy remote connect` on other machines.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RemoteSettings {
     pub enabled: bool,
     pub bind: SocketAddr,
+    /// Needed to listen beyond loopback (LAN, Tailscale). There's no TLS, so only on networks
+    /// you trust, or behind something that adds it.
+    pub allow_network: bool,
+    /// The highest agent level a chat driven from a remote client runs at.
+    pub max_level: AgentLevel,
 }
 
 impl Default for RemoteSettings {
@@ -174,6 +180,8 @@ impl Default for RemoteSettings {
         Self {
             enabled: false,
             bind: SocketAddr::from(([127, 0, 0, 1], 7077)),
+            allow_network: false,
+            max_level: AgentLevel::Guarded,
         }
     }
 }

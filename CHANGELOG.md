@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Remote access
+
+- **Use Lucy from another machine.** Turn on `[remote]` on the machine that runs the core and
+  get its token with `lucy remote token`. Then, on the other machine, `lucy remote connect
+  desktop:7077`: `lucy`, `lucy ask` and `lucy agent` there talk to that core, with its chats,
+  models, keys and MCP servers. `lucy remote disconnect` goes back. `--remote <url>` or
+  `LUCY_REMOTE` does it for one run. The other machine needs no config or keys.
+- **Off by default, and careful when on.** Every connection needs the token (in the keyring;
+  `--rotate` replaces it). Listening beyond 127.0.0.1 needs `allow_network = true`. There's no
+  TLS, so use Tailscale, an SSH tunnel, or a TLS proxy (`wss://` works).
+- **Remote chats work on the core's machine**, in `[agent] workspace` (else its home folder),
+  and the chat banner says so. They run at most at agent level 1 (`[remote] max_level`), so a
+  leaked token can't run commands unapproved. A remote client can't stop the core.
+- It's the same JSON-RPC as the local socket, over WebSocket at `/rpc`, so scripts and future
+  web front ends can use it too. Browsers can send the token as a `lucy-token.<token>`
+  subprotocol.
+
+### Security
+
+- **On Windows, the core's named pipe now admits only your user** (and SYSTEM); before, other
+  accounts on the same PC could connect to it.
+
 ## v0.2.0: tools, agent mode and a login service (2026-11-07)
 
 Lucy can now act, not just talk. She reads, searches, runs and edits with your approval,

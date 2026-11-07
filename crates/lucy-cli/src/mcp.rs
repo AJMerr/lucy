@@ -339,7 +339,7 @@ pub async fn list(config: &Config) -> Result<()> {
         println!("No MCP servers yet. Add one with `lucy mcp add`.");
         return Ok(());
     }
-    let client = core_process::connect().await?;
+    let client = core_process::connect_local().await?;
     let status: ToolsList = client
         .call(method::TOOLS_LIST, ToolsListParams { session_id: None })
         .await?;

@@ -6,6 +6,7 @@ pub mod commands;
 pub mod core_process;
 pub mod markdown;
 pub mod mcp;
+pub mod remote;
 pub mod service;
 pub mod terminal;
 pub mod tool_display;

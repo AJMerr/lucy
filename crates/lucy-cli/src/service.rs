@@ -456,7 +456,7 @@ pub async fn install(force: bool) -> Result<()> {
     let log = core_process::log_path().context("no data directory; set LUCY_DATA_DIR")?;
     let socket = match &endpoint {
         Endpoint::Path(path) => Some(path.as_path()),
-        Endpoint::Pipe(_) => None,
+        _ => None,
     };
     let spec = ServiceSpec::current(log, socket)?;
     // systemd and launchd open the log themselves and won't create its folder.

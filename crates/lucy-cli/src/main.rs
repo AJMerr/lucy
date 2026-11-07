@@ -9,7 +9,7 @@ use lucy_core::config::{self, Config};
 use lucy_core::secrets::{self, KeySource, OsKeyring, SecretStore, Secrets, SecretsError};
 
 use lucy_cli::chat::Start;
-use lucy_cli::{ask, core_process, mcp, service, terminal, wizard};
+use lucy_cli::{ask, core_process, mcp, remote, service, terminal, wizard};
 
 /// Lucy: a model-agnostic personal assistant.
 #[derive(Parser)]
@@ -21,6 +21,9 @@ struct Cli {
     /// Resume a saved chat by ID (any unique prefix).
     #[arg(short, long, value_name = "ID")]
     resume: Option<String>,
+    /// Talk to the Lucy core at this address (ws://host:7077) for this run; `LUCY_REMOTE` too.
+    #[arg(long, global = true, value_name = "URL")]
+    remote: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -62,6 +65,11 @@ enum Command {
     Mcp {
         #[command(subcommand)]
         action: McpAction,
+    },
+    /// Use Lucy's core from another machine, or let other machines use this one's.
+    Remote {
+        #[command(subcommand)]
+        action: RemoteAction,
     },
     /// Run Lucy's core at login (systemd, launchd or Windows startup), or stop doing so.
     Service {
@@ -160,6 +168,25 @@ enum McpAction {
 }
 
 #[derive(Subcommand)]
+enum RemoteAction {
+    /// Talk to the core on another machine from now on (asks for its token).
+    ///
+    /// Example: lucy remote connect desktop:7077
+    Connect {
+        /// Its address: host, host:port, or ws://host:port.
+        url: String,
+    },
+    /// Go back to this machine's own core.
+    Disconnect,
+    /// Print the token other machines need to use this core (creating it the first time).
+    Token {
+        /// Replace the token; machines using the old one must connect again.
+        #[arg(long)]
+        rotate: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum ServiceAction {
     /// Start the core when you log in, and now. Re-run after changing PATH or LUCY_*.
     Install {
@@ -185,10 +212,13 @@ enum ServiceAction {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(url) = cli.remote.clone() {
+        remote::set_override(url);
+    }
     match cli.command {
         None => {
             let path = config_path()?;
-            if Config::load(&path)?.is_none() {
+            if !remote::selected()? && Config::load(&path)?.is_none() {
                 if !std::io::stdin().is_terminal() {
                     bail!(no_config_message(&path));
                 }
@@ -203,7 +233,7 @@ fn main() -> Result<()> {
         }
         Some(Command::Ask { prompt, yes }) => {
             let path = config_path()?;
-            if Config::load(&path)?.is_none() {
+            if !remote::selected()? && Config::load(&path)?.is_none() {
                 bail!(no_config_message(&path));
             }
             ask::run(
@@ -217,7 +247,7 @@ fn main() -> Result<()> {
         }
         Some(Command::Agent { task, level, yes }) => {
             let path = config_path()?;
-            if Config::load(&path)?.is_none() {
+            if !remote::selected()? && Config::load(&path)?.is_none() {
                 bail!(no_config_message(&path));
             }
             let finish = ask::run(
@@ -282,6 +312,13 @@ fn main() -> Result<()> {
             AuthAction::Status => auth_status(),
         },
         Some(Command::Mcp { action }) => mcp_command(action),
+        Some(Command::Remote { action }) => match action {
+            RemoteAction::Connect { url } => {
+                tokio::runtime::Runtime::new()?.block_on(remote::connect_command(&url))
+            }
+            RemoteAction::Disconnect => remote::disconnect_command(),
+            RemoteAction::Token { rotate } => remote::token_command(rotate),
+        },
         Some(Command::Service { action }) => {
             let runtime = tokio::runtime::Runtime::new()?;
             match action {

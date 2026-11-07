@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 lucy-core.workspace = true
 dirs.workspace = true
+getrandom.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 chrono.workspace = true

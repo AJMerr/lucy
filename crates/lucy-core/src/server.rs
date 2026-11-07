@@ -39,6 +39,11 @@ use crate::sessions::{
 };
 use crate::tools::{Access, ToolBox, Verdict, close_dangling_calls};
 
+mod remote;
+
+/// The keyring entry holding the token remote clients must present (`lucy remote token`).
+pub const REMOTE_TOKEN_KEY: &str = "remote-token";
+
 /// How long a tool call waits for the user's approval before it's treated as declined.
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
@@ -128,6 +133,8 @@ struct ConnState {
     hello: bool,
     subscribed: bool,
     own_sessions: HashSet<String>,
+    /// Came in over WebSocket: its chats work in the core's folder, at a capped level.
+    remote: bool,
 }
 
 /// How long a stopping core waits for cancelled replies and open connections to wind down.
@@ -168,13 +175,15 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
                     core.activity.add(&core.activity.connections, 1);
                     let core = Arc::clone(&core);
                     tokio::spawn(async move {
-                        connection(Arc::clone(&core), stream).await;
+                        socket_client(Arc::clone(&core), stream).await;
                         core.activity.add(&core.activity.connections, -1);
                     });
                 }
             }
         })
     };
+
+    let remote = remote::start(Arc::clone(&core)).await;
 
     loop {
         let changed = core.activity.changed.notified();
@@ -189,6 +198,9 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         }
     }
     acceptor.abort();
+    if let Some(remote) = remote {
+        remote.abort();
+    }
     // Dropping the listener (inside the aborted task) removes the socket file.
     let _ = acceptor.await;
     if core.shutdown.is_cancelled() {
@@ -228,10 +240,17 @@ async fn bind(endpoint: &Endpoint) -> Result<Listener, CoreError> {
         }
     }
     let create = || {
-        ListenerOptions::new()
+        let options = ListenerOptions::new()
             .name(endpoint.name()?)
-            .reclaim_name(true)
-            .create_tokio()
+            .reclaim_name(true);
+        // A named pipe's default security lets other accounts on the machine connect; allow
+        // only this user (and SYSTEM), as the socket folder's 0700 does on Unix.
+        #[cfg(windows)]
+        let options = {
+            use interprocess::os::windows::local_socket::ListenerOptionsExt;
+            options.security_descriptor(windows_acl::only_this_user()?)
+        };
+        options.create_tokio()
     };
     match create() {
         Ok(listener) => Ok(listener),
@@ -252,11 +271,11 @@ async fn bind(endpoint: &Endpoint) -> Result<Listener, CoreError> {
     }
 }
 
-async fn connection(core: Arc<Core>, stream: Stream) {
+/// A client on the local socket: one JSON message per line each way.
+async fn socket_client(core: Arc<Core>, stream: Stream) {
     let stream = Arc::new(stream);
-    let state = Arc::new(Mutex::new(ConnState::default()));
+    let (in_tx, in_rx) = mpsc::unbounded_channel::<String>();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
-
     let writer = {
         let stream = Arc::clone(&stream);
         tokio::spawn(async move {
@@ -267,6 +286,31 @@ async fn connection(core: Arc<Core>, stream: Stream) {
             }
         })
     };
+    let reader = tokio::spawn(async move {
+        let mut lines = BufReader::new(&*stream).lines();
+        while let Ok(Some(text)) = lines.next_line().await {
+            if in_tx.send(text).is_err() {
+                break;
+            }
+        }
+    });
+    serve_client(core, in_rx, out_tx, false).await;
+    reader.abort();
+    let _ = writer.await;
+}
+
+/// One client, whatever the transport: requests arrive on `incoming` until it closes, and
+/// replies and events leave on `outgoing`.
+async fn serve_client(
+    core: Arc<Core>,
+    mut incoming: mpsc::UnboundedReceiver<String>,
+    out_tx: mpsc::UnboundedSender<String>,
+    remote: bool,
+) {
+    let state = Arc::new(Mutex::new(ConnState {
+        remote,
+        ..ConnState::default()
+    }));
     let forwarder = {
         let mut events = core.events.subscribe();
         let state = Arc::clone(&state);
@@ -289,8 +333,7 @@ async fn connection(core: Arc<Core>, stream: Stream) {
         })
     };
 
-    let mut lines = BufReader::new(&*stream).lines();
-    while let Ok(Some(text)) = lines.next_line().await {
+    while let Some(text) = incoming.recv().await {
         let response = match serde_json::from_str::<Request>(&text) {
             Ok(request) => {
                 let id = request.id;
@@ -306,9 +349,8 @@ async fn connection(core: Arc<Core>, stream: Stream) {
         }
     }
 
+    // Dropping the last sender lets the transport's writer flush and finish.
     forwarder.abort();
-    drop(out_tx);
-    let _ = writer.await;
 }
 
 fn line(message: &impl Serialize) -> String {
@@ -339,12 +381,27 @@ async fn handle(
                 hello.protocol_version
             )));
         }
-        state.lock().unwrap().hello = true;
+        let remote = {
+            let mut state = state.lock().unwrap();
+            state.hello = true;
+            state.remote
+        };
+        let folder = match remote {
+            true => Some(remote_folder(&core.config()?).display().to_string()),
+            false => None,
+        };
         return result(HelloResult {
             protocol_version: PROTOCOL_VERSION,
             core_version: env!("CARGO_PKG_VERSION").into(),
             pid: std::process::id(),
+            folder,
         });
+    }
+    if request.method == method::CORE_SHUTDOWN && state.lock().unwrap().remote {
+        return Err(RpcError::app(
+            "a remote client can't stop the core (it couldn't start it again); stop it on its \
+             own machine",
+        ));
     }
     // These two work before `hello`, so any client version can see and stop the core.
     if request.method == method::CORE_STATUS {
@@ -524,7 +581,8 @@ async fn handle(
             let (allowed, access) = match &p.session_id {
                 Some(prefix) => {
                     let key = core.resolve_key(prefix)?;
-                    let settings = core.settings(&key, &config)?;
+                    let mut settings = core.settings(&key, &config)?;
+                    cap_remote_level(&mut settings, &config, state.lock().unwrap().remote);
                     let allowed = core
                         .overrides
                         .lock()
@@ -716,7 +774,9 @@ fn chat_send(
         .map_err(app)?
     };
     let key = session_id.to_string();
-    let settings = core.settings(&key, &config)?;
+    let mut settings = core.settings(&key, &config)?;
+    let remote = state.lock().unwrap().remote;
+    cap_remote_level(&mut settings, &config, remote);
     let profile = &config.profiles[&settings.profile];
     let provider =
         build_provider(&settings.profile, profile, &core.options.secrets).map_err(app)?;
@@ -758,7 +818,11 @@ fn chat_send(
         text: p.text,
     });
 
-    let cwd = working_folder(p.cwd.as_deref());
+    // A remote client's folder is on another machine; its chats work in the core's.
+    let cwd = match remote {
+        true => remote_folder(&config),
+        false => working_folder(p.cwd.as_deref()),
+    };
     let agent = settings.mode == Mode::Agent;
     let budget = if agent {
         Budget {
@@ -874,6 +938,25 @@ fn expand_home(path: &Path) -> PathBuf {
 }
 
 /// The folder a client says it's working in, if it exists; otherwise home.
+/// Where remote clients' chats use tools: `[agent] workspace` if it exists, else home.
+fn remote_folder(config: &Config) -> PathBuf {
+    config
+        .agent
+        .workspace
+        .as_deref()
+        .map(expand_home)
+        .filter(|dir| dir.is_dir())
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Chats driven from a remote client run at most at `[remote] max_level`.
+fn cap_remote_level(settings: &mut SessionSettings, config: &Config, remote: bool) {
+    if remote {
+        settings.level = settings.level.min(config.remote.max_level);
+    }
+}
+
 fn working_folder(cwd: Option<&str>) -> PathBuf {
     cwd.map(PathBuf::from)
         .filter(|dir| dir.is_absolute() && dir.is_dir())
@@ -1352,4 +1435,54 @@ fn summary_dto(summary: crate::sessions::SessionSummary) -> rpc::SessionSummary 
 fn millis(time: std::time::SystemTime) -> i64 {
     time.duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
+}
+
+#[cfg(windows)]
+mod windows_acl {
+    use std::io;
+
+    use interprocess::os::windows::security_descriptor::SecurityDescriptor;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, LocalFree};
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    /// Full access for the user running the core and for SYSTEM; nobody else.
+    pub fn only_this_user() -> io::Result<SecurityDescriptor> {
+        let sddl = format!("D:P(A;;GA;;;{})(A;;GA;;;SY)", current_user_sid()?);
+        let wide = widestring::U16CString::from_str(&sddl).map_err(io::Error::other)?;
+        SecurityDescriptor::deserialize(&wide)
+    }
+
+    /// The current user's SID, e.g. `S-1-5-21-…-1001`.
+    fn current_user_sid() -> io::Result<String> {
+        // SAFETY: every pointer passed below points into a live buffer of the size given, the
+        // token handle is closed once, and the string from ConvertSidToStringSidW is read up to
+        // its terminator and then freed with LocalFree, as its documentation requires.
+        unsafe {
+            let mut token: HANDLE = std::ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let mut len = 0u32;
+            GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
+            // u64s keep the buffer aligned for TOKEN_USER.
+            let mut buffer = vec![0u64; (len as usize).div_ceil(8)];
+            let ok =
+                GetTokenInformation(token, TokenUser, buffer.as_mut_ptr().cast(), len, &mut len);
+            CloseHandle(token);
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let user = &*(buffer.as_ptr() as *const TOKEN_USER);
+            let mut text: *mut u16 = std::ptr::null_mut();
+            if ConvertSidToStringSidW(user.User.Sid, &mut text) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+            let sid = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+            LocalFree(text.cast());
+            Ok(sid)
+        }
+    }
 }

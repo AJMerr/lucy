@@ -31,8 +31,8 @@ Date: 2026-11-05 · Status: Accepted
   `delta`, `turn_finished`) to the client that sent the message and to subscribers.
 - Per-session `/model` and `/plain` choices live in the core's memory, not the database.
 - `lucy-client` holds the client side so the sprite can reuse it.
-- Open: the Windows named pipe uses the default security descriptor; restrict it to the current
-  user before the HTTP/remote work (step 11).
+- The Windows named pipe allows only the user running the core (and SYSTEM), the counterpart
+  of the 0700 socket folder on Unix (step 11).
 
 ## Implementation notes (step 10, protocol v4)
 
@@ -44,3 +44,27 @@ Date: 2026-11-05 · Status: Accepted
 - A client whose `hello` is refused by an older core asks for its status and, if it's idle,
   shuts it down and starts its own (`lucy` prints that it did). A busy or newer core is left
   alone with a message naming `lucy core stop`. Cores before v4 still need `pkill` once.
+
+## Implementation notes (step 11, remote access)
+
+- `[remote] enabled = true` starts a WebSocket listener at `ws://<bind>/rpc` (axum) next to
+  the local socket. Each text frame is one JSON-RPC message, handled by the same code as the
+  socket (`serve_client`), so the two transports can't drift. The config is read when the core
+  starts.
+- **Token:** keyring entry `remote-token` (`LUCY_KEY_REMOTE_TOKEN` overrides it), created by
+  `lucy remote token` and checked on every connection, so `--rotate` applies to new
+  connections at once. It's sent as `Authorization: Bearer`, or by browsers (which can't set
+  WebSocket headers) as a `lucy-token.<token>` subprotocol offered next to `lucy`. Compared in
+  constant time. With no token set, connections get 503.
+- **Network:** a bind beyond loopback also needs `allow_network = true`, and logs a warning:
+  there's no TLS. Use Tailscale or an SSH tunnel, or a TLS proxy in front (clients take
+  `wss://`). A LAN or Tailscale bind is therefore still the explicit opt-in this ADR asked for.
+- **What remote clients get:** everything a local client does, except that their chats run in
+  `[agent] workspace` (else the core user's home) rather than the folder they send, at most at
+  `[remote] max_level` (default 1), and they can't `core.shutdown` (they couldn't start the
+  core again). `hello` reports the folder (`folder`, only for remote clients).
+- **Client side:** `Endpoint::Remote { url, token }` in `lucy-client`; both transports feed
+  the same reader and writer tasks. The CLI picks the remote core from `--remote`, then
+  `LUCY_REMOTE`, then `remote.toml` (next to `config.toml`, written by `lucy remote connect`),
+  with the token in the keyring entry `remote-client` (`LUCY_KEY_REMOTE_CLIENT`). It never
+  spawns a remote core. `lucy service` and `lucy core stop` always act on the local core.

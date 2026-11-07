@@ -167,6 +167,13 @@ impl<W: Write> Chat<'_, W> {
             &format!("{model} · /help for commands · Ctrl+D to quit"),
         );
         self.say(&format!("{title}{rest}"))?;
+        if let Some(folder) = self.client.folder() {
+            let remote = self.styled(
+                "2",
+                &format!("Remote core: tools run on that machine, in {folder}"),
+            );
+            self.say(&remote)?;
+        }
         Ok(())
     }
 

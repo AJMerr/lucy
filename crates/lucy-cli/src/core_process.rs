@@ -21,7 +21,7 @@ use crate::service::{ServiceManager, SystemRunner};
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// How long to wait for a core to stop, or to come up.
 const WAIT: Duration = Duration::from_secs(5);
-const CLIENT_NAME: &str = concat!("lucy-cli ", env!("CARGO_PKG_VERSION"));
+pub const CLIENT_NAME: &str = concat!("lucy-cli ", env!("CARGO_PKG_VERSION"));
 
 /// `lucy core run`: serve until idle, or with `service` until stopped. Exits quietly if
 /// another core already owns the socket.
@@ -85,9 +85,31 @@ fn log(message: &str) {
     );
 }
 
-/// Connect to the core, starting it if it isn't running. A core from an older Lucy is
-/// replaced when it's idle.
+/// Connect to the core chats use: a remote one if this machine is connected to one (see
+/// [`crate::remote::target`]), else this machine's own.
 pub async fn connect() -> Result<Client> {
+    match crate::remote::target()? {
+        Some(remote) => connect_remote(&remote).await,
+        None => connect_local().await,
+    }
+}
+
+/// Connect to a core on another machine (`lucy remote connect`, `--remote`, `LUCY_REMOTE`).
+async fn connect_remote(endpoint: &Endpoint) -> Result<Client> {
+    Client::connect(endpoint, CLIENT_NAME)
+        .await
+        .map_err(|err| match err {
+            ClientError::Connect { .. } => anyhow::Error::new(err).context(format!(
+                "couldn't reach the Lucy core at {endpoint}; is it running there, with remote \
+                 access on (`[remote] enabled = true`)?"
+            )),
+            err => err.into(),
+        })
+}
+
+/// Connect to this machine's core, starting it if it isn't running. A core from an older
+/// Lucy is replaced when it's idle.
+pub async fn connect_local() -> Result<Client> {
     let endpoint = Endpoint::default_for_user();
     let connected = match Client::connect_or_spawn(&endpoint, CLIENT_NAME, spawn).await {
         Err(err @ (ClientError::VersionMismatch { .. } | ClientError::Protocol(_))) => {

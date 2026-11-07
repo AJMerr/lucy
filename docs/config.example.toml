@@ -90,10 +90,16 @@ url = "https://mcp.linear.app/mcp"
 # oauth_redirect_port = 8976                             # if that app needs a fixed redirect
 
 # --- Remote access (off by default) -------------------------------------------------------
+# Lets `lucy` on other machines use this core over WebSocket (ws://<bind>/rpc). Each needs the
+# token from `lucy remote token`. Restart the core after changing this section
+# (`lucy service restart`, or `lucy core stop`).
 
 [remote]
 enabled = false
-bind = "127.0.0.1:7077"         # LAN/Tailscale binding is an explicit opt-in
+bind = "127.0.0.1:7077"         # e.g. "100.64.0.7:7077" for your Tailscale address
+# allow_network = true          # needed for any bind beyond 127.0.0.1; there's no TLS, so only
+                                # on networks you trust (Tailscale) or behind a TLS proxy
+# max_level = 1                 # highest agent level for chats from other machines (0-3)
 
 # --- Sprite (milestone 2) -----------------------------------------------------------------
 

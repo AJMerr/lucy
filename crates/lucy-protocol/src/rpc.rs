@@ -151,6 +151,9 @@ pub struct HelloResult {
     pub protocol_version: u32,
     pub core_version: String,
     pub pid: u32,
+    /// For remote clients: the folder on the core's machine where their chats' tools run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
