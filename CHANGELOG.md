@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.3.0: remote access (2026-11-07)
+
+Lucy's core can now serve other machines: your laptop's `lucy` can use your desktop's core,
+with its chats, models, keys and MCP servers, over WebSocket. It's off by default, behind a
+token, and capped so a leaked token can't run commands unapproved. This completes
+milestone 1.
 
 ### Remote access
 
@@ -23,6 +28,33 @@
 
 - **On Windows, the core's named pipe now admits only your user** (and SYSTEM); before, other
   accounts on the same PC could connect to it.
+
+### Upgrading from v0.2.0
+
+- Install with `cargo install --path crates/lucy-cli`, then restart the core:
+  `lucy service restart`, or `lucy core stop` if you don't use the service. The protocol is
+  still v4, so the new `lucy` won't replace the old core by itself.
+- Nothing to change in your config: `[remote]` stays off until you turn it on (see
+  `docs/config.example.toml`). Turning it on, or changing it, needs a core restart too.
+
+### Known limitations
+
+- **No TLS of its own.** Remote traffic is plain WebSocket; use Tailscale, an SSH tunnel or a
+  TLS proxy for anything beyond localhost.
+- **One token per core.** Rotating it disconnects every other machine at their next
+  connection; there are no per-device tokens yet.
+- **Remote access only lasts while the core runs**, and other machines can't start it, so
+  install the login service on the machine that serves.
+- **Tested day to day on Linux only.** Everything passes in CI on Linux, macOS and Windows.
+- The v0.2.0 limitations still apply (Windows console flash at login, level 2 commands,
+  `/undo` scope, Ollama context), and there's no desktop sprite or voice yet (milestone 2).
+
+### Under the hood
+
+The local socket and WebSocket clients share one request handler, and `lucy-client` speaks
+both, so the desktop sprite can use either. 222 automated tests, plus the opt-in keyring test:
+new ones cover the WebSocket transport, its token and limits against a real core, and the
+real `lucy` binary driving a remote core.
 
 ## v0.2.0: tools, agent mode and a login service (2026-11-07)
 
