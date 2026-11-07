@@ -21,6 +21,7 @@
           gdk-pixbuf
           glib
           gtk3
+          gtk-layer-shell
           harfbuzz
           librsvg
           libsoup_3

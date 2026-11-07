@@ -89,7 +89,7 @@ Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a lite
 
 Other commands: `lucy config path`, `lucy auth set|remove|status`,
 `lucy mcp add|list|remove|login|logout`, `lucy service install|uninstall|status|restart`,
-`lucy core stop`, `lucy remote connect|disconnect|token`.
+`lucy core stop`, `lucy remote connect|disconnect|token`, `lucy sprite [quit]`.
 
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
@@ -271,7 +271,8 @@ crates/
   lucy-client/     connects front ends to the core (and starts it on demand)
   lucy-cli/        the `lucy` command: chat loop, Markdown renderer, setup wizard
   lucy-tools/      built-in tools (files, search, fetch, shell) as an in-process MCP server
-apps/sprite/       Tauri desktop overlay (milestone 2)
+  lucy-packs/      sprite packs: loading and checking pack.toml and its frames
+apps/sprite/       the desktop sprite (Tauri; its own Cargo workspace)
 persona/           built-in personas
 packs/placeholder/ the only sprite pack tracked in git
 docs/              ADRs, roadmap, example config
@@ -292,7 +293,12 @@ Tests run against fake model servers and recorded real streams. To record a new 
 `cargo run -q -p lucy-core --example system_prompt`. CI runs fmt, clippy and the tests on Linux,
 macOS and Windows.
 
-## Sprite art
+## Desktop sprite (preview)
+
+`lucy sprite` puts Lucy on your desktop: a small animated figure in the bottom-right corner,
+above your windows (on Wayland compositors with layer shell, like Hyprland, Sway or KDE, no
+window rules needed). `lucy sprite quit` sends her off. She doesn't talk yet; that's next. Build
+her from [`apps/sprite`](apps/sprite/README.md).
 
 No character art is committed. Lucy loads sprite packs from your data directory
 (`~/.local/share/lucy/packs/` on Linux). Copy `packs/placeholder`, swap the frames, and point

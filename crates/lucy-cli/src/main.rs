@@ -9,7 +9,7 @@ use lucy_core::config::{self, Config};
 use lucy_core::secrets::{self, KeySource, OsKeyring, SecretStore, Secrets, SecretsError};
 
 use lucy_cli::chat::Start;
-use lucy_cli::{ask, core_process, mcp, remote, service, terminal, wizard};
+use lucy_cli::{ask, core_process, mcp, remote, service, sprite, terminal, wizard};
 
 /// Lucy: a model-agnostic personal assistant.
 #[derive(Parser)]
@@ -65,6 +65,11 @@ enum Command {
     Mcp {
         #[command(subcommand)]
         action: McpAction,
+    },
+    /// Start Lucy's desktop sprite, or send it a command.
+    Sprite {
+        #[command(subcommand)]
+        action: Option<SpriteAction>,
     },
     /// Use Lucy's core from another machine, or let other machines use this one's.
     Remote {
@@ -165,6 +170,12 @@ enum McpAction {
     /// Serve Lucy's built-in tools over stdio, for other MCP clients.
     #[command(hide = true)]
     Serve,
+}
+
+#[derive(Subcommand)]
+enum SpriteAction {
+    /// Close the sprite.
+    Quit,
 }
 
 #[derive(Subcommand)]
@@ -312,6 +323,10 @@ fn main() -> Result<()> {
             AuthAction::Status => auth_status(),
         },
         Some(Command::Mcp { action }) => mcp_command(action),
+        Some(Command::Sprite { action }) => sprite::run(match action {
+            None => None,
+            Some(SpriteAction::Quit) => Some("quit"),
+        }),
         Some(Command::Remote { action }) => match action {
             RemoteAction::Connect { url } => {
                 tokio::runtime::Runtime::new()?.block_on(remote::connect_command(&url))

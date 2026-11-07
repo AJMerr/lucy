@@ -3,7 +3,7 @@
 
 use std::fs::OpenOptions;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -272,16 +272,20 @@ fn spawn() -> std::io::Result<()> {
 pub(crate) fn spawn_core(service: bool) -> std::io::Result<()> {
     let log =
         log_path().ok_or_else(|| std::io::Error::other("no data directory; set LUCY_DATA_DIR"))?;
-    if let Some(dir) = log.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let log = OpenOptions::new().create(true).append(true).open(log)?;
-
     let mut command = Command::new(std::env::current_exe()?);
     command.args(["core", "run"]);
     if service {
         command.arg("--service");
     }
+    spawn_detached(command, &log)
+}
+
+/// Start `command` detached from this terminal, appending its output to `log`.
+pub(crate) fn spawn_detached(mut command: Command, log: &Path) -> std::io::Result<()> {
+    if let Some(dir) = log.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let log = OpenOptions::new().create(true).append(true).open(log)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -289,7 +293,7 @@ pub(crate) fn spawn_core(service: bool) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        // Own process group, so Ctrl+C in this terminal doesn't take the core down too.
+        // Own process group, so Ctrl+C in this terminal doesn't take it down too.
         command.process_group(0);
     }
     #[cfg(windows)]

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Desktop sprite (preview)
+
+- **Lucy on your desktop.** `lucy sprite` starts her: a small transparent figure in the
+  bottom-right corner, above your windows, animating from her sprite pack. Click her and she's
+  happy. `lucy sprite quit` sends her off. Build her from `apps/sprite` (see its README); she
+  doesn't talk yet.
+- **No window rules needed** on Wayland compositors with layer shell (Hyprland, Sway, KDE and
+  others); elsewhere she's an always-on-top window.
+- **Sprite packs:** `[sprite] pack` and `scale` now work. Packs live in
+  `~/.local/share/lucy/packs/`, with `placeholder` built in. A broken pack is explained in
+  `sprite.log` and replaced by the placeholder.
+
 ## v0.3.0: remote access (2026-11-07)
 
 Lucy's core can now serve other machines: your laptop's `lucy` can use your desktop's core,

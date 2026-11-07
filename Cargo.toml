@@ -7,6 +7,7 @@ members = [
     "crates/lucy-core",
     "crates/lucy-cli",
     "crates/lucy-tools",
+    "crates/lucy-packs",
 ]
 
 [workspace.package]
@@ -21,6 +22,7 @@ lucy-providers = { path = "crates/lucy-providers" }
 lucy-core = { path = "crates/lucy-core" }
 lucy-client = { path = "crates/lucy-client" }
 lucy-tools = { path = "crates/lucy-tools" }
+lucy-packs = { path = "crates/lucy-packs" }
 
 anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }

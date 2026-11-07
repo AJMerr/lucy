@@ -8,6 +8,7 @@ pub mod markdown;
 pub mod mcp;
 pub mod remote;
 pub mod service;
+pub mod sprite;
 pub mod terminal;
 pub mod tool_display;
 pub mod wizard;

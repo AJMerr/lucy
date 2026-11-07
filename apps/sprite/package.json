@@ -1,0 +1,19 @@
+{
+  "name": "lucy-sprite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "test": "node --test 'src/**/*.test.ts'",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
+  }
+}

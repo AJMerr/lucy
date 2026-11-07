@@ -1815,6 +1815,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lucy-packs"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
+]
+
+[[package]]
 name = "lucy-protocol"
 version = "0.3.0"
 dependencies = [

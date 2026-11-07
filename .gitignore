@@ -5,6 +5,7 @@
 node_modules/
 dist/
 apps/sprite/src-tauri/target/
+apps/sprite/src-tauri/gen/
 
 # Nix
 /result

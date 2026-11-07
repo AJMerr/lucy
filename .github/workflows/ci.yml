@@ -32,3 +32,47 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --no-fail-fast
       - run: cargo build --workspace --release
+
+  sprite-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/sprite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/sprite/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  sprite:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/sprite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/sprite/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/sprite/src-tauri
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
+          libgtk-layer-shell-dev librsvg2-dev libsoup-3.0-dev
+      - run: npm ci && npm run build
+      - working-directory: apps/sprite/src-tauri
+        run: cargo fmt --check
+      - working-directory: apps/sprite/src-tauri
+        run: cargo clippy --all-targets --features tauri/custom-protocol -- -D warnings
