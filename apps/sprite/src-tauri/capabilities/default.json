@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the sprite's own page may do.",
-  "windows": ["sprite"],
+  "description": "What her pages (the sprite and her chat window) may do.",
+  "windows": ["sprite", "chat"],
   "permissions": ["core:default"]
 }

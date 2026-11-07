@@ -1,11 +1,12 @@
 //! Lucy's desktop sprite (ADR 0005): a small transparent window, always on top, that draws
 //! the configured sprite pack and talks with Lucy's core. `lucy sprite` starts it, and
-//! `lucy sprite toggle|ask|quit` drive it.
+//! `lucy sprite toggle|ask|chat|quit` drive it.
 
 // No console window on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod chat;
+mod chat_window;
 mod pack;
 mod placement;
 
@@ -43,6 +44,9 @@ fn main() {
             pack::pack,
             chat::send,
             chat::approve,
+            chat::history,
+            chat::cancel,
+            chat_window::open_chat,
             placement::set_layout,
         ])
         .setup(move |app| {
@@ -59,12 +63,14 @@ fn main() {
             placement::place(&window, size)?;
             register_hotkey(app.handle(), &hotkey);
             chat::connect_in_background(app.handle().clone());
-            if first_command.as_deref() == Some("ask") {
-                // `lucy sprite ask` started her: open the box once the page is listening.
+            if let Some(first @ ("ask" | "chat")) = first_command.as_deref() {
+                // `lucy sprite ask|chat` started her: act once the page is listening.
+                let first = first.to_owned();
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    command(&handle, Some("ask"));
+                    let main = handle.clone();
+                    let _ = handle.run_on_main_thread(move || command(&main, Some(&first)));
                 });
             }
             Ok(())
@@ -78,6 +84,7 @@ fn command(app: &AppHandle, command: Option<&str>) {
     match command {
         Some("quit") => app.exit(0),
         Some("toggle") => placement::toggle(app),
+        Some("chat") => chat_window::open(app),
         Some("ask") => {
             placement::show(app);
             let _ = app.emit("sprite-command", "ask");

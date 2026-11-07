@@ -89,14 +89,29 @@ test("a finished reply makes her happy, and the bubble fades after the timeout",
   assert.equal(faded.bubble, null);
 });
 
-test("an expanded bubble stays until you dismiss it", () => {
+test("a finished bubble goes when you dismiss it", () => {
   const done = run([started(1), delta(1, "Long story."), finished(1, "complete", 0)]);
 
-  const expanded = run([{ type: "expand" }, { type: "tick", now: 60_000 }], done);
-  assert.equal(expanded.bubble?.expanded, true);
-
-  const dismissed = run([{ type: "dismiss" }], expanded);
+  const dismissed = run([{ type: "dismiss" }], done);
   assert.equal(dismissed.bubble, null);
+});
+
+test("while the chat window is open her replies go there, not in a bubble, but she still acts", () => {
+  const talking = run([started(1), delta(1, "Long story.")]);
+
+  const windowed = run([{ type: "chat_window", open: true }], talking);
+  assert.equal(windowed.bubble, null, "the window has it now");
+
+  const later = run(
+    [delta(1, " The end."), approval(1, "run_command", { command: "ls" })],
+    windowed,
+  );
+  assert.equal(later.bubble, null);
+  assert.equal(later.approval, null, "the window asks instead");
+  assert.equal(later.animation, "listening");
+
+  const closed = run([{ type: "chat_window", open: false }, started(2), delta(2, "Hi.")], later);
+  assert.equal(closed.bubble?.text, "Hi.");
 });
 
 test("a tool that needs your go-ahead shows what she wants to do, and she waits", () => {

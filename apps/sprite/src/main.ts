@@ -136,7 +136,7 @@ async function start(): Promise<void> {
       const shown = renderBubble(reply.text, {
         maxLines: BUBBLE_LINES,
         charsPerLine: CHARS_PER_LINE,
-        expanded: reply.expanded,
+        expanded: false,
       });
       text.innerHTML = shown.html;
       text.hidden = reply.text === "";
@@ -144,7 +144,6 @@ async function start(): Promise<void> {
       error.hidden = reply.error === undefined;
       error.textContent = reply.error ?? "";
       close.hidden = !reply.done;
-      bubble.classList.toggle("expanded", reply.expanded);
     } else {
       text.hidden = true;
       more.hidden = true;
@@ -229,7 +228,10 @@ async function start(): Promise<void> {
       dispatch({ type: "close_input" });
     }
   });
-  more.addEventListener("click", () => dispatch({ type: "expand" }));
+  // The whole reply (and the rest of her chat) is in the chat window.
+  more.addEventListener("click", () => {
+    invoke("open_chat").catch((err: unknown) => console.error("lucy-sprite:", err));
+  });
   close.addEventListener("click", () => dispatch({ type: "dismiss" }));
   show.addEventListener("click", () => {
     preview.hidden = !preview.hidden;
@@ -257,6 +259,9 @@ async function start(): Promise<void> {
       dispatch({ type: "problem", message: "lost the connection to Lucy's core", now: Date.now() });
     }
   });
+  await listen<boolean>("chat-window", (event) =>
+    dispatch({ type: "chat_window", open: event.payload }),
+  );
   await listen<string>("sprite-command", (event) => {
     if (event.payload === "ask") {
       dispatch({ type: view.inputOpen ? "close_input" : "open_input" });

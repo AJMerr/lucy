@@ -176,6 +176,8 @@ enum McpAction {
 enum SpriteAction {
     /// Open (or close) her input box, starting her if needed. Bind this to a key.
     Ask,
+    /// Open her chat window (her whole chat), starting her if needed.
+    Chat,
     /// Hide her, or show her again.
     Toggle,
     /// Close the sprite.
@@ -331,6 +333,7 @@ fn main() -> Result<()> {
             None => None,
             Some(SpriteAction::Ask) => Some("ask"),
             Some(SpriteAction::Toggle) => Some("toggle"),
+            Some(SpriteAction::Chat) => Some("chat"),
             Some(SpriteAction::Quit) => Some("quit"),
         }),
         Some(Command::Remote { action }) => match action {

@@ -46,6 +46,8 @@ pub fn load_configured() -> Loaded {
         scale,
         bubble_timeout_secs,
         hotkey,
+        // `lucy service install` handles it.
+        autostart: _,
     } = settings;
     let pack = lucy_packs::load(&pack, packs_dir().as_deref()).unwrap_or_else(|err| {
         eprintln!("lucy-sprite: {err}; showing the placeholder instead");
