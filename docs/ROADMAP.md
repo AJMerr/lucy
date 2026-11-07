@@ -38,7 +38,7 @@ Built test-first against the `mock` provider.
 11. ✅ **Remote access** — the core over WebSocket (off by default, token, capped level);
     `lucy remote connect|disconnect|token`, `--remote`; Windows pipe restricted to its user.
 
-## Milestone 2 — Desktop sprite
+## Milestone 2 — Desktop sprite ✅
 
 Tauri app in `apps/sprite` (ADR 0005), in three slices:
 
@@ -48,7 +48,7 @@ Tauri app in `apps/sprite` (ADR 0005), in three slices:
 2. ✅ **2b — Talking.** Her own ongoing chat with the core, input box, reply bubbles, approval
    buttons, `lucy sprite toggle|ask`, hotkeys (compositor binds, plus Tauri's shortcut plugin
    where it works).
-3. **2c — Around her.** Full chat window for long replies, autostart with the login service,
+3. ✅ **2c — Around her.** Full chat window for long replies, autostart with the login service,
    Nix flake packages and Tauri bundles, docs.
 
 ## Later

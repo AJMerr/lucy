@@ -1,13 +1,15 @@
 # Lucy
 
-A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her in the terminal
-today; later she'll live on your desktop as an animated sprite with speech bubbles that you can
-toggle on and off.
+A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her in the terminal,
+or let her live on your desktop as an animated sprite with speech bubbles that you can toggle on
+and off.
 
 > **Status:** v0.3.0: terminal chat with any OpenAI-compatible or Anthropic model, able to
 > read, search, run and edit with your approval, use any MCP server you add, and work through
 > tasks on her own within limits you set. The core can run from login and serve your other
-> machines. The desktop sprite is next. See [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
+> machines. Since then (unreleased): the desktop sprite, with her own chat window, autostart,
+> a Nix flake with a home-manager module, and installers. See [release notes](CHANGELOG.md) and
+> the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -52,6 +54,42 @@ lucy                                     # start chatting
 Make sure `~/.cargo/bin` is on your `PATH`. You can also skip installing and use
 `cargo run -q -p lucy-cli -- <args>`.
 
+Other ways to install:
+
+- **Installers** for the desktop sprite, with `lucy` inside: `.deb`, `.rpm` and `.AppImage`
+  for Linux, `.dmg` for macOS (Apple silicon) and `.msi` for Windows, attached to each
+  [release](https://github.com/AJMerr/lucy/releases). They aren't signed yet, so macOS and
+  Windows warn the first time (on macOS, right-click the app and choose Open). On Linux `lucy`
+  lands in `/usr/bin`. On macOS it's inside the app (`Lucy Sprite.app/Contents/MacOS/lucy`) and
+  on Windows next to `lucy-sprite.exe` in the install folder; put it on your `PATH` to use it in
+  a terminal.
+- **Nix:** `nix profile install github:AJMerr/lucy` installs both (`.#lucy` is just the CLI;
+  the sprite package is Linux-only), or use the overlay. With
+  [home-manager](https://github.com/nix-community/home-manager):
+
+  ```nix
+  # flake inputs: lucy.url = "github:AJMerr/lucy";
+  imports = [ lucy.homeModules.default ];
+  programs.lucy = {
+    enable = true;
+    service.enable = true;            # the core from login (instead of `lucy service install`)
+    sprite = { enable = true; autostart = true; };  # with your graphical session
+    settings = {                      # optional: config.toml, read-only once set
+      defaults.profile = "local-qwen";
+      profiles.local-qwen = {
+        provider = "openai_compat";
+        base_url = "http://localhost:11434/v1";
+        model = "qwen3:14b";
+      };
+    };
+  };
+  ```
+
+  Leave `settings` out to keep editing `config.toml` yourself (or with `lucy config init` and
+  `lucy mcp add`); once home-manager owns it, those commands say so instead of changing it.
+  The units are systemd user services; the sprite's starts with `graphical-session.target`,
+  which uwsm, GNOME and KDE sessions reach.
+
 **Local models:** install [Ollama](https://ollama.com), then run `ollama pull qwen3:14b` and pick
 "Local Qwen via Ollama" in the wizard. On NixOS, set `services.ollama.enable = true;`, and use
 `package = pkgs.ollama-cuda;` for NVIDIA GPUs.
@@ -89,7 +127,7 @@ Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a lite
 
 Other commands: `lucy config path`, `lucy auth set|remove|status`,
 `lucy mcp add|list|remove|login|logout`, `lucy service install|uninstall|status|restart`,
-`lucy core stop`, `lucy remote connect|disconnect|token`, `lucy sprite [ask|toggle|quit]`.
+`lucy core stop`, `lucy remote connect|disconnect|token`, `lucy sprite [ask|chat|toggle|quit]`.
 
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
@@ -197,6 +235,12 @@ variables instead, and a console window may flash briefly at login.
 When a newer `lucy` finds an older core running, it restarts the core by itself as long as
 the core isn't in the middle of a reply.
 
+To have the desktop sprite start at login too, set `autostart = true` under `[sprite]` in
+`config.toml` and run `lucy service install` again. That adds her to your login items: an
+autostart entry in `~/.config/autostart/` on Linux, a launch agent on macOS, a second `Run`
+value on Windows. Setting it back to `false` (and installing again) or `lucy service uninstall`
+takes her off.
+
 ### Using Lucy from another machine
 
 Your laptop's `lucy` can use your desktop's core: the same chats, models, keys and MCP
@@ -260,6 +304,8 @@ plain mode.
   saw.
 - **Keyring errors on Linux:** you need a Secret Service provider (e.g. gnome-keyring), or set
   `LUCY_KEY_<NAME>` instead.
+- **"config.toml is managed by home-manager":** `programs.lucy.settings` owns it; change Lucy's
+  settings in your Nix config, or set it to `null` to edit the file yourself again.
 
 ## How it's built
 
@@ -275,6 +321,7 @@ crates/
 apps/sprite/       the desktop sprite (Tauri; its own Cargo workspace)
 persona/           built-in personas
 packs/placeholder/ the only sprite pack tracked in git
+nix/               the flake's packages, home-manager module and its check
 docs/              ADRs, roadmap, example config
 ```
 
@@ -285,21 +332,27 @@ The design decisions are recorded in [`docs/adr/`](docs/adr/).
 ```sh
 cargo test --workspace                                # everything runs offline
 cargo clippy --workspace --all-targets -- -D warnings
-nix develop                                           # optional; needed later for the Tauri sprite
+nix develop                                           # optional; has what the Tauri sprite needs
+nix flake check                                       # builds the packages, checks the home-manager module
 ```
 
 Tests run against fake model servers and recorded real streams. To record a new stream:
 `cargo run -p lucy-providers --example capture`. To preview the system prompt Lucy would send:
 `cargo run -q -p lucy-core --example system_prompt`. CI runs fmt, clippy and the tests on Linux,
-macOS and Windows.
+macOS and Windows, builds the sprite on all three, and runs `nix flake check`. Publishing a
+GitHub release builds the installers and attaches them (`.github/workflows/release.yml`; run
+it by hand with no tag to try a build).
 
 ## Desktop sprite (preview)
 
 `lucy sprite` puts Lucy on your desktop: a small animated figure in the bottom-right corner,
 above your windows (on Wayland compositors with layer shell, like Hyprland, Sway or KDE, no
 window rules needed). Click her, or bind `lucy sprite ask` to a key, and type: she answers in
-speech bubbles, and asks there before running tools. `lucy sprite toggle` hides her and
-`lucy sprite quit` sends her off. Build her from [`apps/sprite`](apps/sprite/README.md).
+speech bubbles, and asks there before running tools. A reply too long for the bubble ends with
+"more…", which opens her chat window: the whole conversation, with room to type
+(`lucy sprite chat` opens it too). `lucy sprite toggle` hides her and `lucy sprite quit` sends
+her off. Install her from a release or the Nix flake (above), or build her from
+[`apps/sprite`](apps/sprite/README.md); `[sprite] autostart` starts her at login.
 
 No character art is committed. Lucy loads sprite packs from your data directory
 (`~/.local/share/lucy/packs/` on Linux). Copy `packs/placeholder`, swap the frames, and point

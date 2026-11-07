@@ -73,3 +73,24 @@ Electron can but costs ~150 MB+ RAM for an always-on sprite.
   single-instance plugin (`ask` and `toggle` start her if needed). `[sprite] hotkey` registers
   a global shortcut where apps may (not on Wayland, where the compositor binds `lucy sprite
   ask`). `LUCY_SPRITE_NO_LAYER_SHELL=1` forces an ordinary window.
+
+## Implementation notes (slice 2c, around her)
+
+- **Chat window:** a second, ordinary Tauri window (`chat.html`), made on demand by "more…" or
+  `lucy sprite chat`. Its transcript is a pure reducer (`src/transcript.ts`) from her saved
+  messages (`sessions.load`) and live events. The Rust side follows her reply in progress, so a
+  window opened mid-reply starts from what she's said. Both pages get the same `core-event`s;
+  while the window is open the sprite's reducer keeps replies and approvals out of the bubble.
+- **Autostart:** `[sprite] autostart` is applied by `lucy service install`, next to the core's
+  service: an XDG autostart `.desktop` entry on Linux (run by GNOME, KDE and systemd-based
+  sessions like uwsm), a launchd agent without `KeepAlive` on macOS (quitting her keeps her
+  gone), and a second `Run` value on Windows. Not started on install; `lucy sprite` does that.
+- **Nix:** `.#lucy` and `.#lucy-sprite` (Linux; wrapped with GTK's environment and `lucy` on
+  `PATH`), and a home-manager module whose units are plain systemd user services. The core's
+  unit pins `LUCY_SOCKET=%t/lucy/core.sock`; `lucy` resolves `%t` so it recognises the unit as
+  its service. A home-manager `config.toml` is a link into the store, which `lucy` refuses to
+  rewrite with a message rather than a permission error.
+- **Bundles:** `tauri.bundle.conf.json` is merged in only for release builds, because it names
+  the `lucy` sidecar (`binaries/lucy-<triple>`), which ordinary builds don't have. Published
+  releases trigger `.github/workflows/release.yml`, which builds `lucy`, bundles per platform
+  and attaches the results. Nothing is signed yet.

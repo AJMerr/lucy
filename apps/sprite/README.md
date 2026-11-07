@@ -4,17 +4,25 @@ A small transparent window that sits above your other windows in the bottom-righ
 draws Lucy from a sprite pack, and talks with you in speech bubbles. See
 [ADR 0005](../../docs/adr/0005-sprite-tauri-and-packs.md).
 
-> **Status:** milestone 2, slices 2a and 2b. She shows up, animates, and talks. The full chat
-> window, autostart and packages come in 2c.
+> **Status:** milestone 2 is done: she shows up, animates, talks in bubbles, opens her whole chat
+> in a window, starts at login if you like, and comes as installers and a Nix package.
 
 ## Talking to her
 
 Click her (or press your hotkey) and type in the box above her; Enter sends, Esc closes.
 Her reply streams into a speech bubble (bold, italics, code and lists render) and fades after
-`[sprite] bubble_timeout_secs`. Past about 8 lines it stops with "more…", which expands it;
-× dismisses it. If she needs your go-ahead for a tool (a command, a file change, going online)
-the bubble asks, with **Allow**, **Always** (for the rest of the chat) and **Deny**, and
+`[sprite] bubble_timeout_secs`. Past about 8 lines it stops with "more…", which opens her chat
+window; × dismisses it. If she needs your go-ahead for a tool (a command, a file change, going
+online) the bubble asks, with **Allow**, **Always** (for the rest of the chat) and **Deny**, and
 "show changes" for edits.
+
+## Her chat window
+
+"more…" or `lucy sprite chat` opens an ordinary window with her whole chat: what you said, her
+replies (with Markdown) and the tools she ran, streaming as she goes. Type at the bottom (Enter
+sends, Shift+Enter starts a new line), **Stop** cuts a reply short, and approval requests show
+there with the same buttons. Opened partway through a reply, it picks up from what she's said
+so far. While it's open her replies go there rather than into bubbles; she still acts them out.
 
 Her mood follows the conversation: `listening` while you type or she waits for an answer,
 `thinking` until her reply starts, `talking` while it streams, then `happy`, or `error` if it
@@ -38,11 +46,21 @@ She uses the same core as `lucy`: this machine's (started if needed) or, after
 While the input box is open she takes the keyboard, so typing goes to her until you send or
 press Esc.
 
+## Installing
+
+- **A release installer** (`.deb`, `.rpm`, `.AppImage`, `.dmg`, `.msi`) has both her and `lucy`.
+- **Nix:** `nix profile install github:AJMerr/lucy`, or `programs.lucy.sprite` in the
+  home-manager module (see the [main README](../../README.md)).
+- **From source**, below.
+
+To start her at login, set `[sprite] autostart = true` and run `lucy service install` (or, with
+home-manager, `programs.lucy.sprite.autostart = true`).
+
 ## Running it
 
-It's a [Tauri](https://tauri.app) app: a Rust side (`src-tauri/`) and a TypeScript page
-(`src/`). It has its own Cargo workspace, because it needs WebKitGTK and friends on Linux,
-which the rest of Lucy doesn't.
+It's a [Tauri](https://tauri.app) app: a Rust side (`src-tauri/`) and two TypeScript pages
+(`index.html` for her and `chat.html` for her chat window, code in `src/`). It has its own Cargo
+workspace, because it needs WebKitGTK and friends on Linux, which the rest of Lucy doesn't.
 
 ```sh
 nix develop                    # from the repo root; or install Tauri's prerequisites yourself
@@ -55,12 +73,18 @@ cp target/release/lucy-sprite ~/.cargo/bin/   # next to `lucy`, or anywhere on P
 
 lucy sprite                    # start her
 lucy sprite ask                # open her input box (bind this to a key)
+lucy sprite chat               # open her chat window
 lucy sprite toggle             # hide or show her
 lucy sprite quit               # send her off
 ```
 
 `cargo tauri dev` (also in the dev shell) runs her with the page served live from Vite.
 Starting `lucy-sprite` again while one is running just hands its command to the running one.
+
+To build the installers locally, put a `lucy` build at `src-tauri/binaries/lucy-<target
+triple>` (e.g. `lucy-x86_64-unknown-linux-gnu`) and run
+`npm run tauri -- build --config src-tauri/tauri.bundle.conf.json --bundles deb`. The release
+workflow does this for every platform.
 
 ## Where she appears
 
@@ -88,6 +112,6 @@ placeholder.
 ## Tests
 
 ```sh
-npm test                       # animation timing, what she shows, bubble text (Node's test runner)
+npm test                       # animation, what she shows, bubble text, the chat window's transcript
 cargo test -p lucy-packs       # from the repo root: pack loading and checks
 ```

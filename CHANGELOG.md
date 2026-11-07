@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-### Desktop sprite (preview)
+### Desktop sprite
 
 - **Lucy on your desktop.** `lucy sprite` starts her: a small transparent figure in the
   bottom-right corner, above your windows, animating from her sprite pack.
-  `lucy sprite quit` sends her off. Build her from `apps/sprite` (see its README).
+  `lucy sprite quit` sends her off.
 - **No window rules needed** on Wayland compositors with layer shell (Hyprland, Sway, KDE and
   others); elsewhere she's an always-on-top window.
 - **Sprite packs:** `[sprite] pack` and `scale` now work. Packs live in
@@ -24,6 +24,23 @@
   `Ctrl+Shift+Space`) works by itself.
 - Only her visible parts take clicks on layer-shell compositors; the space around her passes
   clicks through.
+- **Her chat window.** "more…" on a long reply, or `lucy sprite chat`, opens her whole chat in
+  an ordinary window: streaming replies, the tools she ran, approvals, an input box and Stop.
+  While it's open, replies go there instead of the bubble.
+- **At login:** `[sprite] autostart = true` makes `lucy service install` start her at login
+  too (an XDG autostart entry, a launch agent, or a `Run` value); `uninstall` takes her off.
+
+### Installing
+
+- **Installers:** publishing a release attaches `.deb`, `.rpm`, `.AppImage`, `.dmg` (Apple
+  silicon) and `.msi` builds of the sprite, each with `lucy` inside. They're unsigned for now.
+- **Nix flake:** `.#lucy`, `.#lucy-sprite` (Linux) and `.#default`, plus an overlay.
+- **home-manager module:** `programs.lucy` installs Lucy and her sprite, can write
+  `config.toml` (`settings`), and runs the core (`service.enable`) and the sprite
+  (`sprite.autostart`, with your graphical session) as systemd user services. `lucy service
+  status|restart` and `lucy core stop` treat its core unit as theirs.
+- When home-manager owns `config.toml`, `lucy config init` and `lucy mcp add|remove` say so
+  instead of failing on a read-only file.
 
 ## v0.3.0: remote access (2026-11-07)
 

@@ -6,6 +6,8 @@ node_modules/
 dist/
 apps/sprite/src-tauri/target/
 apps/sprite/src-tauri/gen/
+# The `lucy` sidecar the release workflow puts in the bundles.
+apps/sprite/src-tauri/binaries/
 
 # Nix
 /result
