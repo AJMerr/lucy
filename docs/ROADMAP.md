@@ -45,7 +45,7 @@ Tauri app in `apps/sprite` (ADR 0005), in three slices:
 1. ✅ **2a — On screen.** Overlay placement (Wayland layer shell, always-on-top window
    elsewhere), pack loading (`crates/lucy-packs`), frames renderer and animation, `lucy sprite`
    / `lucy sprite quit`.
-2. **2b — Talking.** Her own ongoing chat with the core, input box, reply bubbles, approval
+2. ✅ **2b — Talking.** Her own ongoing chat with the core, input box, reply bubbles, approval
    buttons, `lucy sprite toggle|ask`, hotkeys (compositor binds, plus Tauri's shortcut plugin
    where it works).
 3. **2c — Around her.** Full chat window for long replies, autostart with the login service,

@@ -272,7 +272,7 @@ fn spawn() -> std::io::Result<()> {
 pub(crate) fn spawn_core(service: bool) -> std::io::Result<()> {
     let log =
         log_path().ok_or_else(|| std::io::Error::other("no data directory; set LUCY_DATA_DIR"))?;
-    let mut command = Command::new(std::env::current_exe()?);
+    let mut command = Command::new(lucy_exe()?);
     command.args(["core", "run"]);
     if service {
         command.arg("--service");
@@ -351,4 +351,24 @@ fn stop_inheriting_std_handles() {
             unsafe { SetHandleInformation(handle as _, HANDLE_FLAG_INHERIT, 0) };
         }
     }
+}
+
+/// The `lucy` program: this one, or (when another front end such as the sprite starts the
+/// core) the `lucy` next to it, else the one on `PATH`.
+fn lucy_exe() -> std::io::Result<PathBuf> {
+    let me = std::env::current_exe()?;
+    let name = if cfg!(windows) { "lucy.exe" } else { "lucy" };
+    if me.file_name().is_some_and(|file| file == name) {
+        return Ok(me);
+    }
+    let beside = me.parent().map(|dir| dir.join(name));
+    let on_path = std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+        .map(|dir| dir.join(name));
+    beside
+        .into_iter()
+        .chain(on_path)
+        .find(|path| path.is_file())
+        .ok_or_else(|| std::io::Error::other("can't find the `lucy` program to start the core"))
 }

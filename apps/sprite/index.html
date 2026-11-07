@@ -4,12 +4,153 @@
     <meta charset="utf-8" />
     <title>Lucy</title>
     <style>
+      :root {
+        --panel: rgba(18, 16, 30, 0.94);
+        --text: #ecebf5;
+        --muted: #a6a3bd;
+        --accent: #5ee8f2;
+        --hot: #ff4fa3;
+        --line: rgba(94, 232, 242, 0.35);
+        font: 14px/1.4 system-ui, sans-serif;
+      }
       html,
       body {
         margin: 0;
+        height: 100%;
         overflow: hidden;
         background: transparent;
-        user-select: none;
+        color: var(--text);
+      }
+      /* Everything hangs from the bottom-right corner, where she stands. */
+      #stage {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      #bubble {
+        position: relative;
+        box-sizing: border-box;
+        width: 300px;
+        padding: 10px 12px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+      }
+      #bubble::after {
+        content: "";
+        position: absolute;
+        right: 40px;
+        bottom: -7px;
+        width: 12px;
+        height: 12px;
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        transform: rotate(45deg);
+      }
+      #bubble.expanded #text {
+        max-height: 50vh;
+        overflow-y: auto;
+      }
+      #text p,
+      #text ul,
+      #text ol {
+        margin: 0 0 6px;
+      }
+      #text ul,
+      #text ol {
+        padding-left: 18px;
+      }
+      #text code,
+      #text pre {
+        font: 12px/1.35 ui-monospace, monospace;
+        background: rgba(255, 255, 255, 0.07);
+        border-radius: 4px;
+      }
+      #text code {
+        padding: 0 3px;
+      }
+      #text pre {
+        margin: 0 0 6px;
+        padding: 6px 8px;
+        overflow-x: auto;
+      }
+      #text pre code {
+        padding: 0;
+        background: none;
+      }
+      #error {
+        color: var(--hot);
+      }
+      #approval .summary code {
+        font: 12px ui-monospace, monospace;
+      }
+      #approval .reason {
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+      #approval pre {
+        max-height: 160px;
+        overflow: auto;
+        font: 11px/1.3 ui-monospace, monospace;
+        background: rgba(255, 255, 255, 0.06);
+        padding: 6px;
+        border-radius: 4px;
+        white-space: pre;
+      }
+      .buttons {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      button {
+        font: inherit;
+        font-size: 12px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 3px 9px;
+        cursor: pointer;
+      }
+      button.primary {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      button.link {
+        border: none;
+        background: none;
+        padding: 0;
+        color: var(--accent);
+      }
+      #close {
+        position: absolute;
+        top: 2px;
+        right: 6px;
+        border: none;
+        background: none;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      #ask input {
+        box-sizing: border-box;
+        width: 280px;
+        font: inherit;
+        color: var(--text);
+        background: var(--panel);
+        border: 1px solid var(--accent);
+        border-radius: 10px;
+        padding: 8px 10px;
+        outline: none;
       }
       canvas {
         display: block;
@@ -18,7 +159,29 @@
     </style>
   </head>
   <body>
-    <canvas id="sprite"></canvas>
+    <div id="stage">
+      <div id="bubble" hidden>
+        <button id="close" title="Dismiss" hidden>×</button>
+        <div id="text"></div>
+        <div id="error" hidden></div>
+        <button id="more" class="link" hidden>more…</button>
+        <div id="approval" hidden>
+          <div class="summary"></div>
+          <div class="reason"></div>
+          <pre hidden></pre>
+          <div class="buttons">
+            <button class="primary" data-decision="once">Allow</button>
+            <button data-decision="always">Always</button>
+            <button data-decision="deny">Deny</button>
+            <button id="show" class="link" hidden>show changes</button>
+          </div>
+        </div>
+      </div>
+      <form id="ask" hidden>
+        <input autocomplete="off" placeholder="Ask Lucy…" />
+      </form>
+      <canvas id="sprite"></canvas>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

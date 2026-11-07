@@ -1,11 +1,42 @@
 # Lucy's desktop sprite
 
-A small transparent window that sits above your other windows in the bottom-right corner
-and draws Lucy from a sprite pack. See [ADR 0005](../../docs/adr/0005-sprite-tauri-and-packs.md).
+A small transparent window that sits above your other windows in the bottom-right corner,
+draws Lucy from a sprite pack, and talks with you in speech bubbles. See
+[ADR 0005](../../docs/adr/0005-sprite-tauri-and-packs.md).
 
-> **Status:** milestone 2, slice 2a. She shows up and animates. Click her and she's happy.
-> Talking to her (input box, reply bubbles, approvals), hotkeys, the chat window, autostart
-> and packages come in the next slices.
+> **Status:** milestone 2, slices 2a and 2b. She shows up, animates, and talks. The full chat
+> window, autostart and packages come in 2c.
+
+## Talking to her
+
+Click her (or press your hotkey) and type in the box above her; Enter sends, Esc closes.
+Her reply streams into a speech bubble (bold, italics, code and lists render) and fades after
+`[sprite] bubble_timeout_secs`. Past about 8 lines it stops with "more…", which expands it;
+× dismisses it. If she needs your go-ahead for a tool (a command, a file change, going online)
+the bubble asks, with **Allow**, **Always** (for the rest of the chat) and **Deny**, and
+"show changes" for edits.
+
+Her mood follows the conversation: `listening` while you type or she waits for an answer,
+`thinking` until her reply starts, `talking` while it streams, then `happy`, or `error` if it
+failed. She keeps one chat of her own, titled "Sprite" in `/sessions`, which carries on after
+restarts; `lucy -r <id>` continues it in a terminal, and those replies show in her bubble too.
+She uses the same core as `lucy`: this machine's (started if needed) or, after
+`lucy remote connect`, the remote one.
+
+## Hotkey
+
+`lucy sprite ask` opens her input box (starting her first if she isn't running), and
+`lucy sprite toggle` hides or shows her. Bind them to keys:
+
+- **Wayland** (apps can't grab global keys there), in your compositor's config:
+  - Hyprland: `bind = CTRL SHIFT, SPACE, exec, lucy sprite ask`
+  - Sway: `bindsym Ctrl+Shift+space exec lucy sprite ask`
+  - KDE / GNOME: a custom shortcut in System Settings running `lucy sprite ask`
+- **X11, macOS, Windows:** `[sprite] hotkey` (default `Ctrl+Shift+Space`) works by itself;
+  set it to `""` to turn it off.
+
+While the input box is open she takes the keyboard, so typing goes to her until you send or
+press Esc.
 
 ## Running it
 
@@ -23,6 +54,8 @@ cargo build --release --features tauri/custom-protocol
 cp target/release/lucy-sprite ~/.cargo/bin/   # next to `lucy`, or anywhere on PATH
 
 lucy sprite                    # start her
+lucy sprite ask                # open her input box (bind this to a key)
+lucy sprite toggle             # hide or show her
 lucy sprite quit               # send her off
 ```
 
@@ -38,7 +71,9 @@ Starting `lucy-sprite` again while one is running just hands its command to the 
   ordinary floating window there.
 
 On Linux she sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` (unless you've set it), because
-WebKitGTK's DMA-BUF renderer draws nothing on some GPUs, NVIDIA's included.
+WebKitGTK's DMA-BUF renderer crashes or draws nothing on some GPUs under Wayland, NVIDIA's
+included. If your compositor has layer shell but she misbehaves on it, set
+`LUCY_SPRITE_NO_LAYER_SHELL=1` to get an ordinary window instead.
 
 ## Her look
 
@@ -53,6 +88,6 @@ placeholder.
 ## Tests
 
 ```sh
-npm test                       # the animation timing (Node's built-in test runner)
+npm test                       # animation timing, what she shows, bubble text (Node's test runner)
 cargo test -p lucy-packs       # from the repo root: pack loading and checks
 ```

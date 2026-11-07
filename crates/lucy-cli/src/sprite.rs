@@ -15,21 +15,27 @@ pub fn run(command: Option<&str>) -> Result<()> {
         "the sprite (lucy-sprite) isn't installed; see apps/sprite/README.md for how to build it",
     )?;
     match command {
-        None => {
-            let log = core_process::log_path()
-                .and_then(|core_log| core_log.parent().map(|dir| dir.join("sprite.log")))
-                .context("no data directory; set LUCY_DATA_DIR")?;
-            core_process::spawn_detached(Command::new(&exe), &log)
-                .with_context(|| format!("couldn't start {}", exe.display()))?;
-            println!("Lucy's sprite is on her way. `lucy sprite quit` sends her off.");
-        }
-        Some(command) => {
+        // Quitting never starts her, so wait for it to finish.
+        Some("quit") => {
             let status = Command::new(&exe)
-                .arg(command)
+                .arg("quit")
                 .status()
                 .with_context(|| format!("couldn't run {}", exe.display()))?;
             if !status.success() {
-                bail!("`lucy-sprite {command}` failed ({status})");
+                bail!("`lucy-sprite quit` failed ({status})");
+            }
+        }
+        // Anything else may start her (if she isn't running), so it mustn't wait for her.
+        _ => {
+            let log = core_process::log_path()
+                .and_then(|core_log| core_log.parent().map(|dir| dir.join("sprite.log")))
+                .context("no data directory; set LUCY_DATA_DIR")?;
+            let mut sprite = Command::new(&exe);
+            sprite.args(command);
+            core_process::spawn_detached(sprite, &log)
+                .with_context(|| format!("couldn't start {}", exe.display()))?;
+            if command.is_none() {
+                println!("Lucy's sprite is on her way. `lucy sprite quit` sends her off.");
             }
         }
     }

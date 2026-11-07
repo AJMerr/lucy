@@ -89,7 +89,7 @@ Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a lite
 
 Other commands: `lucy config path`, `lucy auth set|remove|status`,
 `lucy mcp add|list|remove|login|logout`, `lucy service install|uninstall|status|restart`,
-`lucy core stop`, `lucy remote connect|disconnect|token`, `lucy sprite [quit]`.
+`lucy core stop`, `lucy remote connect|disconnect|token`, `lucy sprite [ask|toggle|quit]`.
 
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
@@ -297,8 +297,9 @@ macOS and Windows.
 
 `lucy sprite` puts Lucy on your desktop: a small animated figure in the bottom-right corner,
 above your windows (on Wayland compositors with layer shell, like Hyprland, Sway or KDE, no
-window rules needed). `lucy sprite quit` sends her off. She doesn't talk yet; that's next. Build
-her from [`apps/sprite`](apps/sprite/README.md).
+window rules needed). Click her, or bind `lucy sprite ask` to a key, and type: she answers in
+speech bubbles, and asks there before running tools. `lucy sprite toggle` hides her and
+`lucy sprite quit` sends her off. Build her from [`apps/sprite`](apps/sprite/README.md).
 
 No character art is committed. Lucy loads sprite packs from your data directory
 (`~/.local/share/lucy/packs/` on Linux). Copy `packs/placeholder`, swap the frames, and point

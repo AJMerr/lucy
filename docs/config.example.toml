@@ -101,12 +101,15 @@ bind = "127.0.0.1:7077"         # e.g. "100.64.0.7:7077" for your Tailscale addr
                                 # on networks you trust (Tailscale) or behind a TLS proxy
 # max_level = 1                 # highest agent level for chats from other machines (0-3)
 
-# --- Sprite (milestone 2) -----------------------------------------------------------------
+# --- Sprite (`lucy sprite`) ---------------------------------------------------------------
 
 [sprite]
 pack = "placeholder"            # looked up in <data dir>/lucy/packs/, then bundled packs
 scale = 1.0
-bubble_timeout_secs = 12
+bubble_timeout_secs = 12        # how long a finished reply stays up
+hotkey = "Ctrl+Shift+Space"     # opens her input box (X11, macOS, Windows); "" turns it off.
+                                # On Wayland, bind `lucy sprite ask` in your compositor instead,
+                                # e.g. Hyprland: bind = CTRL SHIFT, SPACE, exec, lucy sprite ask
 
 # --- You ----------------------------------------------------------------------------------
 

@@ -174,6 +174,10 @@ enum McpAction {
 
 #[derive(Subcommand)]
 enum SpriteAction {
+    /// Open (or close) her input box, starting her if needed. Bind this to a key.
+    Ask,
+    /// Hide her, or show her again.
+    Toggle,
     /// Close the sprite.
     Quit,
 }
@@ -325,6 +329,8 @@ fn main() -> Result<()> {
         Some(Command::Mcp { action }) => mcp_command(action),
         Some(Command::Sprite { action }) => sprite::run(match action {
             None => None,
+            Some(SpriteAction::Ask) => Some("ask"),
+            Some(SpriteAction::Toggle) => Some("toggle"),
             Some(SpriteAction::Quit) => Some("quit"),
         }),
         Some(Command::Remote { action }) => match action {

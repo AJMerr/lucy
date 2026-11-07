@@ -1,13 +1,15 @@
 //! Lucy's desktop sprite (ADR 0005): a small transparent window, always on top, that draws
-//! the configured sprite pack. `lucy sprite` starts it; `lucy sprite quit` stops it.
+//! the configured sprite pack and talks with Lucy's core. `lucy sprite` starts it, and
+//! `lucy sprite toggle|ask|quit` drive it.
 
 // No console window on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod chat;
 mod pack;
 mod placement;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 fn main() {
     #[cfg(target_os = "linux")]
@@ -20,13 +22,29 @@ fn main() {
 
     let first_command = std::env::args().nth(1);
     let loaded = pack::load_configured();
+    let hotkey = loaded.hotkey.clone();
 
     tauri::Builder::default()
         // A second `lucy-sprite` hands its command to the running one and exits.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             command(app, args.get(1).map(String::as_str));
         }))
-        .invoke_handler(tauri::generate_handler![pack::pack])
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        command(app, Some("ask"));
+                    }
+                })
+                .build(),
+        )
+        .manage(chat::Chat::default())
+        .invoke_handler(tauri::generate_handler![
+            pack::pack,
+            chat::send,
+            chat::approve,
+            placement::set_layout,
+        ])
         .setup(move |app| {
             if first_command.as_deref() == Some("quit") {
                 // Nothing was running to quit.
@@ -39,18 +57,47 @@ fn main() {
                 .get_webview_window("sprite")
                 .expect("tauri.conf.json defines the sprite window");
             placement::place(&window, size)?;
+            register_hotkey(app.handle(), &hotkey);
+            chat::connect_in_background(app.handle().clone());
+            if first_command.as_deref() == Some("ask") {
+                // `lucy sprite ask` started her: open the box once the page is listening.
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    command(&handle, Some("ask"));
+                });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("couldn't start the sprite");
 }
 
-/// A command from `lucy sprite <command>`, forwarded from a second launch.
+/// A command from `lucy sprite <command>` (forwarded from a second launch) or the hotkey.
 fn command(app: &AppHandle, command: Option<&str>) {
     match command {
         Some("quit") => app.exit(0),
-        // `lucy sprite` again: she's already here.
-        None => {}
+        Some("toggle") => placement::toggle(app),
+        Some("ask") => {
+            placement::show(app);
+            let _ = app.emit("sprite-command", "ask");
+        }
+        // `lucy sprite` again: make sure she's visible.
+        None => placement::show(app),
         Some(other) => eprintln!("lucy-sprite: unknown command `{other}`"),
+    }
+}
+
+/// Register `[sprite] hotkey` where apps can have global shortcuts. Wayland doesn't allow
+/// it; bind `lucy sprite ask` in the compositor there.
+fn register_hotkey(app: &AppHandle, hotkey: &str) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    let wayland = cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some();
+    if hotkey.is_empty() || wayland {
+        return;
+    }
+    if let Err(err) = app.global_shortcut().register(hotkey) {
+        eprintln!("lucy-sprite: couldn't use `{hotkey}` as her hotkey: {err}");
     }
 }

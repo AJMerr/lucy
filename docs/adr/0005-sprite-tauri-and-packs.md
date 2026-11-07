@@ -48,3 +48,28 @@ Electron can but costs ~150 MB+ RAM for an always-on sprite.
   runs it, and a second launch forwards its command to the running one.
 - The app is its own Cargo workspace, so the main workspace builds and tests without
   WebKitGTK.
+
+## Implementation notes (slice 2b, talking)
+
+- **Her chat:** one ongoing session titled "Sprite", its ID kept in `<data dir>/sprite-session`
+  and recreated if it's gone. The sprite connects through `lucy-cli`'s connection logic, so it
+  uses the same core `lucy` would (local, started on demand, or remote) and subscribes to all
+  events, keeping only her chat's. Messages go with no working folder, so tools use the core's
+  default.
+- **What she shows** is a pure reducer (`src/view.ts`) from core events and user actions to
+  animation, bubble, input box and approval; timers enter as ticks. Bubble text is a light,
+  always-escaped Markdown subset capped at ~8 lines (`src/bubble.ts`). Approval summaries are
+  built from text nodes, never HTML.
+- **Layout:** everything hangs from the bottom-right corner. On a layer surface the window has
+  a fixed size with room for the bubble (WebKit doesn't repaint a layer surface that grows),
+  and an input region limits clicks to her figure, the bubble and the input box; the keyboard
+  is taken (`Exclusive`) only while the input box is open. Elsewhere the window resizes to its
+  content. Regions are sent as offsets from the bottom-right, so they hold at either size.
+- **Repaint workaround:** without the DMA-BUF renderer, WebKitGTK repaints only damaged areas
+  into alternating buffers, so with an animated canvas the rest of the page vanished on every
+  other frame. The canvas now draws only when the frame changes, and each draw (and each UI
+  update) nudges the root background imperceptibly so the whole page is repainted.
+- **Commands and hotkey:** `lucy sprite ask|toggle|quit` reach the running sprite through the
+  single-instance plugin (`ask` and `toggle` start her if needed). `[sprite] hotkey` registers
+  a global shortcut where apps may (not on Wayland, where the compositor binds `lucy sprite
+  ask`). `LUCY_SPRITE_NO_LAYER_SHELL=1` forces an ordinary window.

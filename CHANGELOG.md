@@ -5,14 +5,25 @@
 ### Desktop sprite (preview)
 
 - **Lucy on your desktop.** `lucy sprite` starts her: a small transparent figure in the
-  bottom-right corner, above your windows, animating from her sprite pack. Click her and she's
-  happy. `lucy sprite quit` sends her off. Build her from `apps/sprite` (see its README); she
-  doesn't talk yet.
+  bottom-right corner, above your windows, animating from her sprite pack.
+  `lucy sprite quit` sends her off. Build her from `apps/sprite` (see its README).
 - **No window rules needed** on Wayland compositors with layer shell (Hyprland, Sway, KDE and
   others); elsewhere she's an always-on-top window.
 - **Sprite packs:** `[sprite] pack` and `scale` now work. Packs live in
   `~/.local/share/lucy/packs/`, with `placeholder` built in. A broken pack is explained in
   `sprite.log` and replaced by the placeholder.
+- **She talks.** Click her (or press your hotkey) and type; her reply streams into a speech
+  bubble with light Markdown, capped at about 8 lines with "more…", fading after
+  `bubble_timeout_secs`. She listens, thinks, talks, cheers or frowns as the reply goes.
+- **Approvals in the bubble:** when a tool needs your go-ahead she asks, with Allow, Always
+  and Deny (and the diff for edits).
+- **Her own chat** ("Sprite" in `/sessions`) carries on across restarts, with whichever core
+  `lucy` uses (local or remote).
+- **`lucy sprite ask`** opens her input box and **`lucy sprite toggle`** hides or shows her;
+  bind them in your compositor on Wayland. Elsewhere `[sprite] hotkey` (default
+  `Ctrl+Shift+Space`) works by itself.
+- Only her visible parts take clicks on layer-shell compositors; the space around her passes
+  clicks through.
 
 ## v0.3.0: remote access (2026-11-07)
 

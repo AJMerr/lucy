@@ -12,6 +12,9 @@ use serde::Serialize;
 pub struct Loaded {
     pack: Pack,
     scale: f64,
+    bubble_timeout_secs: u32,
+    /// `[sprite] hotkey`; empty for none.
+    pub hotkey: String,
 }
 
 impl Loaded {
@@ -38,7 +41,12 @@ pub fn load_configured() -> Loaded {
         })
         .map(|config| config.sprite)
         .unwrap_or_default();
-    let SpriteSettings { pack, scale, .. } = settings;
+    let SpriteSettings {
+        pack,
+        scale,
+        bubble_timeout_secs,
+        hotkey,
+    } = settings;
     let pack = lucy_packs::load(&pack, packs_dir().as_deref()).unwrap_or_else(|err| {
         eprintln!("lucy-sprite: {err}; showing the placeholder instead");
         lucy_packs::load("placeholder", None).expect("the placeholder pack is built in")
@@ -50,6 +58,8 @@ pub fn load_configured() -> Loaded {
         } else {
             1.0
         },
+        bubble_timeout_secs,
+        hotkey,
     }
 }
 
@@ -66,6 +76,8 @@ pub struct PackView {
     scale: f64,
     anchor: &'static str,
     states: BTreeMap<String, StateView>,
+    /// How long a finished reply stays up.
+    bubble_timeout_secs: u32,
 }
 
 #[derive(Serialize)]
@@ -109,6 +121,7 @@ pub fn pack(loaded: tauri::State<'_, Loaded>) -> PackView {
         width: pack.size.0,
         height: pack.size.1,
         scale: loaded.scale,
+        bubble_timeout_secs: loaded.bubble_timeout_secs,
         anchor: match pack.anchor {
             Anchor::BottomCenter => "bottom-center",
             Anchor::BottomLeft => "bottom-left",

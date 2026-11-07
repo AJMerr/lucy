@@ -200,6 +200,9 @@ pub struct SpriteSettings {
     pub pack: String,
     pub scale: f64,
     pub bubble_timeout_secs: u32,
+    /// Opens her input box where apps may register shortcuts (X11, macOS, Windows); empty
+    /// turns it off. On Wayland, bind `lucy sprite ask` in the compositor instead.
+    pub hotkey: String,
 }
 
 impl Default for SpriteSettings {
@@ -208,6 +211,7 @@ impl Default for SpriteSettings {
             pack: "placeholder".into(),
             scale: 1.0,
             bubble_timeout_secs: 12,
+            hotkey: "Ctrl+Shift+Space".into(),
         }
     }
 }
