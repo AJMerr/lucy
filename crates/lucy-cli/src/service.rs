@@ -111,7 +111,8 @@ fn systemd_quoted(text: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-/// Undo [`systemd_quoted`] (for values written without `$` doubling).
+/// Undo [`systemd_quoted`] (for values written without `$` doubling), resolving `%t` (the
+/// runtime dir) as systemd does.
 fn systemd_unquoted(word: &str) -> Option<String> {
     let inner = word.strip_prefix('"')?.strip_suffix('"')?;
     let mut text = String::new();
@@ -119,10 +120,10 @@ fn systemd_unquoted(word: &str) -> Option<String> {
     while let Some(c) = chars.next() {
         match c {
             '\\' => text.push(chars.next()?),
-            '%' => {
-                chars.next();
-                text.push('%');
-            }
+            '%' => match chars.next()? {
+                't' => text += &std::env::var("XDG_RUNTIME_DIR").ok()?,
+                c => text.push(c),
+            },
             c => text.push(c),
         }
     }

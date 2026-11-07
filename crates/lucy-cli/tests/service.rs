@@ -545,3 +545,27 @@ fn run_key_sprite_autostart_uses_its_own_value() {
         ]
     );
 }
+
+#[test]
+fn a_unit_that_pins_the_socket_under_the_runtime_dir_is_understood() {
+    // How the home-manager module writes it, since it can't know the runtime dir.
+    let dir = tempfile::tempdir().unwrap();
+    let runner = FakeRunner::default();
+    let manager = systemd(dir.path(), &runner);
+    std::fs::create_dir_all(dir.path().join("systemd/user")).unwrap();
+    std::fs::write(
+        unit_path(dir.path()),
+        "[Service]\nExecStart=/nix/store/x-lucy/bin/lucy core run --service\n\
+         Environment=\"LUCY_SOCKET=%t/lucy/core.sock\"\n",
+    )
+    .unwrap();
+
+    let installed = manager.installed().unwrap().expect("installed");
+    match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(runtime) => assert_eq!(
+            installed.socket,
+            Some(PathBuf::from(runtime).join("lucy/core.sock"))
+        ),
+        None => assert_eq!(installed.socket, None, "nowhere to resolve %t"),
+    }
+}

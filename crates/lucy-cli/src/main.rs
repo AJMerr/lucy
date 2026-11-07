@@ -301,6 +301,7 @@ fn main() -> Result<()> {
         Some(Command::Config { action }) => match action {
             ConfigAction::Init => {
                 let path = config_path()?;
+                config::check_writable(&path)?;
                 if path.exists()
                     && !Confirm::new()
                         .with_prompt(format!("{} already exists. Overwrite?", path.display()))
