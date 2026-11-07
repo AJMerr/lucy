@@ -1,5 +1,7 @@
 //! `lucy service`: run the core at login under the OS's service manager: a systemd user unit
-//! on Linux, a launchd agent on macOS, and a `Run` registry value on Windows.
+//! on Linux, a launchd agent on macOS, and a `Run` registry value on Windows. With
+//! `[sprite] autostart`, the sprite starts at login too: an XDG autostart entry on Linux, a
+//! launchd agent on macOS, and another `Run` value on Windows.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,6 +18,10 @@ pub const LAUNCHD_LABEL: &str = "io.github.ajmerr.lucy.core";
 /// Where Windows keeps programs to start at login, and the value Lucy adds there.
 pub const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 pub const RUN_VALUE: &str = "Lucy";
+/// The sprite's XDG autostart entry, launchd label and `Run` value.
+pub const SPRITE_DESKTOP_FILE: &str = "lucy-sprite.desktop";
+pub const SPRITE_LAUNCHD_LABEL: &str = "io.github.ajmerr.lucy.sprite";
+pub const SPRITE_RUN_VALUE: &str = "LucySprite";
 
 /// What the service runs, and with which environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,18 +131,51 @@ fn systemd_unquoted(word: &str) -> Option<String> {
 
 /// A launchd agent that runs the core at login and restarts it if it crashes.
 pub fn launchd_plist(spec: &ServiceSpec) -> String {
+    agent_plist(
+        "Lucy's background core, written by `lucy service install`. \
+         Remove it with `lucy service uninstall`.",
+        LAUNCHD_LABEL,
+        &["core", "run", "--service"],
+        spec,
+        "  <key>KeepAlive</key>\n  <dict>\n    <key>SuccessfulExit</key>\n    <false/>\n  </dict>\n\
+         \x20 <key>ProcessType</key>\n  <string>Background</string>\n",
+    )
+}
+
+/// A launchd agent that starts the sprite at login (and leaves her gone if you quit her).
+pub fn sprite_launchd_plist(spec: &ServiceSpec) -> String {
+    agent_plist(
+        "Lucy's desktop sprite, written by `lucy service install` because [sprite] autostart \
+         is on. Remove it with `lucy service uninstall`.",
+        SPRITE_LAUNCHD_LABEL,
+        &[],
+        spec,
+        "  <key>LimitLoadToSessionType</key>\n  <string>Aqua</string>\n\
+         \x20 <key>ProcessType</key>\n  <string>Interactive</string>\n",
+    )
+}
+
+/// A launchd agent running `spec.exe` with `args` at load, logging to `spec.log`; `extra` is
+/// more of the top-level dict.
+fn agent_plist(
+    comment: &str,
+    label: &str,
+    args: &[&str],
+    spec: &ServiceSpec,
+    extra: &str,
+) -> String {
     let string = |text: &str| format!("<string>{}</string>", xml_escaped(text));
-    let mut plist = String::from(
+    let mut plist = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \
          \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-         <!-- Lucy's background core, written by `lucy service install`. \
-         Remove it with `lucy service uninstall`. -->\n\
-         <plist version=\"1.0\">\n<dict>\n",
+         <!-- {comment} -->\n\
+         <plist version=\"1.0\">\n<dict>\n"
     );
-    plist += &format!("  <key>Label</key>\n  {}\n", string(LAUNCHD_LABEL));
+    plist += &format!("  <key>Label</key>\n  {}\n", string(label));
     plist += "  <key>ProgramArguments</key>\n  <array>\n";
-    for arg in [&spec.exe.display().to_string(), "core", "run", "--service"] {
+    let exe = spec.exe.display().to_string();
+    for arg in std::iter::once(exe.as_str()).chain(args.iter().copied()) {
         plist += &format!("    {}\n", string(arg));
     }
     plist += "  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n";
@@ -151,8 +190,7 @@ pub fn launchd_plist(spec: &ServiceSpec) -> String {
     plist += &format!(
         "  </dict>\n\
          \x20 <key>RunAtLoad</key>\n  <true/>\n\
-         \x20 <key>KeepAlive</key>\n  <dict>\n    <key>SuccessfulExit</key>\n    <false/>\n  </dict>\n\
-         \x20 <key>ProcessType</key>\n  <string>Background</string>\n\
+         {extra}\
          \x20 <key>StandardOutPath</key>\n  {log}\n\
          \x20 <key>StandardErrorPath</key>\n  {log}\n\
          </dict>\n</plist>\n"
@@ -179,6 +217,42 @@ fn xml_unescaped(text: &str) -> String {
 /// The command line Windows runs at login.
 pub fn run_key_command(exe: &Path) -> String {
     format!("\"{}\" core run --service", exe.display())
+}
+
+/// An XDG autostart entry that starts the sprite when your desktop session does (GNOME, KDE,
+/// and systemd-based sessions such as uwsm's run these).
+pub fn desktop_entry(spec: &ServiceSpec) -> String {
+    let mut exec = String::from("env");
+    for (name, value) in &spec.env {
+        exec += &format!(" {}", exec_quoted(&format!("{name}={value}")));
+    }
+    exec += &format!(" {}", exec_quoted(&spec.exe.display().to_string()));
+    // The Exec value is itself a string value: backslashes doubled, and `%` is a field code.
+    let exec = exec.replace('\\', r"\\").replace('%', "%%");
+    format!(
+        "# Lucy's desktop sprite, written by `lucy service install` because [sprite] autostart\n\
+         # is on. Remove it with `lucy service uninstall`.\n\
+         [Desktop Entry]\n\
+         Type=Application\n\
+         Name=Lucy Sprite\n\
+         Comment=Lucy, your AI assistant, on the desktop\n\
+         Exec={exec}\n\
+         NoDisplay=true\n\
+         X-GNOME-Autostart-enabled=true\n"
+    )
+}
+
+/// A double-quoted Exec argument: `"`, `` ` ``, `$` and `\` escaped with a backslash.
+fn exec_quoted(text: &str) -> String {
+    let mut quoted = String::from("\"");
+    for c in text.chars() {
+        if matches!(c, '"' | '`' | '$' | '\\') {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    quoted.push('"');
+    quoted
 }
 
 /// The `LUCY_SOCKET` a service file pins, if any.
@@ -235,8 +309,15 @@ impl Runner for SystemRunner {
 /// The service manager in use, and where its files go.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Platform {
-    Systemd { unit_dir: PathBuf },
-    Launchd { agents_dir: PathBuf, uid: u32 },
+    /// systemd for the core; XDG autostart (`autostart_dir`) for the sprite.
+    Systemd {
+        unit_dir: PathBuf,
+        autostart_dir: PathBuf,
+    },
+    Launchd {
+        agents_dir: PathBuf,
+        uid: u32,
+    },
     RunKey,
 }
 
@@ -265,8 +346,10 @@ impl ServiceManager<SystemRunner> {
                 uid: current_uid(),
             }
         } else {
+            let config = dirs::config_dir()?;
             Platform::Systemd {
-                unit_dir: dirs::config_dir()?.join("systemd/user"),
+                unit_dir: config.join("systemd/user"),
+                autostart_dir: config.join("autostart"),
             }
         };
         Some(Self::new(platform, SystemRunner))
@@ -293,7 +376,7 @@ impl<R: Runner> ServiceManager<R> {
     /// it; see [`ServiceManager::start`].
     pub fn install(&self, spec: &ServiceSpec) -> Result<()> {
         match &self.platform {
-            Platform::Systemd { unit_dir } => {
+            Platform::Systemd { unit_dir, .. } => {
                 write(&unit_dir.join(UNIT_NAME), &systemd_unit(spec))?;
                 self.systemctl(&["daemon-reload"])?;
                 self.systemctl(&["enable", UNIT_NAME])?;
@@ -328,7 +411,7 @@ impl<R: Runner> ServiceManager<R> {
     /// A running service core is stopped abruptly, so stop it gracefully first.
     pub fn uninstall(&self) -> Result<bool> {
         match &self.platform {
-            Platform::Systemd { unit_dir } => {
+            Platform::Systemd { unit_dir, .. } => {
                 let unit = unit_dir.join(UNIT_NAME);
                 if !unit.exists() {
                     return Ok(false);
@@ -363,7 +446,7 @@ impl<R: Runner> ServiceManager<R> {
     /// The installed service, if any.
     pub fn installed(&self) -> Result<Option<Installed>> {
         let file = match &self.platform {
-            Platform::Systemd { unit_dir } => unit_dir.join(UNIT_NAME),
+            Platform::Systemd { unit_dir, .. } => unit_dir.join(UNIT_NAME),
             Platform::Launchd { agents_dir, .. } => self.plist_path(agents_dir),
             Platform::RunKey => {
                 let ran = self
@@ -401,6 +484,74 @@ impl<R: Runner> ServiceManager<R> {
             Platform::RunKey => return Ok(false),
         }
         Ok(true)
+    }
+
+    /// Start the sprite at login (replacing an earlier entry). Doesn't start her now.
+    pub fn install_sprite(&self, spec: &ServiceSpec) -> Result<()> {
+        match &self.platform {
+            Platform::Systemd { autostart_dir, .. } => {
+                write(
+                    &autostart_dir.join(SPRITE_DESKTOP_FILE),
+                    &desktop_entry(spec),
+                )?;
+            }
+            Platform::Launchd { agents_dir, .. } => {
+                write(
+                    &agents_dir.join(format!("{SPRITE_LAUNCHD_LABEL}.plist")),
+                    &sprite_launchd_plist(spec),
+                )?;
+            }
+            Platform::RunKey => {
+                let command = format!("\"{}\"", spec.exe.display());
+                self.run_ok(
+                    "reg",
+                    &[
+                        "add",
+                        RUN_KEY,
+                        "/v",
+                        SPRITE_RUN_VALUE,
+                        "/t",
+                        "REG_SZ",
+                        "/d",
+                        &command,
+                        "/f",
+                    ],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Stop starting the sprite at login. False if she wasn't set to.
+    pub fn uninstall_sprite(&self) -> Result<bool> {
+        let Some(location) = self.sprite_installed()? else {
+            return Ok(false);
+        };
+        match &self.platform {
+            Platform::RunKey => {
+                self.run_ok("reg", &["delete", RUN_KEY, "/v", SPRITE_RUN_VALUE, "/f"])?;
+            }
+            _ => remove(Path::new(&location))?,
+        }
+        Ok(true)
+    }
+
+    /// Where the sprite's login entry is, if she has one.
+    pub fn sprite_installed(&self) -> Result<Option<String>> {
+        let file = match &self.platform {
+            Platform::Systemd { autostart_dir, .. } => autostart_dir.join(SPRITE_DESKTOP_FILE),
+            Platform::Launchd { agents_dir, .. } => {
+                agents_dir.join(format!("{SPRITE_LAUNCHD_LABEL}.plist"))
+            }
+            Platform::RunKey => {
+                let ran = self
+                    .runner
+                    .run("reg", &["query", RUN_KEY, "/v", SPRITE_RUN_VALUE])
+                    .context("couldn't run `reg`")?;
+                return Ok(ran.ok.then(|| format!(r"{RUN_KEY}\{SPRITE_RUN_VALUE}")));
+            }
+        };
+        Ok(file.exists().then(|| file.display().to_string()))
     }
 
     fn plist_path(&self, agents_dir: &Path) -> PathBuf {
@@ -488,6 +639,44 @@ pub async fn install(force: bool) -> Result<()> {
     for note in install_notes(&spec) {
         println!("{note}");
     }
+    sprite_at_login(&manager, socket)?;
+    Ok(())
+}
+
+/// Add the sprite to the login items when `[sprite] autostart` is on, and take her off when
+/// it's off.
+fn sprite_at_login<R: Runner>(manager: &ServiceManager<R>, socket: Option<&Path>) -> Result<()> {
+    let autostart = lucy_core::config::default_path()
+        .map(|path| lucy_core::config::Config::load(&path))
+        .transpose()?
+        .flatten()
+        .is_some_and(|config| config.sprite.autostart);
+    if !autostart {
+        if manager.uninstall_sprite()? {
+            println!("Took the sprite off your login items ([sprite] autostart is off).");
+        }
+        return Ok(());
+    }
+    let Some(exe) = crate::sprite::find() else {
+        println!(
+            "[sprite] autostart is on, but the sprite (lucy-sprite) isn't installed; install \
+             it and run `lucy service install` again."
+        );
+        return Ok(());
+    };
+    let log = core_process::log_path()
+        .and_then(|core_log| core_log.parent().map(|dir| dir.join("sprite.log")))
+        .context("no data directory; set LUCY_DATA_DIR")?;
+    // Her session has its own PATH; she finds `lucy` next to her.
+    let env = socket.map_or_else(Vec::new, |socket| {
+        capture_env(std::env::vars(), socket)
+            .into_iter()
+            .filter(|(name, _)| name != "PATH")
+            .collect()
+    });
+    manager.install_sprite(&ServiceSpec { exe, log, env })?;
+    let location = manager.sprite_installed()?.unwrap_or_default();
+    println!("The sprite starts at login too ({location}); `lucy sprite` starts her now.");
     Ok(())
 }
 
@@ -542,6 +731,10 @@ pub async fn uninstall(force: bool) -> Result<()> {
     let manager = manager()?;
     let Some(installed) = manager.installed()? else {
         println!("Lucy's core isn't installed as a service.");
+        if let Some(location) = manager.sprite_installed()? {
+            manager.uninstall_sprite()?;
+            println!("Took the sprite off your login items ({location}).");
+        }
         return Ok(());
     };
     if let Ok(Some(status)) = core_process::status(&endpoint).await
@@ -554,6 +747,10 @@ pub async fn uninstall(force: bool) -> Result<()> {
         "Removed Lucy's login service ({}). The core starts on demand again.",
         installed.location
     );
+    if let Some(location) = manager.sprite_installed()? {
+        manager.uninstall_sprite()?;
+        println!("Took the sprite off your login items ({location}).");
+    }
     Ok(())
 }
 
@@ -580,9 +777,9 @@ pub async fn restart(force: bool) -> Result<()> {
 /// `lucy service status`.
 pub async fn show_status() -> Result<()> {
     let endpoint = Endpoint::default_for_user();
-    let installed = match ServiceManager::for_this_os() {
-        Some(manager) => manager.installed()?,
-        None => None,
+    let (installed, sprite) = match ServiceManager::for_this_os() {
+        Some(manager) => (manager.installed()?, manager.sprite_installed()?),
+        None => (None, None),
     };
     let service = match &installed {
         None => "not installed (`lucy service install` starts the core at login)".to_owned(),
@@ -596,6 +793,9 @@ pub async fn show_status() -> Result<()> {
         },
     };
     println!("Service:  {service}");
+    if let Some(location) = sprite {
+        println!("Sprite:   starts at login ({location})");
+    }
     match core_process::status(&endpoint).await {
         Err(_) => println!(
             "Core:     an older version is running; stop it with `pkill -f \"lucy core run\"`"

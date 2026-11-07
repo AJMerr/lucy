@@ -110,6 +110,7 @@ bubble_timeout_secs = 12        # how long a finished reply stays up
 hotkey = "Ctrl+Shift+Space"     # opens her input box (X11, macOS, Windows); "" turns it off.
                                 # On Wayland, bind `lucy sprite ask` in your compositor instead,
                                 # e.g. Hyprland: bind = CTRL SHIFT, SPACE, exec, lucy sprite ask
+autostart = false               # true: `lucy service install` also starts her at login
 
 # --- You ----------------------------------------------------------------------------------
 

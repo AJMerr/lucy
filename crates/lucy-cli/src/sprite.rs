@@ -43,7 +43,7 @@ pub fn run(command: Option<&str>) -> Result<()> {
 }
 
 /// `lucy-sprite` next to this `lucy`, else on `PATH`.
-fn find() -> Option<PathBuf> {
+pub(crate) fn find() -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "lucy-sprite.exe"
     } else {

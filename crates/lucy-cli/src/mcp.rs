@@ -232,6 +232,7 @@ fn implicit_table() -> Table {
 /// Write the edited config, refusing anything Lucy couldn't load.
 fn write_document(path: &Path, doc: &DocumentMut) -> Result<()> {
     let text = doc.to_string();
+    lucy_core::config::check_writable(path)?;
     Config::from_toml_str(&text).context("the edited config would be invalid")?;
     std::fs::write(path, text).with_context(|| format!("couldn't write {}", path.display()))
 }

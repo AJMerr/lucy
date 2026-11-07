@@ -441,6 +441,8 @@ fn no_config_message(path: &Path) -> String {
 }
 
 fn init_config(path: &Path) -> Result<()> {
+    // Before the questions, not after.
+    config::check_writable(path)?;
     println!("No config yet. Let's pick a model for Lucy.\n");
     let config = wizard::run(&mut TerminalPrompter)?;
     config.save(path)?;

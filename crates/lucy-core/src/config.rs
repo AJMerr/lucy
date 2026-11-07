@@ -203,6 +203,8 @@ pub struct SpriteSettings {
     /// Opens her input box where apps may register shortcuts (X11, macOS, Windows); empty
     /// turns it off. On Wayland, bind `lucy sprite ask` in the compositor instead.
     pub hotkey: String,
+    /// Start her at login: `lucy service install` adds her to the login items.
+    pub autostart: bool,
 }
 
 impl Default for SpriteSettings {
@@ -212,8 +214,20 @@ impl Default for SpriteSettings {
             scale: 1.0,
             bubble_timeout_secs: 12,
             hotkey: "Ctrl+Shift+Space".into(),
+            autostart: false,
         }
     }
+}
+
+/// Refuse to write a config that home-manager put there: a link into the read-only Nix store.
+pub fn check_writable(path: &Path) -> Result<(), ConfigError> {
+    let managed = fs::read_link(path).is_ok_and(|target| target.starts_with("/nix/store"));
+    if managed {
+        return Err(ConfigError::Managed {
+            path: path.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn default_persona() -> String {
@@ -234,6 +248,12 @@ pub enum ConfigError {
         #[source]
         source: std::io::Error,
     },
+    #[error(
+        "{} is managed by home-manager (programs.lucy.settings); change it in your Nix \
+         config instead",
+        .path.display()
+    )]
+    Managed { path: PathBuf },
     #[error("{}: {source}", .path.display())]
     InFile {
         path: PathBuf,
@@ -297,6 +317,7 @@ impl Config {
             path: path.to_owned(),
             source,
         };
+        check_writable(path)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(io_err)?;
         }

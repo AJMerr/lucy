@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use lucy_cli::service::{
-    Platform, Ran, Runner, ServiceManager, ServiceSpec, capture_env, launchd_plist,
+    Platform, Ran, Runner, ServiceManager, ServiceSpec, capture_env, desktop_entry, launchd_plist,
     run_key_command, systemd_unit,
 };
 
@@ -185,6 +185,7 @@ fn systemd<'a>(dir: &Path, runner: &'a FakeRunner) -> ServiceManager<&'a FakeRun
     ServiceManager::new(
         Platform::Systemd {
             unit_dir: dir.join("systemd/user"),
+            autostart_dir: dir.join("autostart"),
         },
         runner,
     )
@@ -400,6 +401,147 @@ fn a_missing_run_key_is_not_installed() {
         [
             format!("reg query {RUN_KEY} /v Lucy"),
             format!("reg query {RUN_KEY} /v Lucy"),
+        ]
+    );
+}
+
+// --- The sprite at login ---------------------------------------------------------------------
+
+fn sprite_spec() -> ServiceSpec {
+    spec(
+        "/home/a b/.cargo/bin/lucy-sprite",
+        "/home/a b/.local/share/lucy/sprite.log",
+        &[("LUCY_SOCKET", "/run/user/1000/lucy/core.sock")],
+    )
+}
+
+#[test]
+fn desktop_entry_starts_the_sprite_with_lucys_settings() {
+    let entry = desktop_entry(&sprite_spec());
+
+    let lines: Vec<&str> = entry.lines().collect();
+    for expected in [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=Lucy Sprite",
+        r#"Exec=env "LUCY_SOCKET=/run/user/1000/lucy/core.sock" "/home/a b/.cargo/bin/lucy-sprite""#,
+        "NoDisplay=true",
+    ] {
+        assert!(
+            lines.contains(&expected),
+            "missing {expected:?} in\n{entry}"
+        );
+    }
+}
+
+#[test]
+fn desktop_entry_escapes_what_exec_lines_treat_specially() {
+    let entry = desktop_entry(&spec(
+        r#"/opt/50% off/$x/"q"\sprite"#,
+        "/tmp/sprite.log",
+        &[("NOTE", "a`b")],
+    ));
+
+    // Quoted arguments escape " ` $ and \ with a backslash; then the value as a whole doubles
+    // backslashes and %.
+    let exec = entry
+        .lines()
+        .find(|line| line.starts_with("Exec="))
+        .expect("an Exec line");
+    assert_eq!(
+        exec,
+        r#"Exec=env "NOTE=a\\`b" "/opt/50%% off/\\$x/\\"q\\"\\\\sprite""#
+    );
+}
+
+#[test]
+fn systemd_sprite_autostart_is_a_desktop_entry_added_and_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let runner = FakeRunner::default();
+    let manager = systemd(dir.path(), &runner);
+    let entry = dir.path().join("autostart/lucy-sprite.desktop");
+    assert_eq!(manager.sprite_installed().unwrap(), None);
+
+    manager.install_sprite(&sprite_spec()).unwrap();
+
+    let text = std::fs::read_to_string(&entry).unwrap();
+    assert!(text.contains("lucy-sprite"), "{text}");
+    assert_eq!(
+        manager.sprite_installed().unwrap(),
+        Some(entry.display().to_string())
+    );
+    assert!(manager.uninstall_sprite().unwrap());
+    assert!(!entry.exists());
+    assert!(!manager.uninstall_sprite().unwrap(), "already gone");
+    assert!(
+        runner.take().is_empty(),
+        "the session reads the folder itself"
+    );
+}
+
+#[test]
+fn launchd_sprite_autostart_is_an_agent_for_the_next_login() {
+    let dir = tempfile::tempdir().unwrap();
+    let runner = FakeRunner::default();
+    let manager = ServiceManager::new(
+        Platform::Launchd {
+            agents_dir: dir.path().join("LaunchAgents"),
+            uid: 501,
+        },
+        &runner,
+    );
+    let plist = dir
+        .path()
+        .join("LaunchAgents/io.github.ajmerr.lucy.sprite.plist");
+
+    manager.install_sprite(&sprite_spec()).unwrap();
+
+    let text = std::fs::read_to_string(&plist).unwrap();
+    for expected in [
+        "<string>io.github.ajmerr.lucy.sprite</string>",
+        "<string>/home/a b/.cargo/bin/lucy-sprite</string>",
+        "<key>LUCY_SOCKET</key>",
+        "<key>RunAtLoad</key>",
+        "<string>/home/a b/.local/share/lucy/sprite.log</string>",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+    }
+    assert!(!text.contains("KeepAlive"), "quitting her keeps her gone");
+    assert!(runner.take().is_empty(), "she starts at the next login");
+    assert_eq!(
+        manager.sprite_installed().unwrap(),
+        Some(plist.display().to_string())
+    );
+
+    assert!(manager.uninstall_sprite().unwrap());
+    assert!(!plist.exists());
+}
+
+#[test]
+fn run_key_sprite_autostart_uses_its_own_value() {
+    let runner = FakeRunner::default();
+    let manager = ServiceManager::new(Platform::RunKey, &runner);
+    let sprite = spec(r"C:\Program Files\Lucy\lucy-sprite.exe", r"C:\log.txt", &[]);
+
+    manager.install_sprite(&sprite).unwrap();
+    assert_eq!(
+        runner.take(),
+        [format!(
+            r#"reg add {RUN_KEY} /v LucySprite /t REG_SZ /d "C:\Program Files\Lucy\lucy-sprite.exe" /f"#
+        )]
+    );
+
+    assert_eq!(
+        manager.sprite_installed().unwrap(),
+        Some(format!(r"{RUN_KEY}\LucySprite"))
+    );
+    assert!(manager.uninstall_sprite().unwrap());
+    assert_eq!(
+        runner.take(),
+        [
+            format!("reg query {RUN_KEY} /v LucySprite"),
+            format!("reg query {RUN_KEY} /v LucySprite"),
+            format!("reg delete {RUN_KEY} /v LucySprite /f"),
         ]
     );
 }
