@@ -325,7 +325,8 @@ fn launchd_install_reloads_the_agent_and_uninstall_unloads_it() {
     );
     let plist = dir
         .path()
-        .join("LaunchAgents/io.github.ajmerr.lucy.core.plist");
+        .join("LaunchAgents")
+        .join("io.github.ajmerr.lucy.core.plist");
 
     manager.install(&plain_spec()).unwrap();
     assert!(plist.exists());
