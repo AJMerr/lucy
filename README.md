@@ -4,10 +4,10 @@ A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her 
 today; later she'll live on your desktop as an animated sprite with speech bubbles that you can
 toggle on and off.
 
-> **Status:** v0.1.0 plus tools, agent mode and a login service (unreleased): terminal chat
-> with any OpenAI-compatible or Anthropic model, able to read, search, run and edit with your
-> approval, use any MCP server you add, and work through tasks on her own within limits you
-> set. The desktop sprite is next. See [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
+> **Status:** v0.2.0: terminal chat with any OpenAI-compatible or Anthropic model, able to
+> read, search, run and edit with your approval, use any MCP server you add, and work through
+> tasks on her own within limits you set. The core can run from login. The desktop sprite is
+> next. See [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 

@@ -1,13 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.2.0: tools, agent mode and a login service (2026-11-07)
 
-### Tools (step 8a)
+Lucy can now act, not just talk. She reads, searches, runs and edits with your approval,
+uses any MCP server you add (local or remote, with OAuth sign-in), and works through whole
+tasks on her own at a freedom level you choose, within step and cost caps, with `/undo` for
+her file changes. Her core can also run from login, ready for the desktop sprite.
+
+### Tools
 
 - **Lucy can use tools.** Built in: `read_file`, `list_dir`, `search_files`, `fetch_url`,
   `run_command`, `write_file` and `edit_file`. They work in the folder you started `lucy` in,
   and need nothing else installed. They're served over MCP in-process, so external MCP servers
-  (next) will follow the same rules.
+  follow the same rules.
 - **Approvals.** Reads in your home folder run by themselves. Private paths (`~/.ssh`, `.env`
   files, keys, cloud credentials) and anything outside home ask first, even through a symlink.
   So does anything that writes files, runs commands or goes online. Answer `y`, `a` (always,
@@ -23,7 +28,7 @@
 - Lucy's persona now says to use tools instead of guessing, and never to claim she ran or read
   something without a tool result.
 
-### MCP servers (step 8b)
+### MCP servers
 
 - **Use any MCP server.** `lucy mcp add github --key GITHUB_PERSONAL_ACCESS_TOKEN=github -- npx
   -y @modelcontextprotocol/server-github` adds a server, or run `lucy mcp add` alone to answer
@@ -38,7 +43,7 @@
 - `/tools` and `lucy mcp list` show servers that failed to start, and why.
 - `lucy mcp serve` offers Lucy's built-in tools to other MCP clients over stdio.
 
-### Remote MCP servers (step 8c)
+### Remote MCP servers
 
 - **Servers at a URL.** `lucy mcp add linear --url https://mcp.linear.app/mcp`; or type the
   URL when `lucy mcp add` asks for the command.
@@ -53,7 +58,7 @@
 - A remote server's read-only tools run by themselves. Their paths aren't on your machine, so
   the home-folder checks don't apply.
 
-### Agent mode (step 9)
+### Agent mode
 
 - **Lucy can work through tasks on her own.** `/mode agent` in a chat, or `lucy agent "task"`
   from the terminal. `/level 0-3` sets how freely she works:
@@ -71,7 +76,7 @@
 - Token usage is now read from both providers' streams (`include_usage` for OpenAI-compatible
   servers).
 
-### Login service (step 10)
+### Login service
 
 - **`lucy service install`** keeps Lucy's core running from login: a systemd user unit on
   Linux, a launchd agent on macOS, a `Run` registry value on Windows (no admin rights). It
@@ -88,16 +93,39 @@
 - **Upgrades restart the core by themselves.** A newer `lucy` that finds an older, idle core
   stops it and starts its own, through the service if you use one.
 
-### Upgrading
+### Upgrading from v0.1.0
 
-- **Protocol v4** (v2 brought tools, v3 agent mode, v4 stopping the core). From now on a new
-  `lucy` replaces an idle older core by itself. The core you're running now predates that, so
-  stop it once after installing (`pkill -f "lucy core run"`); the new `lucy` says so if you
-  forget.
+- Install with `cargo install --path crates/lucy-cli`, then stop the old core once:
+  `pkill -f "lucy core run"` (on Windows, end the `lucy.exe` running `core run`). The new
+  `lucy` says so if you forget. From this release on, a new `lucy` replaces an idle older core
+  by itself.
+- Protocol v4 (v2 brought tools, v3 agent mode, v4 stopping the core).
 - The session database migrates itself (it adds tool-call columns, chat settings and undo
-  backups).
-- Ollama's default 4,096-token context fills faster with tools. Raise `OLLAMA_CONTEXT_LENGTH`
-  (e.g. 16384) if replies lose track.
+  backups). Your config needs no changes; the new sections are optional, see
+  `docs/config.example.toml`.
+
+### Known limitations
+
+- **Tested day to day on Linux only.** Everything passes in CI on Linux, macOS and Windows,
+  and the login service has been installed for real on NixOS. On macOS and Windows neither the
+  tools nor the service have been used day to day yet.
+- **Windows login:** a console window may flash briefly when the service starts the core.
+- **Level 2 runs commands without asking.** A command can do anything a shell can, including
+  installing software or downloading, so use level 2 only in workspaces you'd let a script
+  loose in.
+- **`/undo` covers `write_file` and `edit_file` only**, not changes made through `run_command`
+  or other servers' tools.
+- **Short Ollama context.** Ollama's default 4,096-token window fills faster with tools. Raise
+  `OLLAMA_CONTEXT_LENGTH` (e.g. 16384) if replies lose track.
+- **No desktop sprite or voice yet** (milestone 2), and no HTTP/remote access to the core.
+
+### Under the hood
+
+Six crates now: `lucy-tools` holds the built-in tools as an MCP server, and MCP support comes
+from `rmcp`. The permission rules are one pure function (`lucy_core::policy`). The suite has
+206 automated tests, plus the opt-in keyring test. They include a fake OAuth identity
+provider, real MCP server processes, a recorded Qwen tool call, and the service files checked
+against a fake service manager. The design decisions are in `docs/adr/0001`–`0008`.
 
 ## v0.1.0: first working version (2026-11-05)
 
