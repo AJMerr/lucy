@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## v0.4.0: desktop sprite (2026-11-07)
+
+Lucy can now live on your desktop: an animated sprite in the corner of the screen who answers
+in speech bubbles, asks before running tools, and opens her whole chat in a window when a reply
+runs long. She uses the same core as `lucy`, so her chat carries on in the terminal and
+vice versa. There are installers for Linux, macOS and Windows, and a Nix flake with a
+home-manager module. This completes milestone 2.
 
 ### Desktop sprite
 
@@ -41,6 +47,27 @@
   status|restart` and `lucy core stop` treat its core unit as theirs.
 - When home-manager owns `config.toml`, `lucy config init` and `lucy mcp add|remove` say so
   instead of failing on a read-only file.
+
+### Upgrading from v0.3.0
+
+- Install with `cargo install --path crates/lucy-cli` (or an installer, or Nix), then restart
+  the core: `lucy service restart`, or `lucy core stop` if you don't use the service. The
+  protocol is still v4, so the new `lucy` won't replace the old core by itself.
+- To try the sprite from source, build `apps/sprite` (see its README) and put `lucy-sprite`
+  next to `lucy`. The new `[sprite] hotkey` and `autostart` settings have defaults; nothing
+  in your config needs changing.
+- Moving to the home-manager module's `service.enable`? Run `lucy service uninstall` first, so
+  the two don't both define `lucy-core.service`.
+
+### Known limitations
+
+- **Placeholder art only.** No Lucy character art ships; make a pack from `packs/placeholder`.
+- **Installers aren't signed**, so macOS and Windows warn on first run, and the macOS build is
+  for Apple silicon only. Installing one doesn't put `lucy` on your `PATH` on macOS or Windows.
+- **Global hotkeys don't work on Wayland**; bind `lucy sprite ask` in your compositor.
+- **GNOME on Wayland** has no layer shell, so she's an ordinary floating window there.
+- **Typing into her, clicking through around her, and the hotkey on X11, macOS and Windows**
+  haven't been tried by hand yet; report anything odd.
 
 ## v0.3.0: remote access (2026-11-07)
 
