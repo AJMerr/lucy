@@ -61,7 +61,7 @@ tray icon; the core stays a separate service.
    (protocol v5), with `[remote] allow_config`.
 2. ✅ **3b — Chat.** `apps/ui` (Svelte): RPC client with desktop and WebSocket transports,
    the main window with chats beside the open chat, tray, close-to-tray, `lucy app`.
-3. **3c — Settings screens.** Every config.toml setting, keys, MCP servers and sign-in,
+3. ✅ **3c — Settings screens.** Every config.toml setting, keys, MCP servers and sign-in,
    persona editor, service and autostart, and first-run setup.
 4. **3d — One app.** Rename to "Lucy", installers, docs.
 

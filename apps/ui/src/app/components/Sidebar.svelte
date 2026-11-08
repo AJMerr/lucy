@@ -11,6 +11,7 @@
     onNew,
     onRename,
     onDelete,
+    onSettings,
   }: {
     sessions: SessionSummary[];
     selected: string | null;
@@ -19,6 +20,8 @@
     onNew: () => void;
     onRename: (id: string, title: string) => void;
     onDelete: (id: string) => void;
+    /** Open settings (shown when given). */
+    onSettings?: () => void;
   } = $props();
 
   let renaming: string | null = $state(null);
@@ -93,6 +96,9 @@
       </li>
     {/each}
   </ul>
+  {#if onSettings}
+    <button class="settings" onclick={onSettings}>⚙ Settings</button>
+  {/if}
 </nav>
 
 <style>
@@ -104,6 +110,14 @@
     height: 100%;
     box-sizing: border-box;
     overflow-y: auto;
+  }
+  .settings {
+    margin-top: auto;
+    text-align: left;
+    background: none;
+    border: none;
+    padding: 8px 10px;
+    color: var(--muted);
   }
   .new {
     margin: 0 4px 4px;

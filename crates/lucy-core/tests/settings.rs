@@ -8,7 +8,9 @@ use interprocess::local_socket::tokio::{Stream, prelude::*};
 use lucy_client::{Client, Endpoint};
 use lucy_core::secrets::{MemoryStore, SecretStore, Secrets};
 use lucy_core::server::{CoreOptions, serve};
-use lucy_protocol::rpc::{ConfigUpdateResult, ConfigView, KeyStatus, PersonaView, method};
+use lucy_protocol::rpc::{
+    ConfigUpdateResult, ConfigView, KeyStatus, PersonaView, ProviderPreset, method,
+};
 use serde_json::{Value, json};
 
 const CONFIG: &str = r#"# Hand-written. Keep me.
@@ -230,4 +232,32 @@ async fn the_persona_can_be_edited_and_reset_to_the_built_in_one() {
     assert!(!override_file.exists());
     let reset: PersonaView = client.call(method::PERSONA_GET, json!({})).await.unwrap();
     assert_eq!(reset, builtin);
+}
+
+#[tokio::test]
+async fn setup_offers_the_same_providers_as_the_terminal_wizard() {
+    let harness = Harness::start().await;
+    let client = harness.client().await;
+
+    let presets: Vec<ProviderPreset> = client.call(method::SETUP_PRESETS, json!({})).await.unwrap();
+
+    let names: Vec<&str> = presets.iter().map(|p| p.profile_name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["local-qwen", "qwen-cloud", "openrouter", "claude", "custom"]
+    );
+    let local = &presets[0];
+    assert_eq!(local.provider, "openai_compat");
+    assert_eq!(local.base_url.as_deref(), Some("http://localhost:11434/v1"));
+    assert_eq!(local.model.as_deref(), Some("qwen3:14b"));
+    assert_eq!(local.key_name, None);
+    let claude = &presets[3];
+    assert_eq!(claude.provider, "anthropic");
+    assert_eq!(claude.key_name.as_deref(), Some("anthropic"));
+    // The last one is for any other endpoint: you fill in the URL and model.
+    let custom = &presets[4];
+    assert_eq!(
+        (custom.base_url.as_deref(), custom.model.as_deref()),
+        (None, None)
+    );
 }

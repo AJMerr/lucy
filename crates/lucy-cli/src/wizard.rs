@@ -10,90 +10,33 @@ pub trait Prompter {
     fn input(&mut self, prompt: &str, default: Option<&str>) -> Result<String>;
 }
 
-struct Preset {
-    label: &'static str,
-    profile_name: &'static str,
-    provider: ProviderKind,
-    /// `None` for a custom OpenAI-compatible endpoint: ask for URL, model and key name.
-    endpoint: Option<Endpoint>,
-}
-
-struct Endpoint {
-    base_url: Option<&'static str>,
-    model: &'static str,
-    key_name: Option<&'static str>,
-}
-
-const PRESETS: &[Preset] = &[
-    Preset {
-        label: "Local Qwen via Ollama (free, private, runs on your GPU)",
-        profile_name: "local-qwen",
-        provider: ProviderKind::OpenAiCompat,
-        endpoint: Some(Endpoint {
-            base_url: Some("http://localhost:11434/v1"),
-            model: "qwen3:14b",
-            key_name: None,
-        }),
-    },
-    Preset {
-        label: "Qwen cloud (Alibaba DashScope)",
-        profile_name: "qwen-cloud",
-        provider: ProviderKind::OpenAiCompat,
-        endpoint: Some(Endpoint {
-            base_url: Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
-            model: "qwen-max",
-            key_name: Some("dashscope"),
-        }),
-    },
-    Preset {
-        label: "OpenRouter (many models, one key)",
-        profile_name: "openrouter",
-        provider: ProviderKind::OpenAiCompat,
-        endpoint: Some(Endpoint {
-            base_url: Some("https://openrouter.ai/api/v1"),
-            model: "qwen/qwen3-235b-a22b",
-            key_name: Some("openrouter"),
-        }),
-    },
-    Preset {
-        label: "Anthropic (Claude)",
-        profile_name: "claude",
-        provider: ProviderKind::Anthropic,
-        endpoint: Some(Endpoint {
-            base_url: None,
-            model: "claude-sonnet-5-5",
-            key_name: Some("anthropic"),
-        }),
-    },
-    Preset {
-        label: "Other OpenAI-compatible endpoint",
-        profile_name: "custom",
-        provider: ProviderKind::OpenAiCompat,
-        endpoint: None,
-    },
-];
-
 /// Ask the first-run questions and build a config with a single default profile.
 pub fn run(prompter: &mut impl Prompter) -> Result<Config> {
-    let labels: Vec<_> = PRESETS.iter().map(|preset| preset.label).collect();
-    let preset = &PRESETS[prompter.select("Which model provider should Lucy use?", &labels, 0)?];
+    let presets = lucy_core::setup::presets();
+    let labels: Vec<_> = presets.iter().map(|preset| preset.label.as_str()).collect();
+    let preset = &presets[prompter.select("Which model provider should Lucy use?", &labels, 0)?];
+    let provider = match preset.provider.as_str() {
+        "anthropic" => ProviderKind::Anthropic,
+        _ => ProviderKind::OpenAiCompat,
+    };
 
-    let profile = match &preset.endpoint {
-        Some(endpoint) => Profile {
-            provider: preset.provider,
-            base_url: endpoint.base_url.map(Into::into),
-            model: prompter.input("Model", Some(endpoint.model))?,
-            key_name: endpoint.key_name.map(Into::into),
+    let profile = match &preset.model {
+        Some(model) => Profile {
+            provider,
+            base_url: preset.base_url.clone(),
+            model: prompter.input("Model", Some(model))?,
+            key_name: preset.key_name.clone(),
             tools: true,
             price_in: None,
             price_out: None,
         },
+        // A custom endpoint: ask for everything.
         None => {
             let base_url = prompter.input("Base URL (e.g. http://localhost:8080/v1)", None)?;
             let model = prompter.input("Model", None)?;
             let key_name = prompter.input("API key name (leave empty if none)", Some(""))?;
             Profile {
-                provider: preset.provider,
+                provider,
                 base_url: Some(base_url),
                 model,
                 key_name: Some(key_name).filter(|name| !name.is_empty()),
@@ -104,7 +47,7 @@ pub fn run(prompter: &mut impl Prompter) -> Result<Config> {
         }
     };
 
-    let name = prompter.input("Profile name", Some(preset.profile_name))?;
+    let name = prompter.input("Profile name", Some(&preset.profile_name))?;
     let mut config = Config::with_profile(name, profile);
 
     let user_name = prompter.input("What should Lucy call you? (leave empty to skip)", Some(""))?;

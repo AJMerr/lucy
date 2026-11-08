@@ -56,6 +56,8 @@ pub mod method {
     /// Sign in to a remote MCP server: opens the browser on the core's machine and answers
     /// once signed in. Not for remote clients.
     pub const MCP_LOGIN: &str = "mcp.login";
+    /// The model providers first-run setup offers (the same as `lucy config init`).
+    pub const SETUP_PRESETS: &str = "setup.presets";
     /// Notification carrying an [`Event`](super::Event).
     pub const EVENT: &str = "event";
 }
@@ -236,6 +238,23 @@ pub struct PersonaView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PersonaSetParams {
     pub text: String,
+}
+
+/// A model provider first-run setup offers (`setup.presets`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProviderPreset {
+    /// e.g. "Anthropic (Claude)".
+    pub label: String,
+    /// The profile it becomes, e.g. "claude".
+    pub profile_name: String,
+    /// `openai_compat` or `anthropic`.
+    pub provider: String,
+    /// `None` for Anthropic (built in), and for a custom endpoint, where you give one.
+    pub base_url: Option<String>,
+    /// The suggested model; `None` for a custom endpoint.
+    pub model: Option<String>,
+    /// The keyring name its API key goes under; `None` when it needs no key.
+    pub key_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -358,8 +358,14 @@ her from [`apps/sprite`](apps/sprite/README.md); `[sprite] autostart` starts her
 on the left, the open chat on the right, with streaming replies, tool approvals, Stop, Undo,
 and the chat's model, mode, level and plain mode in its header. Closing it leaves her in the
 tray. The tray needs AppIndicator on Linux (`libayatana-appindicator`; GNOME also needs its
-AppIndicator extension); without it, `lucy app` still opens the window. Settings move into this
-window next.
+AppIndicator extension); without it, `lucy app` still opens the window.
+
+**Settings** (bottom of the chat list) cover everything in `config.toml` and more, without a
+terminal: models and their API keys (sent to the keyring, never shown again), how new chats
+start, agent caps and tool rules, your persona, MCP servers (and signing in to remote ones),
+the sprite, remote access and its token, and the login service. Each section saves on its own,
+and the core refuses anything that would break the config, saying why. With no config yet, the
+window starts with first-run setup instead (the same providers as `lucy config init`).
 
 No character art is committed. Lucy loads sprite packs from your data directory
 (`~/.local/share/lucy/packs/` on Linux). Copy `packs/placeholder`, swap the frames, and point

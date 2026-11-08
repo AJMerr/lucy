@@ -9,6 +9,7 @@
 mod app_window;
 mod bridge;
 mod chat;
+mod lucy_command;
 mod pack;
 mod placement;
 
@@ -51,6 +52,7 @@ fn main() {
             app_window::open_chat,
             app_window::take_pending_chat,
             bridge::rpc_call,
+            lucy_command::run_lucy,
             placement::set_layout,
         ])
         .setup(move |app| {

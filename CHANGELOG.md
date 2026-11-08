@@ -27,6 +27,18 @@
 - The same page works in a browser against a core with remote access on
   (`app.html?url=ws://host:7077/rpc&token=…`), ready for a phone app later.
 
+### Settings in the app
+
+- **Settings** (bottom of the chat list): models and API keys, how new chats start, agent caps
+  and tool rules, your name, the persona, MCP servers (with sign-in for remote ones), the
+  sprite, remote access (and its token), and the login service. Each section has Save and
+  Revert, sends only what changed, and shows the core's reason if it refuses a change. Keys go
+  to the keyring and are never shown back. A config owned by home-manager can be looked at but
+  not changed here.
+- **First-run setup:** with no config yet, the window starts by asking for a provider, model,
+  key and your name, with the same choices as `lucy config init` (both now come from the core,
+  `setup.presets`).
+
 ## v0.4.0: desktop sprite (2026-11-07)
 
 Lucy can now live on your desktop: an animated sprite in the corner of the screen who answers

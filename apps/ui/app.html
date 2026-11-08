@@ -79,6 +79,66 @@
       [hidden] {
         display: none !important;
       }
+      /* Settings forms. */
+      input,
+      select,
+      textarea {
+        font: inherit;
+        color: var(--text);
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 5px 8px;
+      }
+      input:focus,
+      select:focus,
+      textarea:focus {
+        outline: 1px solid var(--accent);
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin: 8px 0;
+        max-width: 34em;
+      }
+      .field > span {
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 8px 0;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: flex-end;
+      }
+      fieldset {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 6px 14px 10px;
+        margin: 12px 0;
+      }
+      legend {
+        padding: 0 6px;
+        color: var(--accent);
+      }
+      .hint,
+      .muted {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .error {
+        color: var(--hot);
+      }
+      .danger-text {
+        color: var(--hot) !important;
+      }
     </style>
   </head>
   <body>

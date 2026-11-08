@@ -355,7 +355,7 @@ fn stop_inheriting_std_handles() {
 
 /// The `lucy` program: this one, or (when another front end such as the sprite starts the
 /// core) the `lucy` next to it, else the one on `PATH`.
-fn lucy_exe() -> std::io::Result<PathBuf> {
+pub fn lucy_exe() -> std::io::Result<PathBuf> {
     let me = std::env::current_exe()?;
     let name = if cfg!(windows) { "lucy.exe" } else { "lucy" };
     if me.file_name().is_some_and(|file| file == name) {

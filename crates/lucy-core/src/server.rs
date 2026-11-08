@@ -664,6 +664,7 @@ async fn handle(
             }
             result(Value::Null)
         }
+        method::SETUP_PRESETS => result(crate::setup::presets()),
         method::MCP_LOGIN => {
             let p: KeyParams = params(request.params)?;
             let config = core.config()?;

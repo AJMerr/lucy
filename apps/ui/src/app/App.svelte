@@ -5,15 +5,29 @@
 
   import type { ConnectionState, Transport } from "../lib/rpc/transport.ts";
   import { ChatsStore, type UndoResult } from "../lib/stores/chats.ts";
+  import { SettingsStore } from "../lib/stores/settings.ts";
+  import FirstRun from "./FirstRun.svelte";
   import ChatHeader, { type ProfileInfo } from "./components/ChatHeader.svelte";
   import Composer from "./components/Composer.svelte";
   import Entry from "./components/Entry.svelte";
   import Sidebar from "./components/Sidebar.svelte";
+  import Settings from "./settings/Settings.svelte";
 
   let { core }: { core: Transport } = $props();
 
   // svelte-ignore state_referenced_locally
   const chats = new ChatsStore(core);
+  // svelte-ignore state_referenced_locally
+  const settings = new SettingsStore(core);
+  /** What the window shows: chats, settings, or first-run setup (no config yet). */
+  let view: "chat" | "settings" | "setup" = $state("chat");
+  const desktop = "__TAURI_INTERNALS__" in window;
+
+  /** Run `lucy <args>` on this machine; only the desktop app can. */
+  async function runLucy(args: string[]): Promise<string> {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<string>("run_lucy", { args });
+  }
   let profiles: ProfileInfo[] = $state([]);
   let connection: ConnectionState = $state("connecting");
   let problem: string | null = $state(null);
@@ -70,6 +84,17 @@
   });
 
   function refresh(): void {
+    // No config yet: first-run setup instead of chats.
+    core.call<{ config: unknown }>("config.get").then(
+      (got) => {
+        if (got.config === null) {
+          view = "setup";
+        } else if (view === "setup") {
+          view = "chat";
+        }
+      },
+      () => {},
+    );
     chats.load().then(
       () => (problem = null),
       (err: unknown) => (problem = message(err)),
@@ -130,6 +155,26 @@
   }
 </script>
 
+{#if view === "setup"}
+  <FirstRun
+    {core}
+    onDone={() => {
+      view = "chat";
+      refresh();
+    }}
+  />
+{:else if view === "settings"}
+  <div class="page">
+    <Settings
+      store={settings}
+      runLucy={desktop ? runLucy : undefined}
+      onClose={() => {
+        view = "chat";
+        refresh();
+      }}
+    />
+  </div>
+{:else}
 <div class="shell" class:menu-open={menuOpen}>
   <aside>
     <Sidebar
@@ -143,6 +188,7 @@
       }}
       onRename={(id, title) => chats.rename(id, title).catch((err) => (problem = message(err)))}
       onDelete={(id) => chats.remove(id).catch((err) => (problem = message(err)))}
+      onSettings={() => (view = "settings")}
     />
   </aside>
 
@@ -210,8 +256,12 @@
     {/if}
   </main>
 </div>
+{/if}
 
 <style>
+  .page {
+    height: 100vh;
+  }
   .shell {
     display: grid;
     grid-template-columns: 260px 1fr;
