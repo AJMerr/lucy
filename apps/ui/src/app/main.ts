@@ -8,7 +8,7 @@ import { SocketTransport, type Transport, webSocket } from "../lib/rpc/transport
 import { TauriTransport } from "../lib/rpc/tauri.ts";
 import App from "./App.svelte";
 
-const CLIENT = "lucy-ui 0.4.0";
+const CLIENT = "lucy-ui 0.5.0";
 
 function transport(): Transport {
   if ("__TAURI_INTERNALS__" in window) {

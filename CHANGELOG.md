@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## v0.5.0: Lucy's app (2026-11-08)
 
-### Settings over the core (for the coming GUI)
+Lucy now has an app: one program, "Lucy", with her sprite, a main window for your chats and
+every setting, and a tray icon. Anyone can install it and set her up without a terminal, and
+the core can now be configured by any front end, ready for a phone app later. This completes
+milestone 3.
+
+### Settings over the core
 
 - **Protocol v5:** the core can now show and change Lucy's settings for any front end:
   config.toml (`config.get`, `config.update`, keeping your comments and layout and refusing
@@ -53,6 +58,31 @@
   is now `programs.lucy.desktop.*` (the old names still work, with a warning). Its unit is
   `lucy-desktop.service`.
 - The desktop app logs to `desktop.log` (next to `core.log`).
+
+### Upgrading from v0.4.0
+
+- Install the new `lucy` and the app (an installer, Nix, or from source; the program is now
+  `lucy-desktop`), then restart the core: `lucy service restart`, or `lucy core stop` if you
+  don't use the service. The protocol is now v5; a new `lucy` replaces an older idle core by
+  itself, but a service core needs the restart.
+- Built from source? Remove the old `lucy-sprite` from wherever you copied it (e.g.
+  `~/.cargo/bin`); `lucy sprite` now looks for `lucy-desktop`.
+- If the sprite started at login, run `lucy service install` once: it swaps the old
+  `lucy-sprite` login entry for the app's.
+- home-manager: `programs.lucy.sprite.*` still works but warns; rename it to
+  `programs.lucy.desktop.*`. The unit is now `lucy-desktop.service`.
+
+### Known limitations
+
+- **The tray icon needs AppIndicator on Linux** (`libayatana-appindicator`, and GNOME's
+  AppIndicator extension). Without it the app skips the tray; `lucy app` opens the window.
+  Builds made with plain `cargo` in the Nix dev shell can't find it on NixOS; the Nix package
+  can.
+- **Installers still aren't signed**, so macOS and Windows warn on first run.
+- **The settings screens haven't been clicked through by hand yet** across every platform;
+  report anything that doesn't save as expected.
+- **The mobile app isn't here yet.** The main window works in a browser against a core with
+  remote access on (`app.html?url=ws://host:7077/rpc&token=…`), which is what it'll build on.
 
 ## v0.4.0: desktop sprite (2026-11-07)
 

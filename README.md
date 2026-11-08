@@ -4,12 +4,12 @@ A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her 
 or let her live on your desktop as an animated sprite with speech bubbles that you can toggle on
 and off.
 
-> **Status:** v0.4.0: terminal chat with any OpenAI-compatible or Anthropic model, able to
+> **Status:** v0.5.0: terminal chat with any OpenAI-compatible or Anthropic model, able to
 > read, search, run and edit with your approval, use any MCP server you add, and work through
 > tasks on her own within limits you set. The core can run from login and serve your other
-> machines. On the desktop she's an animated sprite with speech bubbles and her own chat
-> window. Installers, a Nix flake and a home-manager module. See [release notes](CHANGELOG.md)
-> and the [roadmap](docs/ROADMAP.md).
+> machines. Lucy's app puts her on the desktop as an animated sprite, with a main window for
+> your chats and every setting, and a tray icon; no terminal needed. Installers, a Nix flake and
+> a home-manager module. See [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
