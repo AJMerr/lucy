@@ -39,7 +39,16 @@ function element<T extends HTMLElement>(selector: string): T {
  * every other frame. A change to the page background too small to see damages it all.
  */
 let repaintFlip = false;
+let flippedThisFrame = false;
 function repaintAll(): void {
+  // Once per frame: a second flip in the same frame would undo the first.
+  if (flippedThisFrame) {
+    return;
+  }
+  flippedThisFrame = true;
+  requestAnimationFrame(() => {
+    flippedThisFrame = false;
+  });
   repaintFlip = !repaintFlip;
   document.documentElement.style.backgroundColor = repaintFlip
     ? "rgba(0, 0, 0, 0.004)"
@@ -229,6 +238,9 @@ async function start(): Promise<void> {
       dispatch({ type: "problem", message: String(err), now: Date.now() }),
     );
   });
+  // Typing changes only the input box; repaint the rest with it (see repaintAll). keydown
+  // comes in the same task as the text change, so both land in one frame.
+  input.addEventListener("keydown", repaintAll);
   // Esc closes the input box if it's open, else hides a finished reply.
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") {

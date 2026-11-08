@@ -8,7 +8,8 @@ import type { CoreEvent } from "./view.ts";
 export interface StoredMessage {
   role: string;
   content: string;
-  tool_calls: { id: string; name: string; arguments: Record<string, unknown> }[];
+  /** Left out when there are none. */
+  tool_calls?: { id: string; name: string; arguments: Record<string, unknown> }[];
   tool_call_id?: string;
   is_error: boolean;
   incomplete: boolean;
@@ -204,7 +205,7 @@ function fromHistory(messages: StoredMessage[]): Entry[] {
             ...(message.incomplete ? { note: "cut off" } : {}),
           });
         }
-        for (const call of message.tool_calls) {
+        for (const call of message.tool_calls ?? []) {
           entries.push({
             kind: "tool",
             callId: call.id,

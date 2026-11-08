@@ -185,3 +185,18 @@ test("a message that couldn't be sent shows as an error", () => {
   ]);
   assert.equal(transcript.turnId, null);
 });
+
+test("saved messages as the core sends them, without empty fields, still load", () => {
+  // The core leaves out `tool_calls` and `tool_call_id` when there are none.
+  const wire = JSON.parse(
+    '[{"role":"user","content":"hi","is_error":false,"profile":null,"model":null,"incomplete":false,"created_at_ms":1},' +
+      '{"role":"assistant","content":"Hey.","is_error":false,"profile":"p","model":"m","incomplete":false,"created_at_ms":2}]',
+  ) as StoredMessage[];
+
+  const transcript = run([{ type: "history", messages: wire, live: null }]);
+
+  assert.deepEqual(transcript.entries, [
+    { kind: "you", text: "hi" },
+    { kind: "lucy", text: "Hey.", streaming: false },
+  ]);
+});
