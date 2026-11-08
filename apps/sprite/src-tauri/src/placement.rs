@@ -76,7 +76,8 @@ pub fn set_layout(
     if layer_shell::set_layout(&regions, typing, bubble) {
         return Ok(());
     }
-    let _ = regions;
+    // Only layer shell (Linux) uses these.
+    let _ = (regions, bubble);
     resize_window(&window, width, height).map_err(|err| err.to_string())?;
     if typing {
         window.set_focus().map_err(|err| err.to_string())?;
