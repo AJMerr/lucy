@@ -13,6 +13,20 @@
 - A new `lucy` replaces an older idle core by itself; restart a service core with
   `lucy service restart`.
 
+### Lucy's main window
+
+- **`lucy app`** opens Lucy's main window: your chats in a sidebar (new, rename, delete, a dot
+  where something's new), the open chat with streaming replies, tool approvals, Stop and Undo,
+  and the chat's model, Assist/Agent mode, level and plain mode in its header. Replies in
+  other chats, and chats started from a terminal or the sprite, show up as they happen. On a
+  narrow window the chat list folds into a menu.
+- **A tray icon** opens the window, shows or hides the sprite, or quits. Closing the window
+  keeps Lucy in the tray. (Linux needs AppIndicator for the tray; `lucy app` works without.)
+- "more…" on the sprite's bubble and `lucy sprite chat` now open her chat in the main window,
+  which replaces the sprite's separate chat window.
+- The same page works in a browser against a core with remote access on
+  (`app.html?url=ws://host:7077/rpc&token=…`), ready for a phone app later.
+
 ## v0.4.0: desktop sprite (2026-11-07)
 
 Lucy can now live on your desktop: an animated sprite in the corner of the screen who answers

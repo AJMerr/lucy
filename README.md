@@ -127,7 +127,8 @@ Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a lite
 
 Other commands: `lucy config path`, `lucy auth set|remove|status`,
 `lucy mcp add|list|remove|login|logout`, `lucy service install|uninstall|status|restart`,
-`lucy core stop`, `lucy remote connect|disconnect|token`, `lucy sprite [ask|chat|toggle|quit]`.
+`lucy core stop`, `lucy remote connect|disconnect|token`, `lucy sprite [ask|chat|toggle|quit]`,
+`lucy app`.
 
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
@@ -344,16 +345,21 @@ macOS and Windows, builds the sprite on all three, and runs `nix flake check`. P
 GitHub release builds the installers and attaches them (`.github/workflows/release.yml`; run
 it by hand with no tag to try a build).
 
-## Desktop sprite (preview)
+## Desktop app (preview)
 
 `lucy sprite` puts Lucy on your desktop: a small animated figure in the bottom-right corner,
 above your windows (on Wayland compositors with layer shell, like Hyprland, Sway or KDE, no
 window rules needed). Click her, or bind `lucy sprite ask` to a key, and type: she answers in
-speech bubbles, and asks there before running tools. A reply too long for the bubble ends with
-"more…", which opens her chat window: the whole conversation, with room to type
-(`lucy sprite chat` opens it too). `lucy sprite toggle` hides her and `lucy sprite quit` sends
-her off. Install her from a release or the Nix flake (above), or build her from
-[`apps/sprite`](apps/sprite/README.md); `[sprite] autostart` starts her at login.
+speech bubbles, and asks there before running tools. `lucy sprite toggle` hides her and
+`lucy sprite quit` sends her off. Install her from a release or the Nix flake (above), or build
+her from [`apps/sprite`](apps/sprite/README.md); `[sprite] autostart` starts her at login.
+
+`lucy app` (or the tray icon, or "more…" on a long reply) opens Lucy's main window: your chats
+on the left, the open chat on the right, with streaming replies, tool approvals, Stop, Undo,
+and the chat's model, mode, level and plain mode in its header. Closing it leaves her in the
+tray. The tray needs AppIndicator on Linux (`libayatana-appindicator`; GNOME also needs its
+AppIndicator extension); without it, `lucy app` still opens the window. Settings move into this
+window next.
 
 No character art is committed. Lucy loads sprite packs from your data directory
 (`~/.local/share/lucy/packs/` on Linux). Copy `packs/placeholder`, swap the frames, and point
