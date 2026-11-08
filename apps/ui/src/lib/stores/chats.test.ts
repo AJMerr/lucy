@@ -268,3 +268,32 @@ test("a call the core refuses shows as an error in the chat", async () => {
     error: "no config at /x; run `lucy config init`",
   });
 });
+
+test("a reply that was already going when you opened the chat appears in full when it ends", async () => {
+  const fake = core();
+  const store = new ChatsStore(fake);
+  const state = watch(store);
+  await store.load();
+  await store.open("01OLD");
+
+  // Its start happened before the chat was opened, so these can't be placed...
+  fake.emit({ type: "delta", session_id: "01OLD", turn_id: 9, text: "…the end." });
+  // ...and when it finishes, the saved chat has the whole reply.
+  fake.answers["sessions.load"] = {
+    summary: summary("01OLD", "Old chat", 100),
+    messages: [
+      { role: "user", content: "hi", is_error: false, incomplete: false },
+      { role: "assistant", content: "Hey.", is_error: false, incomplete: false },
+      { role: "user", content: "tell me a story", is_error: false, incomplete: false },
+      { role: "assistant", content: "Once upon a time… the end.", is_error: false, incomplete: false },
+    ],
+  };
+  fake.emit({ type: "turn_finished", session_id: "01OLD", turn_id: 9, outcome: "complete" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(state().chats["01OLD"]?.transcript.entries.at(-1), {
+    kind: "lucy",
+    text: "Once upon a time… the end.",
+    streaming: false,
+  });
+});

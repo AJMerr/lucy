@@ -209,7 +209,14 @@ export class ChatsStore {
     } else if (event.type === "user_message" || event.type === "turn_finished") {
       this.touch(id);
     }
-    if (this.state.chats[id] === undefined) {
+    const known = this.state.chats[id];
+    if (known === undefined) {
+      return;
+    }
+    if (event.type === "turn_finished" && known.transcript.turnId !== event.turn_id) {
+      // A reply that began before this chat was opened: its text never reached us, but it's
+      // saved now, so show the chat as saved.
+      this.reload(id).catch(() => {});
       return;
     }
     this.apply(id, { type: "event", event });
@@ -217,6 +224,23 @@ export class ChatsStore {
     if (chat !== undefined && id !== this.state.selected && event.type !== "user_message") {
       this.setChat(id, { ...chat, unread: true });
     }
+  }
+
+  private async reload(id: string): Promise<void> {
+    const session = await this.core.call<{ summary: SessionSummary; messages: StoredMessage[] }>(
+      "sessions.load",
+      { session_id: id },
+    );
+    const chat = this.state.chats[id];
+    if (chat === undefined) {
+      return;
+    }
+    const transcript = reduce(emptyTranscript(), {
+      type: "history",
+      messages: session.messages,
+      live: null,
+    });
+    this.setChat(id, { ...chat, transcript, busy: false });
   }
 
   private apply(id: string, input: TranscriptInput): void {

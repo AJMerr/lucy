@@ -19,7 +19,7 @@ lucy-packs = { path = "../../../crates/lucy-packs" }
 lucy-cli = { path = "../../../crates/lucy-cli" }
 lucy-client = { path = "../../../crates/lucy-client" }
 lucy-protocol = { path = "../../../crates/lucy-protocol" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
@@ -28,5 +28,6 @@ tokio = { version = "1", features = ["time", "sync"] }
 base64 = "0.22"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 gtk = "0.18"
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }

@@ -65,6 +65,8 @@ enum Command {
         #[command(subcommand)]
         action: McpAction,
     },
+    /// Open Lucy's window (chats; settings soon), starting the desktop app if needed.
+    App,
     /// Start Lucy's desktop sprite, or send it a command.
     Sprite {
         #[command(subcommand)]
@@ -175,7 +177,7 @@ enum McpAction {
 enum SpriteAction {
     /// Open (or close) her input box, starting her if needed. Bind this to a key.
     Ask,
-    /// Open her chat window (her whole chat), starting her if needed.
+    /// Open her chat in Lucy's window, starting her if needed.
     Chat,
     /// Hide her, or show her again.
     Toggle,
@@ -329,6 +331,7 @@ fn main() -> Result<()> {
             AuthAction::Status => auth_status(),
         },
         Some(Command::Mcp { action }) => mcp_command(action),
+        Some(Command::App) => sprite::run(Some("app")),
         Some(Command::Sprite { action }) => sprite::run(match action {
             None => None,
             Some(SpriteAction::Ask) => Some("ask"),

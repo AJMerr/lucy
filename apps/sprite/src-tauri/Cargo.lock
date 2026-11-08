@@ -2896,6 +2896,7 @@ dependencies = [
  "base64 0.22.1",
  "gtk",
  "gtk-layer-shell",
+ "libc",
  "lucy-cli",
  "lucy-client",
  "lucy-core",

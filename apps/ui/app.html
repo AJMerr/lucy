@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lucy</title>
+    <style>
+      :root {
+        --bg: #12101e;
+        --panel: #1c1930;
+        --sidebar: #161427;
+        --selected: rgba(94, 232, 242, 0.12);
+        --you-bg: rgba(94, 232, 242, 0.14);
+        --text: #ecebf5;
+        --muted: #a6a3bd;
+        --accent: #5ee8f2;
+        --accent-dim: rgba(94, 232, 242, 0.5);
+        --on-accent: #10101a;
+        --hot: #ff4fa3;
+        --line: rgba(94, 232, 242, 0.22);
+        font: 14px/1.45 system-ui, sans-serif;
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+      }
+      button {
+        font: inherit;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      button.primary {
+        background: var(--accent);
+        color: var(--on-accent);
+        border-color: var(--accent);
+      }
+      button.danger {
+        background: var(--hot);
+        color: var(--on-accent);
+        border-color: var(--hot);
+      }
+      button.link {
+        background: none;
+        border: none;
+        color: var(--accent);
+        padding: 4px;
+      }
+      code {
+        font: 12.5px ui-monospace, monospace;
+        background: rgba(255, 255, 255, 0.08);
+        padding: 0 3px;
+        border-radius: 3px;
+      }
+      pre {
+        font: 12.5px ui-monospace, monospace;
+        background: rgba(0, 0, 0, 0.35);
+        padding: 8px;
+        border-radius: 6px;
+        overflow-x: auto;
+        margin: 6px 0;
+        white-space: pre-wrap;
+      }
+      pre code {
+        background: none;
+        padding: 0;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/app/main.ts"></script>
+  </body>
+</html>

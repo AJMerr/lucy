@@ -13,6 +13,7 @@
   glib-networking,
   gtk3,
   gtk-layer-shell,
+  libayatana-appindicator,
   librsvg,
   libsoup_3,
   webkitgtk_4_1,
@@ -70,6 +71,7 @@ rustPlatform.buildRustPackage {
     glib-networking
     gtk3
     gtk-layer-shell
+    libayatana-appindicator
     librsvg
     libsoup_3
     webkitgtk_4_1
@@ -83,9 +85,11 @@ rustPlatform.buildRustPackage {
   # The page tests run in CI (`npm test`); the Rust side has none of its own.
   doCheck = false;
 
-  # She starts the core with `lucy`, found next to her or on PATH.
+  # She starts the core with `lucy`, found next to her or on PATH. The tray icon loads
+  # AppIndicator at runtime, by name, so it goes on the library path.
   preFixup = ''
     gappsWrapperArgs+=(--prefix PATH : ${lib.makeBinPath [ lucy ]})
+    gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ libayatana-appindicator ]})
   '';
 
   desktopItems = [

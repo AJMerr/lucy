@@ -1,7 +1,7 @@
 //! Her conversation: one ongoing chat of her own (titled "Sprite"), with whichever core `lucy`
 //! uses (this machine's, started if needed, or a remote one after `lucy remote connect`). Its
-//! events go to both pages (her and the chat window) as `core-event`; they send messages and
-//! approvals back.
+//! events go to her page as `core-event`; it sends messages and approvals back. Her whole chat
+//! is in the main window (app_window.rs), which has its own connection (bridge.rs).
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,12 +9,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use lucy_client::{Client, ClientError};
 use lucy_protocol::rpc::{
     ApproveParams, ChatSendParams, ChatSendResult, Decision, Event, RenameParams, ResolveParams,
-    Session, SessionParams, StoredMessage, method,
+    method,
 };
-use serde::Serialize;
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::{Mutex, MutexGuard, mpsc};
+use tokio::sync::{Mutex, mpsc};
 
 /// The title of her chat in `/sessions`.
 const TITLE: &str = "Sprite";
@@ -23,56 +22,6 @@ const TITLE: &str = "Sprite";
 #[derive(Default)]
 pub struct Chat {
     conn: Mutex<Option<Conn>>,
-    /// Her reply in progress, for a chat window opened partway through it.
-    live: std::sync::Mutex<Option<Live>>,
-}
-
-/// A reply in progress (`Live` in src/transcript.ts).
-#[derive(Debug, Clone, Serialize)]
-pub struct Live {
-    turn_id: u64,
-    /// What she's said since her last tool call.
-    text: String,
-    /// The approval request she's waiting on.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    approval: Option<Event>,
-}
-
-impl Live {
-    /// Follow the reply through one of her chat's events.
-    fn follow(live: &mut Option<Live>, event: &Event) {
-        match event {
-            Event::TurnStarted { turn_id, .. } => {
-                *live = Some(Live {
-                    turn_id: *turn_id,
-                    text: String::new(),
-                    approval: None,
-                });
-            }
-            Event::TurnFinished { .. } => *live = None,
-            _ => {
-                let Some(current) = live.as_mut() else {
-                    return;
-                };
-                match event {
-                    Event::Delta { text, .. } => current.text += text,
-                    Event::ToolApproval { .. } => current.approval = Some(event.clone()),
-                    Event::ToolStarted { .. } => {
-                        current.text.clear();
-                        current.approval = None;
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
-/// What the chat window opens on.
-#[derive(Serialize)]
-pub struct History {
-    messages: Vec<StoredMessage>,
-    live: Option<Live>,
 }
 
 struct Conn {
@@ -165,6 +114,13 @@ fn session_file() -> Option<PathBuf> {
         .and_then(|db| db.parent().map(|dir| dir.join("sprite-session")))
 }
 
+/// Her chat's ID, as last saved (for opening it in the main window).
+pub fn her_saved_session() -> Option<String> {
+    let text = std::fs::read_to_string(session_file()?).ok()?;
+    let id = text.trim();
+    (!id.is_empty()).then(|| id.to_owned())
+}
+
 /// Pass her chat's events to the page; when the connection drops, say so and forget it, so
 /// the next message reconnects.
 async fn relay(
@@ -175,11 +131,9 @@ async fn relay(
 ) {
     while let Some(event) = events.recv().await {
         if event.session_id() == session {
-            Live::follow(&mut app.state::<Chat>().live.lock().unwrap(), &event);
             let _ = app.emit("core-event", &event);
         }
     }
-    *app.state::<Chat>().live.lock().unwrap() = None;
     let _ = app.emit("core-disconnected", ());
     let chat = app.state::<Chat>();
     let mut conn = chat.conn.lock().await;
@@ -244,57 +198,6 @@ pub async fn approve(
                 session_id: conn.session.clone(),
                 call_id,
                 decision,
-            },
-        )
-        .await
-        .map(|_| ())
-        .map_err(|err| err.to_string())
-}
-
-/// Her connection, opened if it isn't.
-async fn connected<'a>(
-    app: &AppHandle,
-    chat: &'a Chat,
-) -> Result<MutexGuard<'a, Option<Conn>>, String> {
-    let mut conn = chat.conn.lock().await;
-    if conn.is_none() {
-        *conn = Some(open(app).await?);
-    }
-    Ok(conn)
-}
-
-/// Her chat so far, and the reply in progress, for the chat window.
-#[tauri::command]
-pub async fn history(app: AppHandle, chat: tauri::State<'_, Chat>) -> Result<History, String> {
-    let conn = connected(&app, &chat).await?;
-    let conn = conn.as_ref().expect("just connected");
-    let session: Session = conn
-        .client
-        .call(
-            method::SESSIONS_LOAD,
-            SessionParams {
-                session_id: conn.session.clone(),
-            },
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    let live = chat.live.lock().unwrap().clone();
-    Ok(History {
-        messages: session.messages,
-        live,
-    })
-}
-
-/// Stop her reply in progress.
-#[tauri::command]
-pub async fn cancel(chat: tauri::State<'_, Chat>) -> Result<(), String> {
-    let conn = chat.conn.lock().await;
-    let conn = conn.as_ref().ok_or("lost the connection to Lucy's core")?;
-    conn.client
-        .call::<_, Value>(
-            method::CHAT_CANCEL,
-            SessionParams {
-                session_id: conn.session.clone(),
             },
         )
         .await

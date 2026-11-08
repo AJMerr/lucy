@@ -59,6 +59,7 @@
               gtk3
               gtk-layer-shell
               harfbuzz
+              libayatana-appindicator
               librsvg
               libsoup_3
               pango

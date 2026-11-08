@@ -1,12 +1,14 @@
-//! Lucy's desktop sprite (ADR 0005): a small transparent window, always on top, that draws
-//! the configured sprite pack and talks with Lucy's core. `lucy sprite` starts it, and
-//! `lucy sprite toggle|ask|chat|quit` drive it.
+//! Lucy's desktop app: her sprite (ADR 0005), a small transparent window, always on top, that
+//! draws the configured sprite pack and talks with Lucy's core, and her main window (chats).
+//! `lucy sprite` and `lucy app` start it, and
+//! `lucy sprite toggle|ask|chat|quit` drive it. A tray icon opens the window or quits.
 
 // No console window on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_window;
+mod bridge;
 mod chat;
-mod chat_window;
 mod pack;
 mod placement;
 
@@ -40,13 +42,15 @@ fn main() {
                 .build(),
         )
         .manage(chat::Chat::default())
+        .manage(bridge::Bridge::default())
+        .manage(app_window::AppWindow::default())
         .invoke_handler(tauri::generate_handler![
             pack::pack,
             chat::send,
             chat::approve,
-            chat::history,
-            chat::cancel,
-            chat_window::open_chat,
+            app_window::open_chat,
+            app_window::take_pending_chat,
+            bridge::rpc_call,
             placement::set_layout,
         ])
         .setup(move |app| {
@@ -63,8 +67,18 @@ fn main() {
             placement::place(&window, size)?;
             register_hotkey(app.handle(), &hotkey);
             chat::connect_in_background(app.handle().clone());
-            if let Some(first @ ("ask" | "chat")) = first_command.as_deref() {
-                // `lucy sprite ask|chat` started her: act once the page is listening.
+            if tray_supported() {
+                if let Err(err) = tray(app.handle()) {
+                    eprintln!("lucy-sprite: no tray icon: {err}");
+                }
+            } else {
+                eprintln!(
+                    "lucy-sprite: no tray icon (it needs libayatana-appindicator); `lucy app` \
+                     opens Lucy's window"
+                );
+            }
+            if let Some(first @ ("ask" | "chat" | "app")) = first_command.as_deref() {
+                // `lucy sprite ask|chat` or `lucy app` started her: act once the page listens.
                 let first = first.to_owned();
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -84,7 +98,8 @@ fn command(app: &AppHandle, command: Option<&str>) {
     match command {
         Some("quit") => app.exit(0),
         Some("toggle") => placement::toggle(app),
-        Some("chat") => chat_window::open(app),
+        Some("chat") => app_window::open(app, chat::her_saved_session()),
+        Some("app") => app_window::open(app, None),
         Some("ask") => {
             placement::show(app);
             let _ = app.emit("sprite-command", "ask");
@@ -106,5 +121,77 @@ fn register_hotkey(app: &AppHandle, hotkey: &str) {
     }
     if let Err(err) = app.global_shortcut().register(hotkey) {
         eprintln!("lucy-sprite: couldn't use `{hotkey}` as her hotkey: {err}");
+    }
+}
+
+/// The tray icon: open Lucy's window, show or hide the sprite, or quit. Clicking it opens the
+/// window too. (On GNOME it needs the AppIndicator extension; `lucy app` always works.)
+fn tray(app: &AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let menu = Menu::with_items(
+        app,
+        &[
+            &MenuItem::with_id(app, "open", "Open Lucy", true, None::<&str>)?,
+            &MenuItem::with_id(app, "sprite", "Show or hide the sprite", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "quit", "Quit Lucy", true, None::<&str>)?,
+        ],
+    )?;
+    let mut tray = TrayIconBuilder::with_id("lucy")
+        .tooltip("Lucy")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "open" => app_window::open(app, None),
+            "sprite" => placement::toggle(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                app_window::open(tray.app_handle(), None);
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
+/// Whether a tray icon can work here. On Linux, Tauri's tray loads the AppIndicator library
+/// at runtime, and stops the whole app if it can't, so look first.
+fn tray_supported() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        [
+            "libayatana-appindicator3.so.1",
+            "libayatana-appindicator3.so",
+            "libappindicator3.so.1",
+            "libappindicator3.so",
+        ]
+        .iter()
+        .any(|name| {
+            let name = std::ffi::CString::new(*name).expect("no NUL in a library name");
+            // SAFETY: a valid C string; the handle is closed straight away.
+            let handle = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_LAZY) };
+            if handle.is_null() {
+                return false;
+            }
+            // SAFETY: `handle` came from dlopen above.
+            unsafe { libc::dlclose(handle) };
+            true
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
     }
 }
