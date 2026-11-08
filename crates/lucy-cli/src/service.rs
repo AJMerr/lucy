@@ -504,7 +504,10 @@ impl<R: Runner> ServiceManager<R> {
                 Platform::Launchd { uid, .. } => {
                     let ran = self
                         .runner
-                        .run("launchctl", &["print", &format!("gui/{uid}/{LAUNCHD_LABEL}")])
+                        .run(
+                            "launchctl",
+                            &["print", &format!("gui/{uid}/{LAUNCHD_LABEL}")],
+                        )
                         .context("couldn't run `launchctl`")?;
                     ran.ok && ran.output.contains("state = running")
                 }

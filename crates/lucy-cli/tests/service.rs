@@ -171,7 +171,12 @@ impl Runner for &FakeRunner {
             self.calls.borrow_mut().push(call);
             return Ok(Ran {
                 ok: running > 0,
-                output: if running > 0 { "state = running" } else { "inactive" }.into(),
+                output: if running > 0 {
+                    "state = running"
+                } else {
+                    "inactive"
+                }
+                .into(),
             });
         }
         let failure = self
