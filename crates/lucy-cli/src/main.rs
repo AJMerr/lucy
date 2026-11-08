@@ -65,7 +65,7 @@ enum Command {
         #[command(subcommand)]
         action: McpAction,
     },
-    /// Open Lucy's window (chats; settings soon), starting the desktop app if needed.
+    /// Open Lucy's window (chats and settings), starting the desktop app if needed.
     App,
     /// Start Lucy's desktop sprite, or send it a command.
     Sprite {
