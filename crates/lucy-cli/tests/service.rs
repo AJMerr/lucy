@@ -138,10 +138,12 @@ fn the_service_gets_path_and_where_lucy_keeps_things_but_no_keys() {
 // --- Registering with a (fake) service manager ------------------------------------------------
 
 /// Records every command; any whose text starts with a `failing` prefix fails with that output.
+/// Asking whether the service is still running says yes `still_running` more times, then no.
 #[derive(Default)]
 struct FakeRunner {
     calls: RefCell<Vec<String>>,
     failing: Vec<(&'static str, &'static str)>,
+    still_running: std::cell::Cell<usize>,
 }
 
 impl FakeRunner {
@@ -163,6 +165,15 @@ impl Runner for &FakeRunner {
             .chain(args.iter().copied())
             .collect::<Vec<_>>()
             .join(" ");
+        if call.starts_with("systemctl --user is-active") || call.starts_with("launchctl print") {
+            let running = self.still_running.get();
+            self.still_running.set(running.saturating_sub(1));
+            self.calls.borrow_mut().push(call);
+            return Ok(Ran {
+                ok: running > 0,
+                output: if running > 0 { "state = running" } else { "inactive" }.into(),
+            });
+        }
         let failure = self
             .failing
             .iter()
@@ -270,7 +281,36 @@ fn systemd_start_asks_systemctl() {
 
     assert!(systemd(dir.path(), &runner).start().unwrap());
 
-    assert_eq!(runner.take(), ["systemctl --user start lucy-core.service"]);
+    assert_eq!(
+        runner.take(),
+        [
+            "systemctl --user is-active --quiet lucy-core.service",
+            "systemctl --user start lucy-core.service",
+        ]
+    );
+}
+
+#[test]
+fn start_waits_for_a_core_that_is_still_shutting_down() {
+    // Right after `lucy core stop` the socket is gone but the process may still be exiting,
+    // and starting a unit systemd still sees as running does nothing.
+    let dir = tempfile::tempdir().unwrap();
+    let runner = FakeRunner {
+        still_running: 2.into(),
+        ..FakeRunner::default()
+    };
+
+    assert!(systemd(dir.path(), &runner).start().unwrap());
+
+    assert_eq!(
+        runner.take(),
+        [
+            "systemctl --user is-active --quiet lucy-core.service",
+            "systemctl --user is-active --quiet lucy-core.service",
+            "systemctl --user is-active --quiet lucy-core.service",
+            "systemctl --user start lucy-core.service",
+        ]
+    );
 }
 
 #[test]
@@ -342,7 +382,10 @@ fn launchd_install_reloads_the_agent_and_uninstall_unloads_it() {
     assert!(manager.start().unwrap());
     assert_eq!(
         runner.take(),
-        ["launchctl kickstart gui/501/io.github.ajmerr.lucy.core"]
+        [
+            "launchctl print gui/501/io.github.ajmerr.lucy.core",
+            "launchctl kickstart gui/501/io.github.ajmerr.lucy.core",
+        ]
     );
 
     assert!(manager.uninstall().unwrap());

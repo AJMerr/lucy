@@ -476,6 +476,7 @@ impl<R: Runner> ServiceManager<R> {
     /// Start the installed service now. False when there's no manager to ask (Windows), so
     /// the caller starts `lucy core run --service` itself.
     pub fn start(&self) -> Result<bool> {
+        self.wait_until_stopped()?;
         match &self.platform {
             Platform::Systemd { .. } => self.systemctl(&["start", UNIT_NAME])?,
             Platform::Launchd { uid, .. } => self.run_ok(
@@ -485,6 +486,36 @@ impl<R: Runner> ServiceManager<R> {
             Platform::RunKey => return Ok(false),
         }
         Ok(true)
+    }
+
+    /// Wait (a few seconds at most) for a service core that's on its way out to finish. A
+    /// stopped core closes its socket before it exits, and starting a service its manager
+    /// still sees as running does nothing.
+    fn wait_until_stopped(&self) -> Result<()> {
+        const POLL: std::time::Duration = std::time::Duration::from_millis(100);
+        for _ in 0..50 {
+            let running = match &self.platform {
+                Platform::Systemd { .. } => {
+                    self.runner
+                        .run("systemctl", &["--user", "is-active", "--quiet", UNIT_NAME])
+                        .context("couldn't run `systemctl`")?
+                        .ok
+                }
+                Platform::Launchd { uid, .. } => {
+                    let ran = self
+                        .runner
+                        .run("launchctl", &["print", &format!("gui/{uid}/{LAUNCHD_LABEL}")])
+                        .context("couldn't run `launchctl`")?;
+                    ran.ok && ran.output.contains("state = running")
+                }
+                Platform::RunKey => false,
+            };
+            if !running {
+                return Ok(());
+            }
+            std::thread::sleep(POLL);
+        }
+        bail!("Lucy's core service is still shutting down; try again in a moment")
     }
 
     /// Start the sprite at login (replacing an earlier entry). Doesn't start her now.
