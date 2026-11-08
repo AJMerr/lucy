@@ -68,3 +68,23 @@ Date: 2026-11-05 · Status: Accepted
   `LUCY_REMOTE`, then `remote.toml` (next to `config.toml`, written by `lucy remote connect`),
   with the token in the keyring entry `remote-client` (`LUCY_KEY_REMOTE_CLIENT`). It never
   spawns a remote core. `lucy service` and `lucy core stop` always act on the local core.
+
+## Implementation notes (milestone 3a, protocol v5: settings over RPC)
+
+- For the GUI (and a phone app later), settings go through the core instead of each front end
+  editing files: `config.get` returns config.toml as JSON with defaults filled in, its path,
+  and whether home-manager owns it; `config.update {patch}` applies a JSON merge patch to the
+  file with `toml_edit`, so comments and layout survive, writes only a valid result, and says
+  when remote-access changes need a restart. The core already re-reads config.toml per
+  request, so other changes apply to the next message.
+- `keys.status` lists every key name the config refers to, where it's set (keyring or an
+  environment variable) and what uses it; `keys.set` and `keys.remove` write the keyring of
+  the core's machine. Nothing ever returns a key's value.
+- `persona.get|set|reset` edit your own version of the configured persona
+  (`personas/<name>.md`); reset deletes it, back to the built-in one.
+- `mcp.login {name}` runs the OAuth sign-in in the core, opening the browser on its machine,
+  and answers when it's done. Adding and removing MCP servers is a `config.update`;
+  `tools.list` reports any that fail to start.
+- Remote clients can read settings and key status. Changing settings, keys or the persona
+  needs `[remote] allow_config = true`; MCP sign-in is refused remotely regardless. Service
+  actions (install, restart) stay out of the protocol: the desktop app runs `lucy service`.

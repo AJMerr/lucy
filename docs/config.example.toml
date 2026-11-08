@@ -100,6 +100,8 @@ bind = "127.0.0.1:7077"         # e.g. "100.64.0.7:7077" for your Tailscale addr
 # allow_network = true          # needed for any bind beyond 127.0.0.1; there's no TLS, so only
                                 # on networks you trust (Tailscale) or behind a TLS proxy
 # max_level = 1                 # highest agent level for chats from other machines (0-3)
+# allow_config = true           # let other machines change settings, keys and the persona
+                                # (they can always read settings, never keys)
 
 # --- Sprite (`lucy sprite`) ---------------------------------------------------------------
 

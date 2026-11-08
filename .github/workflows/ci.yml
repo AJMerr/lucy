@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Every branch, so work on feature branches is checked before it reaches main.
+    branches: ["**"]
   pull_request:
 
 env:

@@ -293,7 +293,7 @@ pub async fn login(name: &str, server: &McpServer) -> Result<()> {
         println!(
             "Opening your browser to sign in to `{name}`. If it doesn't open, visit:\n  {url}"
         );
-        open_browser(url);
+        oauth::open_browser(url);
     })
     .await
     .map_err(anyhow::Error::msg)?;
@@ -310,28 +310,6 @@ pub fn logout(name: &str) -> Result<()> {
         println!("`{name}` had no stored sign-in.");
     }
     Ok(())
-}
-
-/// Best effort: if no browser opens, the printed URL still works.
-fn open_browser(url: &str) {
-    let mut command = if cfg!(windows) {
-        let mut command = std::process::Command::new("cmd");
-        command.args(["/C", "start", ""]).arg(url);
-        command
-    } else if cfg!(target_os = "macos") {
-        let mut command = std::process::Command::new("open");
-        command.arg(url);
-        command
-    } else {
-        let mut command = std::process::Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-    let _ = command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
 }
 
 /// Configured servers, with their tool counts or problems as the core sees them.

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
@@ -481,22 +480,7 @@ fn auth_status() -> Result<()> {
     let path = config_path()?;
     let config = Config::load(&path)?.with_context(|| no_config_message(&path))?;
 
-    let mut key_names: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (profile, settings) in &config.profiles {
-        if let Some(key_name) = &settings.key_name {
-            key_names.entry(key_name).or_default().push(profile);
-        }
-    }
-    for (server, settings) in &config.mcp.servers {
-        let keys = settings
-            .env_keys
-            .values()
-            .chain(settings.header_keys.values())
-            .chain(&settings.bearer_key);
-        for key_name in keys {
-            key_names.entry(key_name).or_default().push(server);
-        }
-    }
+    let key_names = config.key_names();
     if key_names.is_empty() {
         println!("No profiles or MCP servers need a key.");
         return Ok(());
@@ -504,7 +488,7 @@ fn auth_status() -> Result<()> {
 
     let secrets = Secrets::system();
     for (key_name, profiles) in key_names {
-        let status = match secrets.resolve(key_name) {
+        let status = match secrets.resolve(&key_name) {
             Ok(Some(key)) => match key.source {
                 KeySource::Env(var) => format!("set via ${var}"),
                 KeySource::Keyring => "set in OS keyring".to_owned(),

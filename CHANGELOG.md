@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Settings over the core (for the coming GUI)
+
+- **Protocol v5:** the core can now show and change Lucy's settings for any front end:
+  config.toml (`config.get`, `config.update`, keeping your comments and layout and refusing
+  anything invalid), API keys (`keys.status|set|remove`, never sending a key back), your
+  persona (`persona.get|set|reset`), and MCP sign-in (`mcp.login`).
+- **`[remote] allow_config`** (off by default): other machines can read settings but only
+  change them, or keys and the persona, when this is on.
+- A new `lucy` replaces an older idle core by itself; restart a service core with
+  `lucy service restart`.
+
 ## v0.4.0: desktop sprite (2026-11-07)
 
 Lucy can now live on your desktop: an animated sprite in the corner of the screen who answers

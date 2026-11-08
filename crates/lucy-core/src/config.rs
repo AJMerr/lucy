@@ -171,6 +171,9 @@ pub struct RemoteSettings {
     /// Needed to listen beyond loopback (LAN, Tailscale). There's no TLS, so only on networks
     /// you trust, or behind something that adds it.
     pub allow_network: bool,
+    /// Let remote clients change settings, API keys and the persona (reading is always
+    /// allowed). Off, a leaked token can chat but not rewrite Lucy.
+    pub allow_config: bool,
     /// The highest agent level a chat driven from a remote client runs at.
     pub max_level: AgentLevel,
 }
@@ -181,6 +184,7 @@ impl Default for RemoteSettings {
             enabled: false,
             bind: SocketAddr::from(([127, 0, 0, 1], 7077)),
             allow_network: false,
+            allow_config: false,
             max_level: AgentLevel::Guarded,
         }
     }
@@ -231,6 +235,119 @@ pub fn check_writable(path: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// Apply a JSON merge patch (RFC 7396) to config.toml's text: objects merge into tables,
+/// `null` removes a key, anything else replaces it. Comments, order and the rest of the file
+/// stay as they were. Fails if the result isn't a valid config.
+pub fn apply_patch(text: &str, patch: &serde_json::Value) -> Result<String, ConfigError> {
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|err| ConfigError::Invalid(format!("{err}")))?;
+    let serde_json::Value::Object(changes) = patch else {
+        return Err(ConfigError::Invalid(
+            "a config change must be an object".into(),
+        ));
+    };
+    merge_into(doc.as_table_mut(), changes)?;
+    let text = doc.to_string();
+    Config::from_toml_str(&text)?;
+    Ok(text)
+}
+
+/// Apply a change ([`apply_patch`]) to the config file at `path`, creating it if there's none
+/// yet. The file is only written if the result is valid, and never if home-manager owns it.
+pub fn update_file(path: &Path, patch: &serde_json::Value) -> Result<(), ConfigError> {
+    let io_err = |source| ConfigError::Io {
+        path: path.to_owned(),
+        source,
+    };
+    check_writable(path)?;
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(io_err(err)),
+    };
+    let updated = apply_patch(&text, patch)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(io_err)?;
+    }
+    fs::write(path, updated).map_err(io_err)
+}
+
+fn merge_into(
+    table: &mut toml_edit::Table,
+    changes: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), ConfigError> {
+    use serde_json::Value as Json;
+    use toml_edit::Item;
+
+    for (key, change) in changes {
+        match change {
+            Json::Null => {
+                table.remove(key);
+            }
+            Json::Object(inner) => match table.get_mut(key) {
+                Some(Item::Table(existing)) => merge_into(existing, inner)?,
+                Some(Item::Value(toml_edit::Value::InlineTable(existing))) => {
+                    let mut merged = existing.clone().into_table();
+                    merge_into(&mut merged, inner)?;
+                    *existing = merged.into_inline_table();
+                }
+                _ => {
+                    let mut new = toml_edit::Table::new();
+                    // A table holding only tables shows as `[a.b]`, not an empty `[a]`.
+                    new.set_implicit(inner.values().all(Json::is_object));
+                    merge_into(&mut new, inner)?;
+                    table.insert(key, Item::Table(new));
+                }
+            },
+            value => {
+                let mut new = toml_value(value)?;
+                match table.get_mut(key).and_then(Item::as_value_mut) {
+                    // Keep the spacing and any comment around the old value.
+                    Some(old) => {
+                        *new.decor_mut() = old.decor().clone();
+                        *old = new;
+                    }
+                    None => {
+                        table.insert(key, Item::Value(new));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn toml_value(value: &serde_json::Value) -> Result<toml_edit::Value, ConfigError> {
+    use serde_json::Value as Json;
+    Ok(match value {
+        Json::Bool(b) => (*b).into(),
+        Json::Number(n) => match n.as_i64() {
+            Some(i) => i.into(),
+            None => n
+                .as_f64()
+                .ok_or_else(|| ConfigError::Invalid(format!("{n} is out of range")))?
+                .into(),
+        },
+        Json::String(s) => s.as_str().into(),
+        Json::Array(items) => {
+            let mut array = toml_edit::Array::new();
+            for item in items {
+                array.push(toml_value(item)?);
+            }
+            toml_edit::Value::Array(array)
+        }
+        Json::Object(fields) => {
+            let mut inline = toml_edit::InlineTable::new();
+            for (key, field) in fields {
+                inline.insert(key, toml_value(field)?);
+            }
+            toml_edit::Value::InlineTable(inline)
+        }
+        Json::Null => return Err(ConfigError::Invalid("null inside a list".into())),
+    })
+}
+
 fn default_persona() -> String {
     "lucy".into()
 }
@@ -271,6 +388,33 @@ pub fn default_path() -> Option<PathBuf> {
 }
 
 impl Config {
+    /// Every API key name the config refers to, with the profiles and MCP servers using it.
+    pub fn key_names(&self) -> BTreeMap<String, Vec<String>> {
+        let mut names: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (profile, settings) in &self.profiles {
+            if let Some(key_name) = &settings.key_name {
+                names
+                    .entry(key_name.clone())
+                    .or_default()
+                    .push(profile.clone());
+            }
+        }
+        for (server, settings) in &self.mcp.servers {
+            let keys = settings
+                .env_keys
+                .values()
+                .chain(settings.header_keys.values())
+                .chain(&settings.bearer_key);
+            for key_name in keys {
+                names
+                    .entry(key_name.clone())
+                    .or_default()
+                    .push(server.clone());
+            }
+        }
+        names
+    }
+
     /// A config with one profile, used as the default, and everything else at its defaults.
     pub fn with_profile(name: impl Into<String>, profile: Profile) -> Self {
         let name = name.into();
