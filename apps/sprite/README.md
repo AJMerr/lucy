@@ -11,11 +11,10 @@ draws Lucy from a sprite pack, and talks with you in speech bubbles. See
 
 Click her (or press your hotkey) and type in the box above her; Enter sends, Esc closes.
 Her reply streams into a speech bubble (bold, italics, code and lists render) and stays up
-until you send your next message. × or Esc hides it sooner (Esc works while she has the
-keyboard: right after you send, or after you click her). To have replies fade by themselves,
-set `[sprite] bubble_timeout_secs` to a number of seconds. Past about 8 lines it stops with
-"more…", which opens her chat window. If she needs your go-ahead for a tool (a command, a file change, going
-online) the bubble asks, with **Allow**, **Always** (for the rest of the chat) and **Deny**, and
+until you send your next message, or until you hide it with ×. To have replies fade by
+themselves, set `[sprite] bubble_timeout_secs` to a number of seconds. Past about 8 lines it
+stops with "more…", which opens her chat window. If she needs your go-ahead for a tool (a
+command, a file change, going online) the bubble asks, with **Allow**, **Always** (for the rest of the chat) and **Deny**, and
 "show changes" for edits.
 
 ## Her chat window
