@@ -12,12 +12,13 @@ use interprocess::local_socket::ListenerOptions;
 use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
 use lucy_client::Endpoint;
 use lucy_protocol::rpc::{
-    self, ApproveParams, BusyChat, CancelResult, ChatSendParams, ChatSendResult, CoreStatus,
-    Decision, Event, HelloParams, HelloResult, Notification, PROTOCOL_VERSION, ProfileInfo,
-    RenameParams, Request, ResolveParams, Response, RpcError, ServerProblem, SessionParams,
-    SessionSettings, SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams,
-    ShutdownParams, ShutdownResult, ToolsList, ToolsListParams, TurnOutcome, TurnUsage, UndoFile,
-    UndoParams, UndoResult, code, method,
+    self, ApproveParams, BusyChat, CancelResult, ChatSendParams, ChatSendResult,
+    ConfigUpdateParams, ConfigUpdateResult, ConfigView, CoreStatus, Decision, Event, HelloParams,
+    HelloResult, KeyParams, KeySetParams, KeyStatus, Notification, PROTOCOL_VERSION,
+    PersonaSetParams, PersonaView, ProfileInfo, RenameParams, Request, ResolveParams, Response,
+    RpcError, ServerProblem, SessionParams, SessionSettings, SetLevelParams, SetModeParams,
+    SetPlainParams, SetProfileParams, ShutdownParams, ShutdownResult, ToolsList, ToolsListParams,
+    TurnOutcome, TurnUsage, UndoFile, UndoParams, UndoResult, code, method,
 };
 use lucy_protocol::{AgentLevel, Message, Mode, Role, ToolCall};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, Usage};
@@ -33,7 +34,7 @@ use crate::mcp::McpHost;
 use crate::persona::{Personas, PromptContext, build_system_prompt, detect_machine};
 use crate::provider::build_provider;
 
-use crate::secrets::{SecretStore, Secrets};
+use crate::secrets::{KeySource, SecretStore, Secrets};
 use crate::sessions::{
     ChatSettings, NewMessage, Origin, SessionId, SessionStore, StoreError, new_reply_id,
 };
@@ -403,6 +404,28 @@ async fn handle(
              own machine",
         ));
     }
+    if request.method == method::MCP_LOGIN && state.lock().unwrap().remote {
+        return Err(RpcError::app(
+            "signing in opens a browser on the machine that runs Lucy, so do it there",
+        ));
+    }
+    let changes_settings = matches!(
+        request.method.as_str(),
+        method::CONFIG_UPDATE
+            | method::KEYS_SET
+            | method::KEYS_REMOVE
+            | method::PERSONA_SET
+            | method::PERSONA_RESET
+    );
+    if changes_settings
+        && state.lock().unwrap().remote
+        && !core.config().is_ok_and(|config| config.remote.allow_config)
+    {
+        return Err(RpcError::app(
+            "remote clients can't change settings, keys or the persona; set `[remote] \
+             allow_config = true` on the machine that runs Lucy to allow it",
+        ));
+    }
     // These two work before `hello`, so any client version can see and stop the core.
     if request.method == method::CORE_STATUS {
         return result(CoreStatus {
@@ -537,6 +560,129 @@ async fn handle(
             }
             result(core.undo(&key, p.apply).map_err(app)?)
         }
+        method::CONFIG_GET => {
+            let path = &core.options.config_path;
+            let config = Config::load(path).map_err(app)?;
+            result(ConfigView {
+                path: path.display().to_string(),
+                managed: matches!(
+                    crate::config::check_writable(path),
+                    Err(crate::config::ConfigError::Managed { .. })
+                ),
+                config: config
+                    .map(|config| serde_json::to_value(config).map_err(app))
+                    .transpose()?,
+            })
+        }
+        method::CONFIG_UPDATE => {
+            let p: ConfigUpdateParams = params(request.params)?;
+            let path = &core.options.config_path;
+            let before = Config::load(path).map_err(app)?;
+            crate::config::update_file(path, &p.patch).map_err(app)?;
+            let after = Config::load(path).map_err(app)?;
+            // The listener for remote access is set up when the core starts.
+            let remote = |config: &Option<Config>| config.as_ref().map(|c| c.remote.clone());
+            result(ConfigUpdateResult {
+                restart_needed: remote(&before) != remote(&after),
+            })
+        }
+        method::KEYS_STATUS => {
+            let config = core.config()?;
+            result(
+                config
+                    .key_names()
+                    .into_iter()
+                    .map(|(name, used_by)| {
+                        let (source, error) = match core.options.secrets.resolve(&name) {
+                            Ok(Some(key)) => (
+                                Some(match key.source {
+                                    KeySource::Keyring => "keyring".to_owned(),
+                                    KeySource::Env(var) => var,
+                                }),
+                                None,
+                            ),
+                            Ok(None) => (None, None),
+                            Err(err) => (None, Some(err.to_string())),
+                        };
+                        KeyStatus {
+                            name,
+                            used_by,
+                            source,
+                            error,
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+        method::KEYS_SET => {
+            let p: KeySetParams = params(request.params)?;
+            if p.name.trim().is_empty() || p.value.is_empty() {
+                return Err(RpcError::new(
+                    code::INVALID_PARAMS,
+                    "a key needs a name and a value",
+                ));
+            }
+            core.options.secrets.set(&p.name, &p.value).map_err(app)?;
+            result(Value::Null)
+        }
+        method::KEYS_REMOVE => {
+            let p: KeyParams = params(request.params)?;
+            result(core.options.secrets.remove(&p.name).map_err(app)?)
+        }
+        method::PERSONA_GET => {
+            let name = core.config()?.defaults.persona;
+            let persona = core.personas.load(&name).map_err(app)?;
+            result(PersonaView {
+                overridden: matches!(persona.source, crate::persona::PersonaSource::File(_)),
+                path: core
+                    .persona_file(&name)
+                    .map(|path| path.display().to_string()),
+                name: persona.name,
+                text: persona.text,
+            })
+        }
+        method::PERSONA_SET => {
+            let p: PersonaSetParams = params(request.params)?;
+            let name = core.config()?.defaults.persona;
+            let path = core
+                .persona_file(&name)
+                .ok_or_else(|| RpcError::app("this core has no folder for personas"))?;
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(app)?;
+            }
+            std::fs::write(&path, p.text).map_err(app)?;
+            result(Value::Null)
+        }
+        method::PERSONA_RESET => {
+            let name = core.config()?.defaults.persona;
+            if let Some(path) = core.persona_file(&name) {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                    Err(err) => return Err(app(err)),
+                }
+            }
+            result(Value::Null)
+        }
+        method::SETUP_PRESETS => result(crate::setup::presets()),
+        method::MCP_LOGIN => {
+            let p: KeyParams = params(request.params)?;
+            let config = core.config()?;
+            let server = config
+                .mcp
+                .servers
+                .get(&p.name)
+                .ok_or_else(|| RpcError::app(format!("no MCP server named `{}`", p.name)))?;
+            let store = core
+                .options
+                .token_store
+                .clone()
+                .ok_or_else(|| RpcError::app("this core keeps no sign-ins"))?;
+            crate::oauth::login(&p.name, server, store, crate::oauth::open_browser)
+                .await
+                .map_err(RpcError::app)?;
+            result(Value::Null)
+        }
         method::PROFILES_LIST => {
             let config = core.config()?;
             result(
@@ -639,6 +785,14 @@ impl Core {
                     self.options.config_path.display()
                 ))
             })
+    }
+
+    /// Where your own version of persona `name` lives (whether or not it exists yet).
+    fn persona_file(&self, name: &str) -> Option<PathBuf> {
+        self.options
+            .personas_dir
+            .as_ref()
+            .map(|dir| dir.join(format!("{name}.md")))
     }
 
     /// Chats with a reply in progress, with their titles.

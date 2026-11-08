@@ -1,0 +1,11 @@
+{
+  "name": "lucy-desktop",
+  "private": true,
+  "description": "The Tauri CLI for building Lucy's desktop app; its web pages live in ../ui.",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

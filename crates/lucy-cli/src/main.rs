@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
@@ -66,7 +65,9 @@ enum Command {
         #[command(subcommand)]
         action: McpAction,
     },
-    /// Start Lucy's desktop sprite, or send it a command.
+    /// Open Lucy's window (chats and settings), starting the desktop app if needed.
+    App,
+    /// Show Lucy's sprite (starting the desktop app if needed), or send her a command.
     Sprite {
         #[command(subcommand)]
         action: Option<SpriteAction>,
@@ -176,11 +177,11 @@ enum McpAction {
 enum SpriteAction {
     /// Open (or close) her input box, starting her if needed. Bind this to a key.
     Ask,
-    /// Open her chat window (her whole chat), starting her if needed.
+    /// Open her chat in Lucy's window, starting her if needed.
     Chat,
     /// Hide her, or show her again.
     Toggle,
-    /// Close the sprite.
+    /// Close Lucy's desktop app: the sprite, the window and the tray icon.
     Quit,
 }
 
@@ -330,12 +331,13 @@ fn main() -> Result<()> {
             AuthAction::Status => auth_status(),
         },
         Some(Command::Mcp { action }) => mcp_command(action),
+        Some(Command::App) => sprite::run("app"),
         Some(Command::Sprite { action }) => sprite::run(match action {
-            None => None,
-            Some(SpriteAction::Ask) => Some("ask"),
-            Some(SpriteAction::Toggle) => Some("toggle"),
-            Some(SpriteAction::Chat) => Some("chat"),
-            Some(SpriteAction::Quit) => Some("quit"),
+            None => "sprite",
+            Some(SpriteAction::Ask) => "ask",
+            Some(SpriteAction::Toggle) => "toggle",
+            Some(SpriteAction::Chat) => "chat",
+            Some(SpriteAction::Quit) => "quit",
         }),
         Some(Command::Remote { action }) => match action {
             RemoteAction::Connect { url } => {
@@ -481,22 +483,7 @@ fn auth_status() -> Result<()> {
     let path = config_path()?;
     let config = Config::load(&path)?.with_context(|| no_config_message(&path))?;
 
-    let mut key_names: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (profile, settings) in &config.profiles {
-        if let Some(key_name) = &settings.key_name {
-            key_names.entry(key_name).or_default().push(profile);
-        }
-    }
-    for (server, settings) in &config.mcp.servers {
-        let keys = settings
-            .env_keys
-            .values()
-            .chain(settings.header_keys.values())
-            .chain(&settings.bearer_key);
-        for key_name in keys {
-            key_names.entry(key_name).or_default().push(server);
-        }
-    }
+    let key_names = config.key_names();
     if key_names.is_empty() {
         println!("No profiles or MCP servers need a key.");
         return Ok(());
@@ -504,7 +491,7 @@ fn auth_status() -> Result<()> {
 
     let secrets = Secrets::system();
     for (key_name, profiles) in key_names {
-        let status = match secrets.resolve(key_name) {
+        let status = match secrets.resolve(&key_name) {
             Ok(Some(key)) => match key.source {
                 KeySource::Env(var) => format!("set via ${var}"),
                 KeySource::Keyring => "set in OS keyring".to_owned(),

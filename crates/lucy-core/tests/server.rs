@@ -705,7 +705,10 @@ async fn status_answers_before_hello() {
     .await;
 
     let status = &replies[0]["result"];
-    assert_eq!(status["protocol_version"], 4);
+    assert_eq!(
+        status["protocol_version"],
+        lucy_protocol::rpc::PROTOCOL_VERSION
+    );
     assert_eq!(status["core_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(status["pid"], std::process::id());
     assert_eq!(status["service"], false);

@@ -1,5 +1,59 @@
 # Changelog
 
+## Unreleased
+
+### Settings over the core (for the coming GUI)
+
+- **Protocol v5:** the core can now show and change Lucy's settings for any front end:
+  config.toml (`config.get`, `config.update`, keeping your comments and layout and refusing
+  anything invalid), API keys (`keys.status|set|remove`, never sending a key back), your
+  persona (`persona.get|set|reset`), and MCP sign-in (`mcp.login`).
+- **`[remote] allow_config`** (off by default): other machines can read settings but only
+  change them, or keys and the persona, when this is on.
+- A new `lucy` replaces an older idle core by itself; restart a service core with
+  `lucy service restart`.
+
+### Lucy's main window
+
+- **`lucy app`** opens Lucy's main window: your chats in a sidebar (new, rename, delete, a dot
+  where something's new), the open chat with streaming replies, tool approvals, Stop and Undo,
+  and the chat's model, Assist/Agent mode, level and plain mode in its header. Replies in
+  other chats, and chats started from a terminal or the sprite, show up as they happen. On a
+  narrow window the chat list folds into a menu.
+- **A tray icon** opens the window, shows or hides the sprite, or quits. Closing the window
+  keeps Lucy in the tray. (Linux needs AppIndicator for the tray; `lucy app` works without.)
+- "more…" on the sprite's bubble and `lucy sprite chat` now open her chat in the main window,
+  which replaces the sprite's separate chat window.
+- The same page works in a browser against a core with remote access on
+  (`app.html?url=ws://host:7077/rpc&token=…`), ready for a phone app later.
+
+### Settings in the app
+
+- **Settings** (bottom of the chat list): models and API keys, how new chats start, agent caps
+  and tool rules, your name, the persona, MCP servers (with sign-in for remote ones), the
+  sprite, remote access (and its token), and the login service. Each section has Save and
+  Revert, sends only what changed, and shows the core's reason if it refuses a change. Keys go
+  to the keyring and are never shown back. A config owned by home-manager can be looked at but
+  not changed here.
+- **First-run setup:** with no config yet, the window starts by asking for a provider, model,
+  key and your name, with the same choices as `lucy config init` (both now come from the core,
+  `setup.presets`).
+
+### One app: "Lucy"
+
+- **The sprite, the main window and the tray are one app, "Lucy"** (the `lucy-desktop`
+  program, replacing `lucy-sprite`). Opened from your app menu it shows the window; `lucy app`
+  and `lucy sprite …` work as before. Installers are named `Lucy_…`.
+- **`[sprite] enabled`** (Settings → Sprite): off, the app is just its window and tray when it
+  starts, and `lucy sprite` still shows her.
+- **`[app] autostart`** starts the app at login, in the background (the sprite if she's
+  enabled, and the tray). `[sprite] autostart` from v0.4.0 still works, and
+  `lucy service install` replaces its old `lucy-sprite` login entry.
+- **Nix:** `.#lucy-sprite` is now `.#lucy-desktop`, and home-manager's `programs.lucy.sprite.*`
+  is now `programs.lucy.desktop.*` (the old names still work, with a warning). Its unit is
+  `lucy-desktop.service`.
+- The desktop app logs to `desktop.log` (next to `core.log`).
+
 ## v0.4.0: desktop sprite (2026-11-07)
 
 Lucy can now live on your desktop: an animated sprite in the corner of the screen who answers

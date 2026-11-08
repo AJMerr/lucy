@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Every branch, so work on feature branches is checked before it reaches main.
+    branches: ["**"]
   pull_request:
 
 env:
@@ -33,18 +34,18 @@ jobs:
       - run: cargo test --workspace --no-fail-fast
       - run: cargo build --workspace --release
 
-  sprite-web:
+  ui:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/sprite
+        working-directory: apps/ui
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: apps/sprite/package-lock.json
+          cache-dependency-path: apps/ui/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
@@ -58,29 +59,29 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: apps/sprite
+        working-directory: apps/ui
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: apps/sprite/package-lock.json
+          cache-dependency-path: apps/ui/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/sprite/src-tauri
+          workspaces: apps/desktop/src-tauri
       - if: runner.os == 'Linux'
         run: >-
           sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
-          libgtk-layer-shell-dev librsvg2-dev libsoup-3.0-dev
+          libgtk-layer-shell-dev librsvg2-dev libsoup-3.0-dev libayatana-appindicator3-dev
       - run: npm ci && npm run build
       - if: runner.os == 'Linux'
-        working-directory: apps/sprite/src-tauri
+        working-directory: apps/desktop/src-tauri
         run: cargo fmt --check
-      - working-directory: apps/sprite/src-tauri
+      - working-directory: apps/desktop/src-tauri
         run: cargo clippy --all-targets --features tauri/custom-protocol -- -D warnings
 
   # The flake's packages, and the home-manager module checked against them.

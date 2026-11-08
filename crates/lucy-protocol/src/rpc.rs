@@ -9,7 +9,7 @@ use crate::{AgentLevel, Mode, Role, ToolCall};
 /// Bumped on any incompatible change; `hello` refuses mismatched clients.
 /// `core.status` and `core.shutdown` keep their shape across versions, so a newer client can
 /// still stop an older core (from v4 on).
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 pub mod method {
     pub const HELLO: &str = "hello";
@@ -37,6 +37,27 @@ pub mod method {
     pub const PROFILES_LIST: &str = "profiles.list";
     pub const TOOLS_LIST: &str = "tools.list";
     pub const TOOL_APPROVE: &str = "tool.approve";
+    /// The config file as JSON (with defaults filled in), where it lives, and whether
+    /// home-manager owns it.
+    pub const CONFIG_GET: &str = "config.get";
+    /// Change config.toml with a JSON merge patch; refused if the result is invalid.
+    pub const CONFIG_UPDATE: &str = "config.update";
+    /// API keys the config refers to and whether each is set; never their values.
+    pub const KEYS_STATUS: &str = "keys.status";
+    /// Store an API key in the keyring of the core's machine.
+    pub const KEYS_SET: &str = "keys.set";
+    pub const KEYS_REMOVE: &str = "keys.remove";
+    /// The persona in use (your override, or the built-in one), to edit.
+    pub const PERSONA_GET: &str = "persona.get";
+    /// Save your own version of the persona (personas/<name>.md).
+    pub const PERSONA_SET: &str = "persona.set";
+    /// Delete your version, back to the built-in persona.
+    pub const PERSONA_RESET: &str = "persona.reset";
+    /// Sign in to a remote MCP server: opens the browser on the core's machine and answers
+    /// once signed in. Not for remote clients.
+    pub const MCP_LOGIN: &str = "mcp.login";
+    /// The model providers first-run setup offers (the same as `lucy config init`).
+    pub const SETUP_PRESETS: &str = "setup.presets";
     /// Notification carrying an [`Event`](super::Event).
     pub const EVENT: &str = "event";
 }
@@ -154,6 +175,86 @@ pub struct HelloResult {
     /// For remote clients: the folder on the core's machine where their chats' tools run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
+}
+
+/// `config.get`: what the settings screens show.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigView {
+    /// Where config.toml lives on the core's machine.
+    pub path: String,
+    /// home-manager owns the file, so it can't be changed from here.
+    pub managed: bool,
+    /// The config with defaults filled in; `None` before the first-run setup.
+    pub config: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigUpdateParams {
+    /// A JSON merge patch (RFC 7396): objects merge, `null` removes, anything else replaces.
+    pub patch: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigUpdateResult {
+    /// The change only takes effect once the core restarts (remote access settings).
+    pub restart_needed: bool,
+}
+
+/// One API key the config refers to (`keys.status`). Never carries the key itself.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyStatus {
+    pub name: String,
+    /// The profiles and MCP servers that use it.
+    pub used_by: Vec<String>,
+    /// Where it's set: `keyring`, or the environment variable's name; `None` when missing.
+    pub source: Option<String>,
+    /// The keyring couldn't be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeySetParams {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyParams {
+    pub name: String,
+}
+
+/// `persona.get`: the persona the config uses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonaView {
+    pub name: String,
+    pub text: String,
+    /// Your own version is in use, not the built-in one.
+    pub overridden: bool,
+    /// Where your version lives (or would), on the core's machine.
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonaSetParams {
+    pub text: String,
+}
+
+/// A model provider first-run setup offers (`setup.presets`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProviderPreset {
+    /// e.g. "Anthropic (Claude)".
+    pub label: String,
+    /// The profile it becomes, e.g. "claude".
+    pub profile_name: String,
+    /// `openai_compat` or `anthropic`.
+    pub provider: String,
+    /// `None` for Anthropic (built in), and for a custom endpoint, where you give one.
+    pub base_url: Option<String>,
+    /// The suggested model; `None` for a custom endpoint.
+    pub model: Option<String>,
+    /// The keyring name its API key goes under; `None` when it needs no key.
+    pub key_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

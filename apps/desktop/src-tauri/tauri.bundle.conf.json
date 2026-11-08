@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": ["binaries/lucy"],
+    "publisher": "AJMerr",
+    "category": "Utility",
+    "shortDescription": "Lucy, your AI assistant, on the desktop",
+    "longDescription": "Lucy is a model-agnostic personal AI assistant. This installs her desktop sprite (lucy-sprite) and the lucy command-line program and core it talks to.",
+    "linux": {
+      "deb": { "depends": ["libgtk-layer-shell0", "libayatana-appindicator3-1"] },
+      "rpm": { "depends": ["gtk-layer-shell", "libayatana-appindicator-gtk3"] }
+    },
+    "macOS": { "minimumSystemVersion": "11.0" }
+  }
+}

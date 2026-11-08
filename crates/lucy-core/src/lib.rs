@@ -13,6 +13,7 @@ pub mod provider;
 pub mod secrets;
 pub mod server;
 pub mod sessions;
+pub mod setup;
 pub mod tools;
 
 pub use lucy_protocol as protocol;

@@ -29,7 +29,7 @@ let
             sprite.pack = "placeholder";
           };
           service.enable = true;
-          sprite = {
+          desktop = {
             enable = true;
             autostart = true;
           };
@@ -44,7 +44,7 @@ pkgs.runCommand "lucy-home-manager-module"
     nativeBuildInputs = [ pkgs.lucy ];
     config = files."lucy/config.toml".source;
     core = files."systemd/user/lucy-core.service".source;
-    sprite = files."systemd/user/lucy-sprite.service".source;
+    desktop = files."systemd/user/lucy-desktop.service".source;
     packages = map (package: package.name) home.config.home.packages;
   }
   ''
@@ -58,7 +58,7 @@ pkgs.runCommand "lucy-home-manager-module"
 
     echo "Both programs are installed: $packages"
     [[ " $packages " == *" lucy-${pkgs.lucy.version} "* ]] || fail "lucy isn't in home.packages"
-    [[ " $packages " == *" lucy-sprite-${pkgs.lucy-sprite.version} "* ]] || fail "lucy-sprite isn't"
+    [[ " $packages " == *" lucy-desktop-${pkgs.lucy-desktop.version} "* ]] || fail "lucy-desktop isn't"
 
     echo "Lucy accepts the config it writes"
     lucy mcp list || fail "lucy couldn't load the generated config"
@@ -73,11 +73,11 @@ pkgs.runCommand "lucy-home-manager-module"
     cat out
     grep -q "Service:  installed, starts at login" out || fail "lucy doesn't see the unit as its own"
 
-    echo "The sprite starts with the graphical session"
-    grep -qx "ExecStart=${pkgs.lucy-sprite}/bin/lucy-sprite" $sprite || fail "ExecStart: $(cat $sprite)"
-    grep -qx "WantedBy=graphical-session.target" $sprite || fail "not wanted by the session"
-    grep -qx "After=graphical-session.target" $sprite && grep -qx "After=lucy-core.service" $sprite \
-      || fail "ordering: $(cat $sprite)"
+    echo "The desktop app starts with the graphical session, in the background"
+    grep -qx "ExecStart=${pkgs.lucy-desktop}/bin/lucy-desktop background" $desktop || fail "ExecStart: $(cat $desktop)"
+    grep -qx "WantedBy=graphical-session.target" $desktop || fail "not wanted by the session"
+    grep -qx "After=graphical-session.target" $desktop && grep -qx "After=lucy-core.service" $desktop \
+      || fail "ordering: $(cat $desktop)"
 
     touch $out
   ''

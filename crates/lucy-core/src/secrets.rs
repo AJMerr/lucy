@@ -171,6 +171,20 @@ where
         }
     }
 
+    /// Store a key in the keyring (what `lucy auth set` does).
+    pub fn set(&self, key_name: &str, secret: &str) -> Result<(), SecretsError> {
+        self.store
+            .set(key_name, secret)
+            .map_err(|err| for_key(err, key_name))
+    }
+
+    /// Remove a key from the keyring; false if it wasn't there.
+    pub fn remove(&self, key_name: &str) -> Result<bool, SecretsError> {
+        self.store
+            .delete(key_name)
+            .map_err(|err| for_key(err, key_name))
+    }
+
     fn env_key(&self, var: String) -> Option<ResolvedKey> {
         (self.env)(&var)
             .filter(|value| !value.is_empty())
@@ -218,5 +232,16 @@ impl<T: SecretStore + ?Sized> SecretStore for Box<T> {
 
     fn delete(&self, key_name: &str) -> Result<bool, SecretsError> {
         (**self).delete(key_name)
+    }
+}
+
+/// Turn "no keyring" into an error that says which variable to set instead.
+fn for_key(err: SecretsError, key_name: &str) -> SecretsError {
+    match err {
+        SecretsError::Unavailable(reason) => SecretsError::UnavailableFor {
+            reason,
+            env_var: env_var_name(key_name),
+        },
+        err => err,
     }
 }

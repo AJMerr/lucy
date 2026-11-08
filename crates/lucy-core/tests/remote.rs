@@ -293,7 +293,10 @@ async fn browsers_can_send_the_token_as_a_subprotocol() {
         .unwrap();
     let reply = socket.next().await.unwrap().unwrap().into_text().unwrap();
     let reply: Value = serde_json::from_str(&reply).unwrap();
-    assert_eq!(reply["result"]["protocol_version"], 4);
+    assert_eq!(
+        reply["result"]["protocol_version"],
+        lucy_protocol::rpc::PROTOCOL_VERSION
+    );
 }
 
 #[tokio::test]
@@ -373,4 +376,67 @@ async fn remote_access_is_off_by_default() {
     let h = Harness::start(vec![], "").await;
 
     assert!(!h.listening().await);
+}
+
+#[tokio::test]
+async fn remote_clients_can_read_settings_but_not_change_them_unless_allowed() {
+    let h = Harness::start(vec![], ON).await;
+    let remote = h.remote_client().await;
+
+    let view: Value = remote.call(method::CONFIG_GET, json!({})).await.unwrap();
+    assert_eq!(view["config"]["defaults"]["profile"], "fake");
+    for (name, params) in [
+        (
+            method::CONFIG_UPDATE,
+            json!({"patch": {"agent": {"max_steps": 3}}}),
+        ),
+        (
+            method::KEYS_SET,
+            json!({"name": "anthropic", "value": "sk-x"}),
+        ),
+        (method::KEYS_REMOVE, json!({"name": "anthropic"})),
+        (method::PERSONA_SET, json!({"text": "hi"})),
+        (method::PERSONA_RESET, json!({})),
+    ] {
+        let refused = remote
+            .call::<_, Value>(name, params)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("allow_config"), "{name}: {refused}");
+    }
+    let written = std::fs::read_to_string(h.dir.path().join("config.toml")).unwrap();
+    assert!(!written.contains("max_steps = 3"), "{written}");
+}
+
+#[tokio::test]
+async fn allow_config_lets_remote_clients_change_settings() {
+    let h = Harness::start(vec![], &format!("{ON}\nallow_config = true")).await;
+    let remote = h.remote_client().await;
+
+    let _: Value = remote
+        .call(
+            method::CONFIG_UPDATE,
+            json!({"patch": {"agent": {"max_steps": 3}}}),
+        )
+        .await
+        .unwrap();
+
+    let written = std::fs::read_to_string(h.dir.path().join("config.toml")).unwrap();
+    assert!(written.contains("max_steps = 3"), "{written}");
+}
+
+#[tokio::test]
+async fn mcp_sign_in_only_happens_on_the_cores_machine() {
+    // The browser would open over there, so even allow_config doesn't make it work remotely.
+    let h = Harness::start(vec![], &format!("{ON}\nallow_config = true")).await;
+    let remote = h.remote_client().await;
+
+    let refused = remote
+        .call::<_, Value>(method::MCP_LOGIN, json!({"name": "linear"}))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(refused.contains("machine that runs Lucy"), "{refused}");
 }

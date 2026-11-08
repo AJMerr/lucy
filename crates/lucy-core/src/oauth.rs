@@ -199,3 +199,26 @@ async fn respond(
     socket.write_all(reply.as_bytes()).await?;
     socket.shutdown().await
 }
+
+/// Open `url` in the browser on this machine. Best effort: if none opens, a printed URL still
+/// works.
+pub fn open_browser(url: &str) {
+    let mut command = if cfg!(windows) {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "start", ""]).arg(url);
+        command
+    } else if cfg!(target_os = "macos") {
+        let mut command = std::process::Command::new("open");
+        command.arg(url);
+        command
+    } else {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    let _ = command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
