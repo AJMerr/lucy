@@ -23,10 +23,10 @@
       version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
     in
     {
-      # `pkgs.lucy` and `pkgs.lucy-sprite`.
+      # `pkgs.lucy` and `pkgs.lucy-desktop`.
       overlays.default = final: _prev: {
         lucy = final.callPackage ./nix/lucy.nix { inherit version; };
-        lucy-sprite = final.callPackage ./nix/lucy-sprite.nix { inherit version; };
+        lucy-desktop = final.callPackage ./nix/lucy-desktop.nix { inherit version; };
       };
 
       # `programs.lucy`; see nix/hm-module.nix.
@@ -49,7 +49,7 @@
             };
             inherit (pkgs.stdenv.hostPlatform) isLinux;
 
-            # Native libraries Tauri needs on Linux (for apps/sprite).
+            # Native libraries Tauri needs on Linux (for apps/desktop).
             tauriLinuxDeps = with pkgs; [
               at-spi2-atk
               atkmm
@@ -76,20 +76,20 @@
                     name = "lucy-${version}";
                     paths = [
                       pkgs.lucy
-                      pkgs.lucy-sprite
+                      pkgs.lucy-desktop
                     ];
                     meta.mainProgram = "lucy";
                   }
                 else
                   pkgs.lucy;
             }
-            // pkgs.lib.optionalAttrs isLinux { inherit (pkgs) lucy-sprite; };
+            // pkgs.lib.optionalAttrs isLinux { inherit (pkgs) lucy-desktop; };
 
             checks = {
               inherit (pkgs) lucy;
             }
             // pkgs.lib.optionalAttrs isLinux {
-              inherit (pkgs) lucy-sprite;
+              inherit (pkgs) lucy-desktop;
               home-manager-module = import ./nix/hm-module-check.nix {
                 inherit pkgs self home-manager;
               };

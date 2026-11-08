@@ -13,7 +13,7 @@ export const SECTIONS = {
   models: ["defaults", "profiles"],
   agent: ["agent", "tools", "user"],
   mcp: ["mcp"],
-  sprite: ["sprite"],
+  sprite: ["sprite", "app"],
   remote: ["remote"],
 } as const;
 

@@ -1,5 +1,6 @@
-# `lucy-sprite`: Lucy's desktop sprite, a Tauri app (Rust side in apps/sprite, pages in
-# apps/ui). Linux only here; macOS and Windows get Tauri bundles from the release workflow.
+# `lucy-desktop`: Lucy's desktop app (sprite, main window, tray), a Tauri app (Rust side in
+# apps/desktop, pages in apps/ui). Linux only here; macOS and Windows get Tauri bundles from
+# the release workflow.
 {
   lib,
   rustPlatform,
@@ -22,7 +23,7 @@
 }:
 
 rustPlatform.buildRustPackage {
-  pname = "lucy-sprite";
+  pname = "lucy-desktop";
   inherit version;
 
   src = lib.fileset.toSource {
@@ -35,10 +36,10 @@ rustPlatform.buildRustPackage {
       ../persona
       ../packs/placeholder
       # Its Rust side, and its pages (apps/ui).
-      (lib.fileset.difference ../apps/sprite/src-tauri (
+      (lib.fileset.difference ../apps/desktop/src-tauri (
         lib.fileset.unions [
-          (lib.fileset.maybeMissing ../apps/sprite/src-tauri/target)
-          (lib.fileset.maybeMissing ../apps/sprite/src-tauri/gen)
+          (lib.fileset.maybeMissing ../apps/desktop/src-tauri/target)
+          (lib.fileset.maybeMissing ../apps/desktop/src-tauri/gen)
         ]
       ))
       (lib.fileset.difference ../apps/ui (
@@ -50,9 +51,9 @@ rustPlatform.buildRustPackage {
     ];
   };
 
-  cargoRoot = "apps/sprite/src-tauri";
-  buildAndTestSubdir = "apps/sprite/src-tauri";
-  cargoLock.lockFile = ../apps/sprite/src-tauri/Cargo.lock;
+  cargoRoot = "apps/desktop/src-tauri";
+  buildAndTestSubdir = "apps/desktop/src-tauri";
+  cargoLock.lockFile = ../apps/desktop/src-tauri/Cargo.lock;
   # Serve the built page from inside the binary.
   buildFeatures = [ "tauri/custom-protocol" ];
 
@@ -94,23 +95,23 @@ rustPlatform.buildRustPackage {
 
   desktopItems = [
     (makeDesktopItem {
-      name = "lucy-sprite";
-      desktopName = "Lucy Sprite";
+      name = "lucy-desktop";
+      desktopName = "Lucy";
       comment = "Lucy, your AI assistant, on the desktop";
-      exec = "lucy-sprite";
-      icon = "lucy-sprite";
+      exec = "lucy-desktop";
+      icon = "lucy-desktop";
       categories = [ "Utility" ];
     })
   ];
   postInstall = ''
-    install -Dm644 apps/sprite/src-tauri/icons/icon.png $out/share/icons/hicolor/128x128/apps/lucy-sprite.png
+    install -Dm644 apps/desktop/src-tauri/icons/icon.png $out/share/icons/hicolor/128x128/apps/lucy-desktop.png
   '';
 
   meta = {
-    description = "Lucy's desktop sprite: she sits on your desktop and talks in speech bubbles";
+    description = "Lucy's desktop app: her sprite, her main window (chats and settings) and a tray icon";
     homepage = "https://github.com/AJMerr/lucy";
     # No licence yet (see docs/ROADMAP.md); set it here when there is one.
-    mainProgram = "lucy-sprite";
+    mainProgram = "lucy-desktop";
     platforms = lib.platforms.linux;
   };
 }

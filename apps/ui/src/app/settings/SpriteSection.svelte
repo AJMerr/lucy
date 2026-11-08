@@ -1,4 +1,5 @@
-<!-- Sprite: her look (pack, size), how long replies stay up, her hotkey, and starting at login. -->
+<!-- Sprite: whether she shows, her look (pack, size), how long replies stay up, her hotkey, and
+     whether Lucy's app starts at login. -->
 <script lang="ts">
   import type { SettingsStore } from "../../lib/stores/settings.ts";
   import SectionBar from "./SectionBar.svelte";
@@ -7,6 +8,19 @@
 
   const section = $derived($store.sections.sprite);
   const sprite = $derived(section.draft.sprite ?? {});
+  // `[app] autostart`, or the older `[sprite] autostart` (v0.4.0).
+  const atLogin = $derived(section.draft.app?.autostart === true || sprite.autostart === true);
+
+  function setAtLogin(on: boolean): void {
+    store.edit("sprite", (d) => {
+      d.app ??= {};
+      d.app.autostart = on;
+      // Said under [app] from now on.
+      if (d.sprite.autostart !== undefined) {
+        d.sprite.autostart = false;
+      }
+    });
+  }
 
   function set(field: string, value: unknown): void {
     store.edit("sprite", (d) => {
@@ -20,7 +34,17 @@
 </script>
 
 <h2>Sprite</h2>
-<p class="hint">Changes show the next time the sprite starts (`lucy sprite quit`, then `lucy sprite`).</p>
+<p class="hint">Changes show the next time Lucy's app starts (`lucy sprite quit`, then `lucy app`).</p>
+
+<label class="check">
+  <input
+    type="checkbox"
+    aria-label="Show the sprite when Lucy starts"
+    checked={sprite.enabled !== false}
+    onchange={(e) => set("enabled", e.currentTarget.checked)}
+  />
+  Show the sprite when Lucy starts (off, `lucy sprite` still shows her)
+</label>
 
 <label class="field">
   <span>Sprite pack (a folder in packs/ in your data folder; "placeholder" is built in)</span>
@@ -57,10 +81,12 @@
 <label class="check">
   <input
     type="checkbox"
-    checked={sprite.autostart === true}
-    onchange={(e) => set("autostart", e.currentTarget.checked)}
+    aria-label="Start Lucy at login"
+    checked={atLogin}
+    onchange={(e) => setAtLogin(e.currentTarget.checked)}
   />
-  Start her at login (applied when the login service is installed, under Service &amp; startup)
+  Start Lucy at login, in the background (applied when the login service is installed, under
+  Service &amp; startup)
 </label>
 
 <SectionBar

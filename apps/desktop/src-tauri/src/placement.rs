@@ -83,6 +83,11 @@ pub fn set_layout(
     Ok(())
 }
 
+/// Hide her.
+pub fn hide(app: &AppHandle) {
+    set_visible(app, false);
+}
+
 /// Show her if hidden.
 pub fn show(app: &AppHandle) {
     set_visible(app, true);

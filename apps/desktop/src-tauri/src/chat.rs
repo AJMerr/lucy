@@ -41,7 +41,7 @@ pub fn connect_in_background(app: AppHandle) {
         if conn.is_none() {
             match open(&app).await {
                 Ok(opened) => *conn = Some(opened),
-                Err(err) => eprintln!("lucy-sprite: {err}"),
+                Err(err) => eprintln!("lucy-desktop: {err}"),
             }
         }
     });
@@ -100,7 +100,7 @@ async fn her_session(client: &Client) -> Result<String, ClientError> {
         }
         if let Err(err) = std::fs::write(&file, &id) {
             eprintln!(
-                "lucy-sprite: couldn't remember her chat in {}: {err}",
+                "lucy-desktop: couldn't remember her chat in {}: {err}",
                 file.display()
             );
         }

@@ -42,19 +42,19 @@ jobs:
           cache: npm
           cache-dependency-path: |
             apps/ui/package-lock.json
-            apps/sprite/package-lock.json
+            apps/desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             .
-            apps/sprite/src-tauri
+            apps/desktop/src-tauri
       - if: runner.os == 'Linux'
         run: >-
           sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
           libgtk-layer-shell-dev librsvg2-dev libsoup-3.0-dev libayatana-appindicator3-dev libfuse2
 
-      # `lucy` goes in every bundle, next to `lucy-sprite` (a Tauri sidecar named for the
+      # `lucy` goes in every bundle, next to `lucy-desktop` (a Tauri sidecar named for the
       # target).
       - name: Build lucy
         shell: bash
@@ -62,11 +62,11 @@ jobs:
           cargo build --release -p lucy-cli
           triple=$(rustc -vV | sed -n 's/^host: //p')
           ext=$([ "$RUNNER_OS" = Windows ] && echo .exe || true)
-          mkdir -p apps/sprite/src-tauri/binaries
-          cp "target/release/lucy$ext" "apps/sprite/src-tauri/binaries/lucy-$triple$ext"
+          mkdir -p apps/desktop/src-tauri/binaries
+          cp "target/release/lucy$ext" "apps/desktop/src-tauri/binaries/lucy-$triple$ext"
 
       - name: Build the bundles
-        working-directory: apps/sprite
+        working-directory: apps/desktop
         shell: bash
         run: |
           npm --prefix ../ui ci
@@ -79,14 +79,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cd apps/sprite/src-tauri/target/release/bundle
+          cd apps/desktop/src-tauri/target/release/bundle
           files=()
           for file in deb/*.deb rpm/*.rpm appimage/*.AppImage dmg/*.dmg msi/*.msi; do
             [ -f "$file" ] || continue
-            # No spaces in asset names ("Lucy Sprite_0.4.0_amd64.deb" -> "lucy-sprite_0.4.0_amd64.deb").
-            named="$(dirname "$file")/$(basename "$file" | sed 's/^Lucy Sprite/lucy-sprite/')"
-            [ "$file" = "$named" ] || mv "$file" "$named"
-            files+=("$named")
+            files+=("$file")
           done
           echo "Attaching: ${files[*]}"
           gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
@@ -96,4 +93,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bundles-${{ matrix.os }}
-          path: apps/sprite/src-tauri/target/release/bundle/*/*.*
+          path: apps/desktop/src-tauri/target/release/bundle/*/*.*

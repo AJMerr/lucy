@@ -2859,6 +2859,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "lucy-desktop"
+version = "0.4.0"
+dependencies = [
+ "base64 0.22.1",
+ "gtk",
+ "gtk-layer-shell",
+ "libc",
+ "lucy-cli",
+ "lucy-client",
+ "lucy-core",
+ "lucy-packs",
+ "lucy-protocol",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-single-instance",
+ "tokio",
+]
+
+[[package]]
 name = "lucy-packs"
 version = "0.4.0"
 dependencies = [
@@ -2887,28 +2909,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "lucy-sprite"
-version = "0.4.0"
-dependencies = [
- "base64 0.22.1",
- "gtk",
- "gtk-layer-shell",
- "libc",
- "lucy-cli",
- "lucy-client",
- "lucy-core",
- "lucy-packs",
- "lucy-protocol",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-single-instance",
- "tokio",
 ]
 
 [[package]]

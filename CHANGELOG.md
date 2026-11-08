@@ -39,6 +39,21 @@
   key and your name, with the same choices as `lucy config init` (both now come from the core,
   `setup.presets`).
 
+### One app: "Lucy"
+
+- **The sprite, the main window and the tray are one app, "Lucy"** (the `lucy-desktop`
+  program, replacing `lucy-sprite`). Opened from your app menu it shows the window; `lucy app`
+  and `lucy sprite …` work as before. Installers are named `Lucy_…`.
+- **`[sprite] enabled`** (Settings → Sprite): off, the app is just its window and tray when it
+  starts, and `lucy sprite` still shows her.
+- **`[app] autostart`** starts the app at login, in the background (the sprite if she's
+  enabled, and the tray). `[sprite] autostart` from v0.4.0 still works, and
+  `lucy service install` replaces its old `lucy-sprite` login entry.
+- **Nix:** `.#lucy-sprite` is now `.#lucy-desktop`, and home-manager's `programs.lucy.sprite.*`
+  is now `programs.lucy.desktop.*` (the old names still work, with a warning). Its unit is
+  `lucy-desktop.service`.
+- The desktop app logs to `desktop.log` (next to `core.log`).
+
 ## v0.4.0: desktop sprite (2026-11-07)
 
 Lucy can now live on your desktop: an animated sprite in the corner of the screen who answers

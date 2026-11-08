@@ -13,6 +13,8 @@ pub struct Loaded {
     pack: Pack,
     scale: f64,
     bubble_timeout_secs: u32,
+    /// `[sprite] enabled`: show her when the app starts.
+    pub enabled: bool,
     /// `[sprite] hotkey`; empty for none.
     pub hotkey: String,
 }
@@ -35,22 +37,23 @@ pub fn load_configured() -> Loaded {
         .and_then(|path| match Config::load(&path) {
             Ok(config) => config,
             Err(err) => {
-                eprintln!("lucy-sprite: {err}; using the default sprite settings");
+                eprintln!("lucy-desktop: {err}; using the default sprite settings");
                 None
             }
         })
         .map(|config| config.sprite)
         .unwrap_or_default();
     let SpriteSettings {
+        enabled,
         pack,
         scale,
         bubble_timeout_secs,
         hotkey,
-        // `lucy service install` handles it.
+        // `lucy service install` handles these.
         autostart: _,
     } = settings;
     let pack = lucy_packs::load(&pack, packs_dir().as_deref()).unwrap_or_else(|err| {
-        eprintln!("lucy-sprite: {err}; showing the placeholder instead");
+        eprintln!("lucy-desktop: {err}; showing the placeholder instead");
         lucy_packs::load("placeholder", None).expect("the placeholder pack is built in")
     });
     Loaded {
@@ -62,6 +65,7 @@ pub fn load_configured() -> Loaded {
         },
         bubble_timeout_secs,
         hotkey,
+        enabled,
     }
 }
 

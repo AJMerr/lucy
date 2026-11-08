@@ -56,15 +56,15 @@ Make sure `~/.cargo/bin` is on your `PATH`. You can also skip installing and use
 
 Other ways to install:
 
-- **Installers** for the desktop sprite, with `lucy` inside: `.deb`, `.rpm` and `.AppImage`
+- **Installers** for Lucy's desktop app, with `lucy` inside: `.deb`, `.rpm` and `.AppImage`
   for Linux, `.dmg` for macOS (Apple silicon) and `.msi` for Windows, attached to each
   [release](https://github.com/AJMerr/lucy/releases). They aren't signed yet, so macOS and
   Windows warn the first time (on macOS, right-click the app and choose Open). On Linux `lucy`
-  lands in `/usr/bin`. On macOS it's inside the app (`Lucy Sprite.app/Contents/MacOS/lucy`) and
-  on Windows next to `lucy-sprite.exe` in the install folder; put it on your `PATH` to use it in
+  lands in `/usr/bin`. On macOS it's inside the app (`Lucy.app/Contents/MacOS/lucy`) and on
+  Windows next to `lucy-desktop.exe` in the install folder; put it on your `PATH` to use it in
   a terminal.
 - **Nix:** `nix profile install github:AJMerr/lucy` installs both (`.#lucy` is just the CLI;
-  the sprite package is Linux-only), or use the overlay. With
+  `.#lucy-desktop`, the desktop app, is Linux-only), or use the overlay. With
   [home-manager](https://github.com/nix-community/home-manager):
 
   ```nix
@@ -73,7 +73,7 @@ Other ways to install:
   programs.lucy = {
     enable = true;
     service.enable = true;            # the core from login (instead of `lucy service install`)
-    sprite = { enable = true; autostart = true; };  # with your graphical session
+    desktop = { enable = true; autostart = true; };  # the app, with your graphical session
     settings = {                      # optional: config.toml, read-only once set
       defaults.profile = "local-qwen";
       profiles.local-qwen = {
@@ -87,7 +87,7 @@ Other ways to install:
 
   Leave `settings` out to keep editing `config.toml` yourself (or with `lucy config init` and
   `lucy mcp add`); once home-manager owns it, those commands say so instead of changing it.
-  The units are systemd user services; the sprite's starts with `graphical-session.target`,
+  The units are systemd user services; the app's starts with `graphical-session.target`,
   which uwsm, GNOME and KDE sessions reach.
 
 **Local models:** install [Ollama](https://ollama.com), then run `ollama pull qwen3:14b` and pick
@@ -236,11 +236,13 @@ variables instead, and a console window may flash briefly at login.
 When a newer `lucy` finds an older core running, it restarts the core by itself as long as
 the core isn't in the middle of a reply.
 
-To have the desktop sprite start at login too, set `autostart = true` under `[sprite]` in
-`config.toml` and run `lucy service install` again. That adds her to your login items: an
-autostart entry in `~/.config/autostart/` on Linux, a launch agent on macOS, a second `Run`
-value on Windows. Setting it back to `false` (and installing again) or `lucy service uninstall`
-takes her off.
+To have Lucy's desktop app start at login too, set `autostart = true` under `[app]` in
+`config.toml` (or tick it in Settings → Sprite) and run `lucy service install` again. That
+adds the app to your login items, starting in the background (the sprite, if she's enabled, and
+the tray): an autostart entry in `~/.config/autostart/` on Linux, a launch agent on macOS, a
+second `Run` value on Windows. Setting it back to `false` (and installing again) or
+`lucy service uninstall` takes it off. (`[sprite] autostart` from v0.4.0 still works, and its
+old `lucy-sprite` login entry is replaced.)
 
 ### Using Lucy from another machine
 
@@ -319,8 +321,8 @@ crates/
   lucy-cli/        the `lucy` command: chat loop, Markdown renderer, setup wizard
   lucy-tools/      built-in tools (files, search, fetch, shell) as an in-process MCP server
   lucy-packs/      sprite packs: loading and checking pack.toml and its frames
-apps/sprite/       the desktop app's Rust side (Tauri; its own Cargo workspace)
-apps/ui/           its web pages (the sprite, and the coming GUI), shared with a later mobile app
+apps/desktop/      the desktop app's Rust side (Tauri; its own Cargo workspace)
+apps/ui/           its web pages (the sprite and the main window), shared with a later mobile app
 persona/           built-in personas
 packs/placeholder/ the only sprite pack tracked in git
 nix/               the flake's packages, home-manager module and its check
@@ -345,14 +347,19 @@ macOS and Windows, builds the sprite on all three, and runs `nix flake check`. P
 GitHub release builds the installers and attaches them (`.github/workflows/release.yml`; run
 it by hand with no tag to try a build).
 
-## Desktop app (preview)
+## Desktop app
 
-`lucy sprite` puts Lucy on your desktop: a small animated figure in the bottom-right corner,
+Lucy's desktop app ("Lucy", the `lucy-desktop` program) is her sprite, her main window and a
+tray icon in one. Install it from a release or the Nix flake (above), or build it from
+[`apps/desktop`](apps/desktop/README.md); `[app] autostart` starts it at login.
+
+The sprite puts Lucy on your desktop: a small animated figure in the bottom-right corner,
 above your windows (on Wayland compositors with layer shell, like Hyprland, Sway or KDE, no
 window rules needed). Click her, or bind `lucy sprite ask` to a key, and type: she answers in
 speech bubbles, and asks there before running tools. `lucy sprite toggle` hides her and
-`lucy sprite quit` sends her off. Install her from a release or the Nix flake (above), or build
-her from [`apps/sprite`](apps/sprite/README.md); `[sprite] autostart` starts her at login.
+`lucy sprite quit` closes the app. Don't want her on screen? Turn her off in Settings → Sprite
+(`[sprite] enabled = false`): the app is then just its window and tray, and `lucy sprite`
+still shows her when you want her.
 
 `lucy app` (or the tray icon, or "more…" on a long reply) opens Lucy's main window: your chats
 on the left, the open chat on the right, with streaming replies, tool approvals, Stop, Undo,

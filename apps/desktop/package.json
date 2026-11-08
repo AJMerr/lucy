@@ -1,5 +1,5 @@
 {
-  "name": "lucy-sprite",
+  "name": "lucy-desktop",
   "private": true,
   "description": "The Tauri CLI for building Lucy's desktop app; its web pages live in ../ui.",
   "scripts": {

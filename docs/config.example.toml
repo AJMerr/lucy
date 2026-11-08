@@ -103,16 +103,20 @@ bind = "127.0.0.1:7077"         # e.g. "100.64.0.7:7077" for your Tailscale addr
 # allow_config = true           # let other machines change settings, keys and the persona
                                 # (they can always read settings, never keys)
 
-# --- Sprite (`lucy sprite`) ---------------------------------------------------------------
+# --- Desktop app (`lucy app`) and her sprite (`lucy sprite`) ------------------------------
+
+[app]
+autostart = false               # true: `lucy service install` also starts the app at login,
+                                # in the background (the sprite, if enabled, and the tray)
 
 [sprite]
+enabled = true                  # show her when the app starts; `lucy sprite` shows her anyway
 pack = "placeholder"            # looked up in <data dir>/lucy/packs/, then bundled packs
 scale = 1.0
 bubble_timeout_secs = 0         # seconds before a finished reply fades; 0: until your next message
 hotkey = "Ctrl+Shift+Space"     # opens her input box (X11, macOS, Windows); "" turns it off.
                                 # On Wayland, bind `lucy sprite ask` in your compositor instead,
                                 # e.g. Hyprland: bind = CTRL SHIFT, SPACE, exec, lucy sprite ask
-autostart = false               # true: `lucy service install` also starts her at login
 
 # --- You ----------------------------------------------------------------------------------
 

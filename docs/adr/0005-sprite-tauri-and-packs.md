@@ -94,3 +94,18 @@ Electron can but costs ~150 MB+ RAM for an always-on sprite.
   the `lucy` sidecar (`binaries/lucy-<triple>`), which ordinary builds don't have. Published
   releases trigger `.github/workflows/release.yml`, which builds `lucy`, bundles per platform
   and attaches the results. Nothing is signed yet.
+
+## Implementation notes (milestone 3d, one app)
+
+- The sprite became part of Lucy's desktop app: "Lucy", the `lucy-desktop` program in
+  `apps/desktop` (identifier `io.github.ajmerr.lucy`), with the sprite, the main window and a
+  tray icon. Its pages live in `apps/ui`. `lucy app` and `lucy sprite …` both start or drive it.
+- Started with no command (the app menu) it opens the main window; with `background` (login
+  entries) only the sprite, and only if `[sprite] enabled`. Commands about her (`sprite`, `ask`,
+  `toggle`) show her even when she's off at start.
+- `[app] autostart` replaces `[sprite] autostart` (still read). Its login entries are
+  `lucy-desktop.desktop`, `io.github.ajmerr.lucy.desktop` and the `LucyDesktop` Run value;
+  installing or uninstalling also removes v0.4.0's `lucy-sprite` ones. Nix: `.#lucy-desktop`
+  and `programs.lucy.desktop.*` (the old `sprite.*` options are renames).
+- The layer-shell namespace stays `lucy-sprite`, since it names her layer and compositor rules
+  may match it.

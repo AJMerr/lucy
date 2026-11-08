@@ -47,7 +47,7 @@ pub fn open(app: &AppHandle, chat: Option<String>) {
                 }
             });
         }
-        Err(err) => eprintln!("lucy-sprite: couldn't open Lucy's window: {err}"),
+        Err(err) => eprintln!("lucy-desktop: couldn't open Lucy's window: {err}"),
     }
 }
 

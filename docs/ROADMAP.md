@@ -51,7 +51,7 @@ Tauri app in `apps/sprite` (ADR 0005), in three slices:
 3. ✅ **2c — Around her.** Full chat window for long replies, autostart with the login service,
    Nix flake packages and Tauri bundles, docs.
 
-## Milestone 3 — Lucy's app (in progress, on `feat/lucy-gui`)
+## Milestone 3 — Lucy's app ✅
 
 A GUI for everything the terminal does, so others can use Lucy without it, built on the core's
 RPC so a phone app can reuse it later. One desktop app with the sprite, a main window and a
@@ -63,7 +63,8 @@ tray icon; the core stays a separate service.
    the main window with chats beside the open chat, tray, close-to-tray, `lucy app`.
 3. ✅ **3c — Settings screens.** Every config.toml setting, keys, MCP servers and sign-in,
    persona editor, service and autostart, and first-run setup.
-4. **3d — One app.** Rename to "Lucy", installers, docs.
+4. ✅ **3d — One app.** "Lucy" (`lucy-desktop`, `apps/desktop`), `[sprite] enabled`,
+   `[app] autostart`, installers, Nix and docs.
 
 ## Later
 

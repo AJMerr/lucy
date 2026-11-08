@@ -1,5 +1,5 @@
-# home-manager module: `programs.lucy`. Installs Lucy (and her sprite), optionally writes
-# config.toml, and runs the core and the sprite as systemd user services.
+# home-manager module: `programs.lucy`. Installs Lucy (and her desktop app), optionally writes
+# config.toml, and runs the core and the desktop app as systemd user services.
 self:
 {
   config,
@@ -17,6 +17,22 @@ let
   socket = ''"LUCY_SOCKET=%t/lucy/core.sock"'';
 in
 {
+  # v0.4.0 called the desktop app "the sprite".
+  imports = [
+    (lib.mkRenamedOptionModule
+      [ "programs" "lucy" "sprite" "enable" ]
+      [ "programs" "lucy" "desktop" "enable" ]
+    )
+    (lib.mkRenamedOptionModule
+      [ "programs" "lucy" "sprite" "package" ]
+      [ "programs" "lucy" "desktop" "package" ]
+    )
+    (lib.mkRenamedOptionModule
+      [ "programs" "lucy" "sprite" "autostart" ]
+      [ "programs" "lucy" "desktop" "autostart" ]
+    )
+  ];
+
   options.programs.lucy = {
     enable = lib.mkEnableOption "Lucy, a model-agnostic personal AI assistant";
 
@@ -43,9 +59,10 @@ in
       '';
       description = ''
         Lucy's `config.toml` (see docs/config.example.toml). `null` leaves the file alone, for
-        `lucy config init` to write. When set, the file is read-only: `lucy config init` and
-        `lucy mcp add|remove` say so instead of changing it. API keys never go here; keep them
-        in the keyring with `lucy auth set <name>`.
+        `lucy config init` or the app's first-run setup to write. When set, the file is
+        read-only: `lucy config init`, `lucy mcp add|remove` and the app's settings say so
+        instead of changing it. API keys never go here; keep them in the keyring with
+        `lucy auth set <name>` or the app's settings.
       '';
     };
 
@@ -54,17 +71,19 @@ in
       `lucy service install` sets up otherwise; don't use both). It sees the user manager's
       environment, not your shell's'';
 
-    sprite = {
-      enable = lib.mkEnableOption "Lucy's desktop sprite (`lucy-sprite`)";
+    desktop = {
+      enable = lib.mkEnableOption "Lucy's desktop app (`lucy-desktop`: sprite, window and tray)";
 
       package = lib.mkOption {
         type = lib.types.package;
-        default = packages.lucy-sprite;
-        defaultText = lib.literalExpression "lucy.packages.\${system}.lucy-sprite";
-        description = "The `lucy-sprite` package.";
+        default = packages.lucy-desktop;
+        defaultText = lib.literalExpression "lucy.packages.\${system}.lucy-desktop";
+        description = "The `lucy-desktop` package.";
       };
 
-      autostart = lib.mkEnableOption "starting the sprite with your graphical session";
+      autostart = lib.mkEnableOption ''
+        starting the desktop app with your graphical session (in the background: the sprite,
+        if `[sprite] enabled`, and the tray)'';
     };
   };
 
@@ -73,11 +92,11 @@ in
       {
         assertions = [
           {
-            assertion = cfg.sprite.autostart -> cfg.sprite.enable;
-            message = "programs.lucy.sprite.autostart needs programs.lucy.sprite.enable.";
+            assertion = cfg.desktop.autostart -> cfg.desktop.enable;
+            message = "programs.lucy.desktop.autostart needs programs.lucy.desktop.enable.";
           }
         ];
-        home.packages = [ cfg.package ] ++ lib.optional cfg.sprite.enable cfg.sprite.package;
+        home.packages = [ cfg.package ] ++ lib.optional cfg.desktop.enable cfg.desktop.package;
       }
 
       (lib.mkIf (cfg.settings != null) {
@@ -97,16 +116,16 @@ in
         };
       })
 
-      (lib.mkIf cfg.sprite.autostart {
-        systemd.user.services.lucy-sprite = {
+      (lib.mkIf cfg.desktop.autostart {
+        systemd.user.services.lucy-desktop = {
           Unit = {
-            Description = "Lucy's desktop sprite";
+            Description = "Lucy's desktop app";
             PartOf = [ "graphical-session.target" ];
             After = [ "graphical-session.target" ] ++ lib.optional cfg.service.enable "lucy-core.service";
           };
           Service = {
-            ExecStart = lib.getExe cfg.sprite.package;
-            # `lucy sprite quit` leaves her gone; a crash brings her back.
+            ExecStart = "${lib.getExe cfg.desktop.package} background";
+            # `lucy sprite quit` leaves it gone; a crash brings it back.
             Restart = "on-failure";
             RestartSec = 5;
           };

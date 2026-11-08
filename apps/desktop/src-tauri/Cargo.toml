@@ -1,6 +1,6 @@
 [package]
-name = "lucy-sprite"
-description = "Lucy's desktop sprite: a transparent overlay that shows her sprite pack."
+name = "lucy-desktop"
+description = "Lucy's desktop app: her sprite, her main window (chats and settings) and a tray icon."
 version = "0.4.0"
 edition = "2024"
 license = "LicenseRef-Proprietary"

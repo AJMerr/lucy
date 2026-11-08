@@ -20,6 +20,8 @@ pub struct Config {
     #[serde(default)]
     pub sprite: SpriteSettings,
     #[serde(default)]
+    pub app: AppSettings,
+    #[serde(default)]
     pub user: UserSettings,
     #[serde(default)]
     pub tools: ToolSettings,
@@ -201,6 +203,9 @@ pub struct UserSettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SpriteSettings {
+    /// Show her when the app starts. Off, the app is just its window and tray icon, and
+    /// `lucy sprite` still shows her on demand.
+    pub enabled: bool,
     pub pack: String,
     pub scale: f64,
     /// Seconds a finished reply stays up before fading; 0 keeps it until your next message.
@@ -208,13 +213,14 @@ pub struct SpriteSettings {
     /// Opens her input box where apps may register shortcuts (X11, macOS, Windows); empty
     /// turns it off. On Wayland, bind `lucy sprite ask` in the compositor instead.
     pub hotkey: String,
-    /// Start her at login: `lucy service install` adds her to the login items.
+    /// Older name for `[app] autostart` (v0.4.0), still honoured.
     pub autostart: bool,
 }
 
 impl Default for SpriteSettings {
     fn default() -> Self {
         Self {
+            enabled: true,
             pack: "placeholder".into(),
             scale: 1.0,
             bubble_timeout_secs: 0,
@@ -348,6 +354,14 @@ fn toml_value(value: &serde_json::Value) -> Result<toml_edit::Value, ConfigError
     })
 }
 
+/// Lucy's desktop app (its window, tray icon and sprite).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AppSettings {
+    /// Start the app at login: `lucy service install` adds it to the login items.
+    pub autostart: bool,
+}
+
 fn default_persona() -> String {
     "lucy".into()
 }
@@ -388,6 +402,12 @@ pub fn default_path() -> Option<PathBuf> {
 }
 
 impl Config {
+    /// Whether the desktop app should start at login (`[app] autostart`, or the older
+    /// `[sprite] autostart`).
+    pub fn starts_at_login(&self) -> bool {
+        self.app.autostart || self.sprite.autostart
+    }
+
     /// Every API key name the config refers to, with the profiles and MCP servers using it.
     pub fn key_names(&self) -> BTreeMap<String, Vec<String>> {
         let mut names: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -430,6 +450,7 @@ impl Config {
             profiles: BTreeMap::from([(name, profile)]),
             remote: RemoteSettings::default(),
             sprite: SpriteSettings::default(),
+            app: AppSettings::default(),
             user: UserSettings::default(),
             tools: ToolSettings::default(),
             mcp: McpSettings::default(),

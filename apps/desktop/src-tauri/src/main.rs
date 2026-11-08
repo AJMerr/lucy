@@ -1,7 +1,10 @@
-//! Lucy's desktop app: her sprite (ADR 0005), a small transparent window, always on top, that
-//! draws the configured sprite pack and talks with Lucy's core, and her main window (chats).
-//! `lucy sprite` and `lucy app` start it, and
-//! `lucy sprite toggle|ask|chat|quit` drive it. A tray icon opens the window or quits.
+//! Lucy's desktop app (`lucy-desktop`): her sprite (ADR 0005), a small transparent window,
+//! always on top, that draws the configured sprite pack and talks with Lucy's core; her main
+//! window (chats and settings); and a tray icon. `lucy app` and `lucy sprite` start it, and
+//! `lucy sprite toggle|ask|chat|quit` drive it.
+//!
+//! Started with no command (from your app menu), it opens the main window, and the sprite if
+//! `[sprite] enabled`; with `background` (at login), just the sprite if she's enabled.
 
 // No console window on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -27,9 +30,12 @@ fn main() {
     let first_command = std::env::args().nth(1);
     let loaded = pack::load_configured();
     let hotkey = loaded.hotkey.clone();
+    // Commands that are about her show her even when she's off at start.
+    let show_sprite =
+        loaded.enabled || matches!(first_command.as_deref(), Some("sprite" | "ask" | "toggle"));
 
     tauri::Builder::default()
-        // A second `lucy-sprite` hands its command to the running one and exits.
+        // A second `lucy-desktop` hands its command to the running one and exits.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             command(app, args.get(1).map(String::as_str));
         }))
@@ -67,20 +73,30 @@ fn main() {
                 .get_webview_window("sprite")
                 .expect("tauri.conf.json defines the sprite window");
             placement::place(&window, size)?;
+            if !show_sprite {
+                placement::hide(app.handle());
+            }
             register_hotkey(app.handle(), &hotkey);
             chat::connect_in_background(app.handle().clone());
             if tray_supported() {
                 if let Err(err) = tray(app.handle()) {
-                    eprintln!("lucy-sprite: no tray icon: {err}");
+                    eprintln!("lucy-desktop: no tray icon: {err}");
                 }
             } else {
                 eprintln!(
-                    "lucy-sprite: no tray icon (it needs libayatana-appindicator); `lucy app` \
+                    "lucy-desktop: no tray icon (it needs libayatana-appindicator); `lucy app` \
                      opens Lucy's window"
                 );
             }
-            if let Some(first @ ("ask" | "chat" | "app")) = first_command.as_deref() {
-                // `lucy sprite ask|chat` or `lucy app` started her: act once the page listens.
+            let first = match first_command.as_deref() {
+                // From your app menu: open the window.
+                None => Some("app"),
+                // At login, or `lucy sprite`: she's already up (if she should be).
+                Some("background" | "sprite" | "toggle") => None,
+                Some(other) => Some(other),
+            };
+            if let Some(first) = first {
+                // Act once the pages are listening.
                 let first = first.to_owned();
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -106,9 +122,12 @@ fn command(app: &AppHandle, command: Option<&str>) {
             placement::show(app);
             let _ = app.emit("sprite-command", "ask");
         }
-        // `lucy sprite` again: make sure she's visible.
-        None => placement::show(app),
-        Some(other) => eprintln!("lucy-sprite: unknown command `{other}`"),
+        // `lucy sprite`: make sure she's visible.
+        Some("sprite") => placement::show(app),
+        // Opened again from your app menu: show the window.
+        None => app_window::open(app, None),
+        Some("background") => {}
+        Some(other) => eprintln!("lucy-desktop: unknown command `{other}`"),
     }
 }
 
@@ -122,7 +141,7 @@ fn register_hotkey(app: &AppHandle, hotkey: &str) {
         return;
     }
     if let Err(err) = app.global_shortcut().register(hotkey) {
-        eprintln!("lucy-sprite: couldn't use `{hotkey}` as her hotkey: {err}");
+        eprintln!("lucy-desktop: couldn't use `{hotkey}` as her hotkey: {err}");
     }
 }
 

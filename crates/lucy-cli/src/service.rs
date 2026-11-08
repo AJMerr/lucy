@@ -1,7 +1,8 @@
 //! `lucy service`: run the core at login under the OS's service manager: a systemd user unit
 //! on Linux, a launchd agent on macOS, and a `Run` registry value on Windows. With
-//! `[sprite] autostart`, the sprite starts at login too: an XDG autostart entry on Linux, a
-//! launchd agent on macOS, and another `Run` value on Windows.
+//! `[app] autostart`, Lucy's desktop app starts at login too (in the background: just the
+//! sprite, if she's on, and the tray): an XDG autostart entry on Linux, a launchd agent on
+//! macOS, and another `Run` value on Windows.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,10 +19,16 @@ pub const LAUNCHD_LABEL: &str = "io.github.ajmerr.lucy.core";
 /// Where Windows keeps programs to start at login, and the value Lucy adds there.
 pub const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 pub const RUN_VALUE: &str = "Lucy";
-/// The sprite's XDG autostart entry, launchd label and `Run` value.
-pub const SPRITE_DESKTOP_FILE: &str = "lucy-sprite.desktop";
-pub const SPRITE_LAUNCHD_LABEL: &str = "io.github.ajmerr.lucy.sprite";
-pub const SPRITE_RUN_VALUE: &str = "LucySprite";
+/// The desktop app's XDG autostart entry, launchd label and `Run` value.
+pub const APP_DESKTOP_FILE: &str = "lucy-desktop.desktop";
+pub const APP_LAUNCHD_LABEL: &str = "io.github.ajmerr.lucy.desktop";
+pub const APP_RUN_VALUE: &str = "LucyDesktop";
+/// What v0.4.0 used for the sprite before she became part of the app; cleared away.
+const OLD_SPRITE_DESKTOP_FILE: &str = "lucy-sprite.desktop";
+const OLD_SPRITE_LAUNCHD_LABEL: &str = "io.github.ajmerr.lucy.sprite";
+const OLD_SPRITE_RUN_VALUE: &str = "LucySprite";
+/// The argument login entries start the app with: no window, just the sprite and tray.
+pub const BACKGROUND: &str = "background";
 
 /// What the service runs, and with which environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,13 +150,14 @@ pub fn launchd_plist(spec: &ServiceSpec) -> String {
     )
 }
 
-/// A launchd agent that starts the sprite at login (and leaves her gone if you quit her).
-pub fn sprite_launchd_plist(spec: &ServiceSpec) -> String {
+/// A launchd agent that starts the app at login, in the background (and leaves it gone if you
+/// quit it).
+pub fn app_launchd_plist(spec: &ServiceSpec) -> String {
     agent_plist(
-        "Lucy's desktop sprite, written by `lucy service install` because [sprite] autostart \
-         is on. Remove it with `lucy service uninstall`.",
-        SPRITE_LAUNCHD_LABEL,
-        &[],
+        "Lucy's desktop app, written by `lucy service install` because [app] autostart is on. \
+         Remove it with `lucy service uninstall`.",
+        APP_LAUNCHD_LABEL,
+        &[BACKGROUND],
         spec,
         "  <key>LimitLoadToSessionType</key>\n  <string>Aqua</string>\n\
          \x20 <key>ProcessType</key>\n  <string>Interactive</string>\n",
@@ -220,22 +228,25 @@ pub fn run_key_command(exe: &Path) -> String {
     format!("\"{}\" core run --service", exe.display())
 }
 
-/// An XDG autostart entry that starts the sprite when your desktop session does (GNOME, KDE,
-/// and systemd-based sessions such as uwsm's run these).
+/// An XDG autostart entry that starts the app, in the background, when your desktop session
+/// does (GNOME, KDE, and systemd-based sessions such as uwsm's run these).
 pub fn desktop_entry(spec: &ServiceSpec) -> String {
     let mut exec = String::from("env");
     for (name, value) in &spec.env {
         exec += &format!(" {}", exec_quoted(&format!("{name}={value}")));
     }
-    exec += &format!(" {}", exec_quoted(&spec.exe.display().to_string()));
+    exec += &format!(
+        " {} {BACKGROUND}",
+        exec_quoted(&spec.exe.display().to_string())
+    );
     // The Exec value is itself a string value: backslashes doubled, and `%` is a field code.
     let exec = exec.replace('\\', r"\\").replace('%', "%%");
     format!(
-        "# Lucy's desktop sprite, written by `lucy service install` because [sprite] autostart\n\
-         # is on. Remove it with `lucy service uninstall`.\n\
+        "# Lucy's desktop app, written by `lucy service install` because [app] autostart is on.\n\
+         # Remove it with `lucy service uninstall`.\n\
          [Desktop Entry]\n\
          Type=Application\n\
-         Name=Lucy Sprite\n\
+         Name=Lucy\n\
          Comment=Lucy, your AI assistant, on the desktop\n\
          Exec={exec}\n\
          NoDisplay=true\n\
@@ -521,30 +532,28 @@ impl<R: Runner> ServiceManager<R> {
         bail!("Lucy's core service is still shutting down; try again in a moment")
     }
 
-    /// Start the sprite at login (replacing an earlier entry). Doesn't start her now.
-    pub fn install_sprite(&self, spec: &ServiceSpec) -> Result<()> {
+    /// Start the app at login (replacing an earlier entry, and v0.4.0's sprite entry). Doesn't
+    /// start it now.
+    pub fn install_app(&self, spec: &ServiceSpec) -> Result<()> {
         match &self.platform {
             Platform::Systemd { autostart_dir, .. } => {
-                write(
-                    &autostart_dir.join(SPRITE_DESKTOP_FILE),
-                    &desktop_entry(spec),
-                )?;
+                write(&autostart_dir.join(APP_DESKTOP_FILE), &desktop_entry(spec))?;
             }
             Platform::Launchd { agents_dir, .. } => {
                 write(
-                    &agents_dir.join(format!("{SPRITE_LAUNCHD_LABEL}.plist")),
-                    &sprite_launchd_plist(spec),
+                    &agents_dir.join(format!("{APP_LAUNCHD_LABEL}.plist")),
+                    &app_launchd_plist(spec),
                 )?;
             }
             Platform::RunKey => {
-                let command = format!("\"{}\"", spec.exe.display());
+                let command = format!("\"{}\" {BACKGROUND}", spec.exe.display());
                 self.run_ok(
                     "reg",
                     &[
                         "add",
                         RUN_KEY,
                         "/v",
-                        SPRITE_RUN_VALUE,
+                        APP_RUN_VALUE,
                         "/t",
                         "REG_SZ",
                         "/d",
@@ -554,39 +563,66 @@ impl<R: Runner> ServiceManager<R> {
                 )?;
             }
         }
+        if let Some(old) = self.login_entry(Entry::OldSprite)? {
+            self.remove_login_entry(Entry::OldSprite, &old)?;
+        }
         Ok(())
     }
 
-    /// Stop starting the sprite at login. False if she wasn't set to.
-    pub fn uninstall_sprite(&self) -> Result<bool> {
-        let Some(location) = self.sprite_installed()? else {
-            return Ok(false);
-        };
-        match &self.platform {
-            Platform::RunKey => {
-                self.run_ok("reg", &["delete", RUN_KEY, "/v", SPRITE_RUN_VALUE, "/f"])?;
+    /// Stop starting the app (or v0.4.0's sprite) at login. False if neither was set to.
+    pub fn uninstall_app(&self) -> Result<bool> {
+        let mut removed = false;
+        for entry in [Entry::App, Entry::OldSprite] {
+            if let Some(location) = self.login_entry(entry)? {
+                self.remove_login_entry(entry, &location)?;
+                removed = true;
             }
-            _ => remove(Path::new(&location))?,
         }
-        Ok(true)
+        Ok(removed)
     }
 
-    /// Where the sprite's login entry is, if she has one.
-    pub fn sprite_installed(&self) -> Result<Option<String>> {
-        let file = match &self.platform {
-            Platform::Systemd { autostart_dir, .. } => autostart_dir.join(SPRITE_DESKTOP_FILE),
-            Platform::Launchd { agents_dir, .. } => {
-                agents_dir.join(format!("{SPRITE_LAUNCHD_LABEL}.plist"))
-            }
+    /// Where the app's login entry is (or v0.4.0's sprite entry), if there is one.
+    pub fn app_installed(&self) -> Result<Option<String>> {
+        match self.login_entry(Entry::App)? {
+            Some(location) => Ok(Some(location)),
+            None => self.login_entry(Entry::OldSprite),
+        }
+    }
+
+    fn login_entry(&self, entry: Entry) -> Result<Option<String>> {
+        let (file, label, value) = match entry {
+            Entry::App => (APP_DESKTOP_FILE, APP_LAUNCHD_LABEL, APP_RUN_VALUE),
+            Entry::OldSprite => (
+                OLD_SPRITE_DESKTOP_FILE,
+                OLD_SPRITE_LAUNCHD_LABEL,
+                OLD_SPRITE_RUN_VALUE,
+            ),
+        };
+        let path = match &self.platform {
+            Platform::Systemd { autostart_dir, .. } => autostart_dir.join(file),
+            Platform::Launchd { agents_dir, .. } => agents_dir.join(format!("{label}.plist")),
             Platform::RunKey => {
                 let ran = self
                     .runner
-                    .run("reg", &["query", RUN_KEY, "/v", SPRITE_RUN_VALUE])
+                    .run("reg", &["query", RUN_KEY, "/v", value])
                     .context("couldn't run `reg`")?;
-                return Ok(ran.ok.then(|| format!(r"{RUN_KEY}\{SPRITE_RUN_VALUE}")));
+                return Ok(ran.ok.then(|| format!(r"{RUN_KEY}\{value}")));
             }
         };
-        Ok(file.exists().then(|| file.display().to_string()))
+        Ok(path.exists().then(|| path.display().to_string()))
+    }
+
+    fn remove_login_entry(&self, entry: Entry, location: &str) -> Result<()> {
+        match &self.platform {
+            Platform::RunKey => {
+                let value = match entry {
+                    Entry::App => APP_RUN_VALUE,
+                    Entry::OldSprite => OLD_SPRITE_RUN_VALUE,
+                };
+                self.run_ok("reg", &["delete", RUN_KEY, "/v", value, "/f"])
+            }
+            _ => remove(Path::new(location)),
+        }
     }
 
     fn plist_path(&self, agents_dir: &Path) -> PathBuf {
@@ -674,44 +710,42 @@ pub async fn install(force: bool) -> Result<()> {
     for note in install_notes(&spec) {
         println!("{note}");
     }
-    sprite_at_login(&manager, socket)?;
+    app_at_login(&manager, socket)?;
     Ok(())
 }
 
-/// Add the sprite to the login items when `[sprite] autostart` is on, and take her off when
-/// it's off.
-fn sprite_at_login<R: Runner>(manager: &ServiceManager<R>, socket: Option<&Path>) -> Result<()> {
+/// Add the desktop app to the login items when `[app] autostart` (or the older
+/// `[sprite] autostart`) is on, and take it off when it's off.
+fn app_at_login<R: Runner>(manager: &ServiceManager<R>, socket: Option<&Path>) -> Result<()> {
     let autostart = lucy_core::config::default_path()
         .map(|path| lucy_core::config::Config::load(&path))
         .transpose()?
         .flatten()
-        .is_some_and(|config| config.sprite.autostart);
+        .is_some_and(|config| config.starts_at_login());
     if !autostart {
-        if manager.uninstall_sprite()? {
-            println!("Took the sprite off your login items ([sprite] autostart is off).");
+        if manager.uninstall_app()? {
+            println!("Took Lucy's app off your login items ([app] autostart is off).");
         }
         return Ok(());
     }
     let Some(exe) = crate::sprite::find() else {
         println!(
-            "[sprite] autostart is on, but the sprite (lucy-sprite) isn't installed; install \
-             it and run `lucy service install` again."
+            "[app] autostart is on, but Lucy's desktop app (lucy-desktop) isn't installed; \
+             install it and run `lucy service install` again."
         );
         return Ok(());
     };
-    let log = core_process::log_path()
-        .and_then(|core_log| core_log.parent().map(|dir| dir.join("sprite.log")))
-        .context("no data directory; set LUCY_DATA_DIR")?;
-    // Her session has its own PATH; she finds `lucy` next to her.
+    let log = crate::sprite::log_path().context("no data directory; set LUCY_DATA_DIR")?;
+    // The desktop session has its own PATH; the app finds `lucy` next to it.
     let env = socket.map_or_else(Vec::new, |socket| {
         capture_env(std::env::vars(), socket)
             .into_iter()
             .filter(|(name, _)| name != "PATH")
             .collect()
     });
-    manager.install_sprite(&ServiceSpec { exe, log, env })?;
-    let location = manager.sprite_installed()?.unwrap_or_default();
-    println!("The sprite starts at login too ({location}); `lucy sprite` starts her now.");
+    manager.install_app(&ServiceSpec { exe, log, env })?;
+    let location = manager.app_installed()?.unwrap_or_default();
+    println!("Lucy's app starts at login too ({location}); `lucy app` opens it now.");
     Ok(())
 }
 
@@ -766,9 +800,9 @@ pub async fn uninstall(force: bool) -> Result<()> {
     let manager = manager()?;
     let Some(installed) = manager.installed()? else {
         println!("Lucy's core isn't installed as a service.");
-        if let Some(location) = manager.sprite_installed()? {
-            manager.uninstall_sprite()?;
-            println!("Took the sprite off your login items ({location}).");
+        if let Some(location) = manager.app_installed()? {
+            manager.uninstall_app()?;
+            println!("Took Lucy's app off your login items ({location}).");
         }
         return Ok(());
     };
@@ -782,9 +816,9 @@ pub async fn uninstall(force: bool) -> Result<()> {
         "Removed Lucy's login service ({}). The core starts on demand again.",
         installed.location
     );
-    if let Some(location) = manager.sprite_installed()? {
-        manager.uninstall_sprite()?;
-        println!("Took the sprite off your login items ({location}).");
+    if let Some(location) = manager.app_installed()? {
+        manager.uninstall_app()?;
+        println!("Took Lucy's app off your login items ({location}).");
     }
     Ok(())
 }
@@ -812,8 +846,8 @@ pub async fn restart(force: bool) -> Result<()> {
 /// `lucy service status`.
 pub async fn show_status() -> Result<()> {
     let endpoint = Endpoint::default_for_user();
-    let (installed, sprite) = match ServiceManager::for_this_os() {
-        Some(manager) => (manager.installed()?, manager.sprite_installed()?),
+    let (installed, app) = match ServiceManager::for_this_os() {
+        Some(manager) => (manager.installed()?, manager.app_installed()?),
         None => (None, None),
     };
     let service = match &installed {
@@ -828,8 +862,8 @@ pub async fn show_status() -> Result<()> {
         },
     };
     println!("Service:  {service}");
-    if let Some(location) = sprite {
-        println!("Sprite:   starts at login ({location})");
+    if let Some(location) = app {
+        println!("App:      starts at login ({location})");
     }
     match core_process::status(&endpoint).await {
         Err(_) => println!(
@@ -857,4 +891,11 @@ pub async fn show_status() -> Result<()> {
         println!("Log:      {}", log.display());
     }
     Ok(())
+}
+
+/// A login entry the desktop app manages: its own, or the sprite's from v0.4.0.
+#[derive(Clone, Copy)]
+enum Entry {
+    App,
+    OldSprite,
 }

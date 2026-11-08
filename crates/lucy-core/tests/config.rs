@@ -140,3 +140,20 @@ fn user_name_is_optional() {
     let named = Config::from_toml_str(&format!("{MINIMAL}\n[user]\nname = \"Sam\"\n")).unwrap();
     assert_eq!(named.user.name.as_deref(), Some("Sam"));
 }
+
+#[test]
+fn the_app_starts_at_login_with_app_autostart_or_the_older_sprite_setting() {
+    let off = Config::from_toml_str(MINIMAL).unwrap();
+    assert!(!off.starts_at_login());
+    assert!(off.sprite.enabled, "the sprite shows unless turned off");
+
+    let new = Config::from_toml_str(&format!("{MINIMAL}\n[app]\nautostart = true\n")).unwrap();
+    assert!(new.starts_at_login());
+
+    // Configs from v0.4.0 said it under [sprite].
+    let old = Config::from_toml_str(&format!("{MINIMAL}\n[sprite]\nautostart = true\n")).unwrap();
+    assert!(old.starts_at_login());
+
+    let hidden = Config::from_toml_str(&format!("{MINIMAL}\n[sprite]\nenabled = false\n")).unwrap();
+    assert!(!hidden.sprite.enabled);
+}

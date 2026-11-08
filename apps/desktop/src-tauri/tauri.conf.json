@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Lucy Sprite",
-  "mainBinaryName": "lucy-sprite",
-  "identifier": "io.github.ajmerr.lucy.sprite",
+  "productName": "Lucy",
+  "mainBinaryName": "lucy-desktop",
+  "identifier": "io.github.ajmerr.lucy",
   "build": {
     "frontendDist": "../../ui/dist",
     "devUrl": "http://localhost:1420",
