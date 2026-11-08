@@ -318,7 +318,8 @@ crates/
   lucy-cli/        the `lucy` command: chat loop, Markdown renderer, setup wizard
   lucy-tools/      built-in tools (files, search, fetch, shell) as an in-process MCP server
   lucy-packs/      sprite packs: loading and checking pack.toml and its frames
-apps/sprite/       the desktop sprite (Tauri; its own Cargo workspace)
+apps/sprite/       the desktop app's Rust side (Tauri; its own Cargo workspace)
+apps/ui/           its web pages (the sprite, and the coming GUI), shared with a later mobile app
 persona/           built-in personas
 packs/placeholder/ the only sprite pack tracked in git
 nix/               the flake's packages, home-manager module and its check

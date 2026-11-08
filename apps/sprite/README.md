@@ -60,16 +60,17 @@ home-manager, `programs.lucy.sprite.autostart = true`).
 
 ## Running it
 
-It's a [Tauri](https://tauri.app) app: a Rust side (`src-tauri/`) and two TypeScript pages
-(`index.html` for her and `chat.html` for her chat window, code in `src/`). It has its own Cargo
-workspace, because it needs WebKitGTK and friends on Linux, which the rest of Lucy doesn't.
+It's a [Tauri](https://tauri.app) app: a Rust side (`src-tauri/`, here) and web pages in
+[`apps/ui`](../ui), shared with Lucy's coming GUI (`index.html` for her, `chat.html` for her
+chat window). It has its own Cargo workspace, because it needs WebKitGTK and friends on Linux,
+which the rest of Lucy doesn't.
 
 ```sh
 nix develop                    # from the repo root; or install Tauri's prerequisites yourself
-cd apps/sprite
+cd apps/ui
 npm ci
-npm run build                  # the page, into dist/
-cd src-tauri
+npm run build                  # the pages, into apps/ui/dist
+cd ../sprite/src-tauri
 cargo build --release --features tauri/custom-protocol
 cp target/release/lucy-sprite ~/.cargo/bin/   # next to `lucy`, or anywhere on PATH
 
@@ -80,11 +81,12 @@ lucy sprite toggle             # hide or show her
 lucy sprite quit               # send her off
 ```
 
-`cargo tauri dev` (also in the dev shell) runs her with the page served live from Vite.
+`cargo tauri dev` (also in the dev shell, from `apps/sprite`) runs her with the pages served
+live from Vite.
 Starting `lucy-sprite` again while one is running just hands its command to the running one.
 
-To build the installers locally, put a `lucy` build at `src-tauri/binaries/lucy-<target
-triple>` (e.g. `lucy-x86_64-unknown-linux-gnu`) and run
+To build the installers locally, run `npm ci` here and in `apps/ui`, put a `lucy` build at
+`src-tauri/binaries/lucy-<target triple>` (e.g. `lucy-x86_64-unknown-linux-gnu`) and run
 `npm run tauri -- build --config src-tauri/tauri.bundle.conf.json --bundles deb`. The release
 workflow does this for every platform.
 
@@ -114,6 +116,6 @@ placeholder.
 ## Tests
 
 ```sh
-npm test                       # animation, what she shows, bubble text, the chat window's transcript
+npm test                       # in apps/ui: animation, what she shows, bubble text, transcripts
 cargo test -p lucy-packs       # from the repo root: pack loading and checks
 ```

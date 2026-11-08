@@ -1,7 +1,7 @@
 // Which frame the sprite shows at a given moment: frame timing, loops, one-shot states that
 // hand over to another, and switching states.
 
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 import { Animator, type States } from "./animator.ts";

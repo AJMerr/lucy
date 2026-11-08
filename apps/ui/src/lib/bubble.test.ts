@@ -1,7 +1,7 @@
 // Turning a reply (light Markdown, possibly still streaming) into the bubble's HTML, capped to
 // a few lines with "more…".
 
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 import { renderBubble } from "./bubble.ts";

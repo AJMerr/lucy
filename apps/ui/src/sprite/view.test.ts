@@ -1,7 +1,7 @@
 // What the sprite shows, given what the core says and what you do: her animation, the speech
 // bubble, the input box and approval requests.
 
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 import { type CoreEvent, type Input, type View, initialView, reduce } from "./view.ts";

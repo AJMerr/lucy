@@ -2,7 +2,7 @@
 // and the core's live events to the list of entries it shows.
 
 import { describeCall } from "./calls.ts";
-import type { CoreEvent } from "./view.ts";
+import type { CoreEvent } from "./protocol.ts";
 
 /** A saved message, as `sessions.load` returns it (`lucy_protocol::rpc::StoredMessage`). */
 export interface StoredMessage {

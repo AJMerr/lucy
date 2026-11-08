@@ -1,5 +1,5 @@
-# `lucy-sprite`: Lucy's desktop sprite (apps/sprite), a Tauri app. Linux only here; macOS and
-# Windows get Tauri bundles from the release workflow.
+# `lucy-sprite`: Lucy's desktop sprite, a Tauri app (Rust side in apps/sprite, pages in
+# apps/ui). Linux only here; macOS and Windows get Tauri bundles from the release workflow.
 {
   lib,
   rustPlatform,
@@ -33,12 +33,17 @@ rustPlatform.buildRustPackage {
       ../crates
       ../persona
       ../packs/placeholder
-      (lib.fileset.difference ../apps/sprite (
+      # Its Rust side, and its pages (apps/ui).
+      (lib.fileset.difference ../apps/sprite/src-tauri (
         lib.fileset.unions [
-          (lib.fileset.maybeMissing ../apps/sprite/node_modules)
-          (lib.fileset.maybeMissing ../apps/sprite/dist)
           (lib.fileset.maybeMissing ../apps/sprite/src-tauri/target)
           (lib.fileset.maybeMissing ../apps/sprite/src-tauri/gen)
+        ]
+      ))
+      (lib.fileset.difference ../apps/ui (
+        lib.fileset.unions [
+          (lib.fileset.maybeMissing ../apps/ui/node_modules)
+          (lib.fileset.maybeMissing ../apps/ui/dist)
         ]
       ))
     ];
@@ -50,8 +55,8 @@ rustPlatform.buildRustPackage {
   # Serve the built page from inside the binary.
   buildFeatures = [ "tauri/custom-protocol" ];
 
-  npmRoot = "apps/sprite";
-  npmDeps = importNpmLock { npmRoot = ../apps/sprite; };
+  npmRoot = "apps/ui";
+  npmDeps = importNpmLock { npmRoot = ../apps/ui; };
 
   nativeBuildInputs = [
     nodejs_24
@@ -70,9 +75,9 @@ rustPlatform.buildRustPackage {
     webkitgtk_4_1
   ];
 
-  # The page (both of them) into apps/sprite/dist, which the binary embeds.
+  # The pages into apps/ui/dist, which the binary embeds.
   preBuild = ''
-    (cd apps/sprite && npm run build)
+    (cd apps/ui && npm run build)
   '';
 
   # The page tests run in CI (`npm test`); the Rust side has none of its own.

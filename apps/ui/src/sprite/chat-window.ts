@@ -4,8 +4,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import { renderBubble } from "./bubble.ts";
-import type { CoreEvent } from "./view.ts";
+import { renderBubble } from "../lib/bubble.ts";
+import type { CoreEvent } from "../lib/protocol.ts";
 import {
   type Entry,
   type Live,
@@ -14,7 +14,7 @@ import {
   type TranscriptInput,
   emptyTranscript,
   reduce,
-} from "./transcript.ts";
+} from "../lib/transcript.ts";
 
 function element<T extends HTMLElement>(selector: string): T {
   const found = document.querySelector<T>(selector);

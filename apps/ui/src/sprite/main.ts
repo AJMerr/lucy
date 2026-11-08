@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import { Animator, type States } from "./animator.ts";
-import { renderBubble } from "./bubble.ts";
+import { renderBubble } from "../lib/bubble.ts";
 import { type CoreEvent, type Input, type View, initialView, reduce } from "./view.ts";
 
 /** The pack as `lucy-sprite` hands it over (see src-tauri/src/pack.rs). */

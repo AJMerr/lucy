@@ -1,6 +1,6 @@
 // The chat window: her whole chat, from what the core has saved plus what happens live.
 
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 import {
@@ -11,7 +11,7 @@ import {
   emptyTranscript,
   reduce,
 } from "./transcript.ts";
-import type { CoreEvent } from "./view.ts";
+import type { CoreEvent } from "./protocol.ts";
 
 const session = "01SPRITE";
 

@@ -2,20 +2,10 @@
 // Rust side filters the rest) and your actions to her animation, speech bubble, input box and
 // approval request. Timers come in as `tick`s, so this stays testable.
 
-import { describeCall } from "./calls.ts";
+import { describeCall } from "../lib/calls.ts";
+import type { CoreEvent } from "../lib/protocol.ts";
 
-/** A core event, as the protocol serializes it (`lucy_protocol::rpc::Event`). */
-export interface CoreEvent {
-  type: string;
-  turn_id?: number;
-  text?: string;
-  call?: { id: string; name: string; arguments: Record<string, unknown> };
-  reason?: string;
-  preview?: string;
-  outcome?: string;
-  error?: string;
-  [key: string]: unknown;
-}
+export type { CoreEvent };
 
 export type Animation = "idle" | "listening" | "thinking" | "talking" | "happy" | "error";
 
