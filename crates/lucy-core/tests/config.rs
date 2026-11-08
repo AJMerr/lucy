@@ -38,7 +38,10 @@ fn minimal_config_fills_in_defaults() {
 
     assert_eq!(config.sprite.pack, "placeholder");
     assert_eq!(config.sprite.scale, 1.0);
-    assert_eq!(config.sprite.bubble_timeout_secs, 12);
+    assert_eq!(
+        config.sprite.bubble_timeout_secs, 0,
+        "replies stay up until the next message"
+    );
 }
 
 #[test]

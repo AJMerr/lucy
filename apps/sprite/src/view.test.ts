@@ -89,6 +89,19 @@ test("a finished reply makes her happy, and the bubble fades after the timeout",
   assert.equal(faded.bubble, null);
 });
 
+test("with fading off, her reply stays up until you send the next message", () => {
+  const stays = { bubbleTimeoutMs: 0 };
+  const play = (inputs: Input[], from: View) =>
+    inputs.reduce((view, input) => reduce(view, input, stays), from);
+  const done = play([started(1), delta(1, "Read me."), finished(1, "complete", 1_000)], initialView());
+
+  const hourLater = play([{ type: "tick", now: 3_600_000 }], done);
+  assert.equal(hourLater.bubble?.text, "Read me.");
+
+  const next = play([{ type: "open_input" }, { type: "sent" }], hourLater);
+  assert.equal(next.bubble, null);
+});
+
 test("a finished bubble goes when you dismiss it", () => {
   const done = run([started(1), delta(1, "Long story."), finished(1, "complete", 0)]);
 

@@ -111,6 +111,7 @@ export function reduce(view: View, input: Input, settings: Settings): View {
       const bubble = view.bubble;
       const fades =
         bubble !== null &&
+        settings.bubbleTimeoutMs > 0 &&
         bubble.done &&
         view.approval === null &&
         bubble.doneAt !== undefined &&

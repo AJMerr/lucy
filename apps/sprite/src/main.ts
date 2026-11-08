@@ -200,7 +200,13 @@ async function start(): Promise<void> {
           height: rect.height,
         };
       });
-    const args = { width: windowWidth, height: windowHeight, regions, typing: view.inputOpen };
+    const args = {
+      width: windowWidth,
+      height: windowHeight,
+      regions,
+      typing: view.inputOpen,
+      bubble: !bubble.hidden,
+    };
     const key = JSON.stringify(args);
     if (key !== lastLayout) {
       lastLayout = key;
@@ -223,10 +229,12 @@ async function start(): Promise<void> {
       dispatch({ type: "problem", message: String(err), now: Date.now() }),
     );
   });
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      dispatch({ type: "close_input" });
+  // Esc closes the input box if it's open, else hides a finished reply.
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") {
+      return;
     }
+    dispatch({ type: view.inputOpen ? "close_input" : "dismiss" });
   });
   // The whole reply (and the rest of her chat) is in the chat window.
   more.addEventListener("click", () => {

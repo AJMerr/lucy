@@ -199,6 +199,7 @@ pub struct UserSettings {
 pub struct SpriteSettings {
     pub pack: String,
     pub scale: f64,
+    /// Seconds a finished reply stays up before fading; 0 keeps it until your next message.
     pub bubble_timeout_secs: u32,
     /// Opens her input box where apps may register shortcuts (X11, macOS, Windows); empty
     /// turns it off. On Wayland, bind `lucy sprite ask` in the compositor instead.
@@ -212,7 +213,7 @@ impl Default for SpriteSettings {
         Self {
             pack: "placeholder".into(),
             scale: 1.0,
-            bubble_timeout_secs: 12,
+            bubble_timeout_secs: 0,
             hotkey: "Ctrl+Shift+Space".into(),
             autostart: false,
         }
