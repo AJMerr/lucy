@@ -60,9 +60,9 @@ pub struct Region {
     pub height: f64,
 }
 
-/// The page's layout changed: the size it needs, the parts that take clicks, whether the
-/// input box wants the keyboard, and whether a bubble is up (Esc hides it). (Not async, so
-/// Tauri runs it on the main thread, where GTK must be used.)
+/// The page's layout changed: the size it needs, the parts that take clicks, and whether the
+/// input box wants the keyboard. (Not async, so Tauri runs it on the main thread, where
+/// GTK must be used.)
 #[tauri::command]
 pub fn set_layout(
     window: WebviewWindow,
@@ -70,14 +70,12 @@ pub fn set_layout(
     height: f64,
     regions: Vec<Region>,
     typing: bool,
-    bubble: bool,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    if layer_shell::set_layout(&regions, typing, bubble) {
+    if layer_shell::set_layout(&regions, typing) {
         return Ok(());
     }
-    // Only layer shell (Linux) uses these.
-    let _ = (regions, bubble);
+    let _ = regions;
     resize_window(&window, width, height).map_err(|err| err.to_string())?;
     if typing {
         window.set_focus().map_err(|err| err.to_string())?;
@@ -171,13 +169,13 @@ mod layer_shell {
             width,
             height,
         };
-        set_layout(&[sprite], false, false);
+        set_layout(&[sprite], false);
         Ok(true)
     }
 
-    /// Let clicks through outside `regions`, and take the keyboard while typing (or offer to,
-    /// while a bubble is up). False when she isn't on a layer.
-    pub fn set_layout(regions: &[Region], typing: bool, bubble: bool) -> bool {
+    /// Let clicks through outside `regions`, and take the keyboard while typing. False when
+    /// she isn't on a layer.
+    pub fn set_layout(regions: &[Region], typing: bool) -> bool {
         LAYER.with(|cell| {
             let Some((layer, (width, height))) = cell.borrow().clone() else {
                 return false;
@@ -198,13 +196,9 @@ mod layer_shell {
                 let region = gtk::cairo::Region::create_rectangles(&rectangles);
                 surface.input_shape_combine_region(&region, 0, 0);
             }
-            // Exclusive while typing: a hotkey-opened box gets the keys without a click. On
-            // demand while a bubble is up: she keeps focus after you send (so Esc hides her
-            // reply) and gets it back when clicked, but gives it up when you click elsewhere.
+            // Exclusive while typing: a hotkey-opened box gets the keys without a click.
             layer.set_keyboard_mode(if typing {
                 KeyboardMode::Exclusive
-            } else if bubble {
-                KeyboardMode::OnDemand
             } else {
                 KeyboardMode::None
             });

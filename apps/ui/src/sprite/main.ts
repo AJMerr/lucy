@@ -209,13 +209,7 @@ async function start(): Promise<void> {
           height: rect.height,
         };
       });
-    const args = {
-      width: windowWidth,
-      height: windowHeight,
-      regions,
-      typing: view.inputOpen,
-      bubble: !bubble.hidden,
-    };
+    const args = { width: windowWidth, height: windowHeight, regions, typing: view.inputOpen };
     const key = JSON.stringify(args);
     if (key !== lastLayout) {
       lastLayout = key;
@@ -241,12 +235,10 @@ async function start(): Promise<void> {
   // Typing changes only the input box; repaint the rest with it (see repaintAll). keydown
   // comes in the same task as the text change, so both land in one frame.
   input.addEventListener("keydown", repaintAll);
-  // Esc closes the input box if it's open, else hides a finished reply.
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") {
-      return;
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      dispatch({ type: "close_input" });
     }
-    dispatch({ type: view.inputOpen ? "close_input" : "dismiss" });
   });
   // The whole reply (and the rest of her chat) is in the chat window.
   more.addEventListener("click", () => {
