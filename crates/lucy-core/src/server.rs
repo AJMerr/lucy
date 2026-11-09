@@ -997,7 +997,7 @@ fn chat_send(
         store
             .append(
                 &session_id,
-                NewMessage::user_with_images(p.text.clone(), pictures),
+                NewMessage::user_with_images(p.text.clone(), pictures.clone()),
             )
             .and_then(|()| store.load(&session_id))
     };
@@ -1011,6 +1011,7 @@ fn chat_send(
     let _ = core.events.send(Event::UserMessage {
         session_id: key.clone(),
         text: p.text,
+        images: pictures,
     });
 
     // A remote client's folder is on another machine; its chats work in the core's.
@@ -1176,6 +1177,7 @@ fn images_generate(
     let _ = core.events.send(Event::UserMessage {
         session_id: key.clone(),
         text,
+        images: Vec::new(),
     });
 
     let turn_id = core.next_turn.fetch_add(1, Ordering::Relaxed);

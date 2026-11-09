@@ -113,6 +113,7 @@ impl Harness {
             ChatOptions {
                 color: false,
                 width: 80,
+                pictures: false,
                 start,
             },
         )

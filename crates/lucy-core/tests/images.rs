@@ -305,3 +305,33 @@ async fn a_picture_file_is_described_for_a_model_that_cant_see() {
     );
     assert!(!messages.iter().any(|m| m["content"].is_array()));
 }
+
+#[tokio::test]
+async fn windows_watching_the_chat_see_the_picture_you_sent() {
+    let harness = Harness::start(true, false).await;
+    let (client, mut events) = harness.client().await;
+
+    let _: ChatSendResult = client
+        .call(
+            method::CHAT_SEND,
+            json!({"text": "look", "images": [{"media_type": "image/png", "data": PNG}]}),
+        )
+        .await
+        .unwrap();
+
+    let images = loop {
+        let event = tokio::time::timeout(Duration::from_secs(20), events.recv())
+            .await
+            .expect("no event")
+            .expect("connection closed");
+        if let Event::UserMessage { images, .. } = event {
+            break images;
+        }
+    };
+    assert_eq!(images.len(), 1);
+    let back: Value = client
+        .call(method::IMAGES_GET, json!({"id": images[0].id}))
+        .await
+        .unwrap();
+    assert_eq!(back["data"], PNG);
+}

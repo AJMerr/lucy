@@ -535,6 +535,9 @@ pub enum Event {
     UserMessage {
         session_id: String,
         text: String,
+        /// Pictures sent with it, kept with the chat (`images.get`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<ImageRef>,
     },
     TurnStarted {
         session_id: String,
