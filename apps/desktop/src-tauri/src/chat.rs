@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use lucy_client::{Client, ClientError};
 use lucy_protocol::rpc::{
-    ApproveParams, ChatSendParams, ChatSendResult, Decision, Event, RenameParams, ResolveParams,
-    method,
+    ApproveParams, ChatSendParams, ChatSendResult, Decision, Event, ImageData, ImageGenerateParams,
+    ImageParams, RenameParams, ResolveParams, method,
 };
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
@@ -142,32 +142,55 @@ async fn relay(
     }
 }
 
-/// Send a message in her chat. The reply arrives as `core-event`s.
+/// Send a message (with any pictures) in her chat; `/image <description>` makes a picture
+/// straight away instead. The reply arrives as `core-event`s.
 #[tauri::command]
 pub async fn send(
     app: AppHandle,
     chat: tauri::State<'_, Chat>,
     text: String,
+    images: Vec<ImageData>,
 ) -> Result<(), String> {
+    let prompt = text
+        .strip_prefix("/image ")
+        .map(str::trim)
+        .filter(|prompt| images.is_empty() && !prompt.is_empty());
     let mut conn = chat.conn.lock().await;
     for attempt in 0..2 {
         if conn.is_none() {
             *conn = Some(open(&app).await?);
         }
         let current = conn.as_ref().expect("just opened");
-        let sent = current
-            .client
-            .call::<_, ChatSendResult>(
-                method::CHAT_SEND,
-                ChatSendParams {
-                    images: Vec::new(),
-                    session_id: Some(current.session.clone()),
-                    text: text.clone(),
-                    // Her tools work in the core's own default folder.
-                    cwd: None,
-                },
-            )
-            .await;
+        let session_id = Some(current.session.clone());
+        let sent = match prompt {
+            Some(prompt) => {
+                current
+                    .client
+                    .call::<_, ChatSendResult>(
+                        method::IMAGES_GENERATE,
+                        ImageGenerateParams {
+                            session_id,
+                            prompt: prompt.to_owned(),
+                        },
+                    )
+                    .await
+            }
+            None => {
+                current
+                    .client
+                    .call::<_, ChatSendResult>(
+                        method::CHAT_SEND,
+                        ChatSendParams {
+                            images: images.clone(),
+                            session_id,
+                            text: text.clone(),
+                            // Her tools work in the core's own default folder.
+                            cwd: None,
+                        },
+                    )
+                    .await
+            }
+        };
         match sent {
             Ok(_) => return Ok(()),
             // The core went away (e.g. it was restarted): reconnect once and try again.
@@ -176,6 +199,19 @@ pub async fn send(
         }
     }
     Err("lost the connection to Lucy's core".into())
+}
+
+/// A picture kept with her chat, as a `data:` URL for the bubble.
+#[tauri::command]
+pub async fn picture(chat: tauri::State<'_, Chat>, id: String) -> Result<String, String> {
+    let conn = chat.conn.lock().await;
+    let conn = conn.as_ref().ok_or("lost the connection to Lucy's core")?;
+    let image: ImageData = conn
+        .client
+        .call(method::IMAGES_GET, ImageParams { id })
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(format!("data:{};base64,{}", image.media_type, image.data))
 }
 
 /// Answer an approval request: `once`, `always` or `deny`.

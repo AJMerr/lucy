@@ -3,7 +3,8 @@
 // approval request. Timers come in as `tick`s, so this stays testable.
 
 import { describeCall } from "../lib/calls.ts";
-import type { CoreEvent } from "../lib/protocol.ts";
+import type { Attached } from "../lib/pictures.ts";
+import type { CoreEvent, ImageRef } from "../lib/protocol.ts";
 
 export type { CoreEvent };
 
@@ -18,6 +19,8 @@ export interface Bubble {
   error?: string;
   /** When it ended, for fading. */
   doneAt?: number;
+  /** Pictures she made during the reply. */
+  pictures?: ImageRef[];
 }
 
 export interface Approval {
@@ -39,12 +42,16 @@ export interface View {
   turnId: number | null;
   /** The chat window is open: replies and approvals show there instead. */
   chatOpen: boolean;
+  /** Pictures waiting to go with your next message (dropped on her). */
+  attached: Attached[];
 }
 
 export type Input =
   | { type: "event"; event: CoreEvent; now: number }
   | { type: "open_input" }
   | { type: "close_input" }
+  /** Pictures dropped on her, to go with your next message. */
+  | { type: "attached"; pictures: Attached[] }
   /** You sent a message. */
   | { type: "sent" }
   /** You answered the approval request. */
@@ -67,6 +74,7 @@ export function initialView(): View {
     approval: null,
     turnId: null,
     chatOpen: false,
+    attached: [],
   };
 }
 
@@ -82,10 +90,25 @@ export function reduce(view: View, input: Input, settings: Settings): View {
       return {
         ...view,
         inputOpen: false,
+        attached: [],
         animation: view.turnId === null && view.animation === "listening" ? "idle" : view.animation,
       };
     case "sent":
-      return { ...view, inputOpen: false, animation: "thinking", bubble: null, approval: null };
+      return {
+        ...view,
+        inputOpen: false,
+        animation: "thinking",
+        bubble: null,
+        approval: null,
+        attached: [],
+      };
+    case "attached":
+      return {
+        ...view,
+        inputOpen: true,
+        attached: [...view.attached, ...input.pictures],
+        animation: view.turnId === null ? "listening" : view.animation,
+      };
     case "answered":
       return { ...view, approval: null, animation: "thinking" };
     case "chat_window":
@@ -143,8 +166,18 @@ function onEvent(view: View, event: CoreEvent, now: number): View {
       return {
         ...view,
         animation: "talking",
-        bubble: { text, done: false },
+        bubble: { ...keptPictures(view.bubble), text, done: false },
       };
+    }
+    case "tool_finished": {
+      const made = (Array.isArray(event.images) ? (event.images as ImageRef[]) : []).filter(
+        (image) => image.made === true,
+      );
+      if (made.length === 0) {
+        return view;
+      }
+      const pictures = [...(view.bubble?.pictures ?? []), ...made];
+      return { ...view, bubble: { text: view.bubble?.text ?? "", done: false, pictures } };
     }
     case "tool_approval": {
       const call = event.call;
@@ -168,10 +201,12 @@ function onEvent(view: View, event: CoreEvent, now: number): View {
       const outcome = event.outcome;
       const text = view.bubble?.text ?? "";
       const failed = outcome === "failed";
+      const kept = keptPictures(view.bubble);
       const bubble: Bubble | null =
-        text === "" && !failed
+        text === "" && !failed && kept.pictures === undefined
           ? null
           : {
+              ...kept,
               text,
               done: true,
               doneAt: now,
@@ -188,4 +223,10 @@ function onEvent(view: View, event: CoreEvent, now: number): View {
     default:
       return view;
   }
+}
+
+/** The pictures already in `bubble`, to carry into its next version. */
+function keptPictures(bubble: Bubble | null): { pictures?: ImageRef[] } {
+  const pictures = bubble?.pictures ?? [];
+  return pictures.length > 0 ? { pictures } : {};
 }

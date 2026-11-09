@@ -200,3 +200,59 @@ test("saved messages as the core sends them, without empty fields, still load", 
     { kind: "lucy", text: "Hey.", streaming: false },
   ]);
 });
+
+// --- Pictures ----------------------------------------------------------------------------------
+
+const photo = { id: "aa11.png", media_type: "image/png" };
+const drawing = { id: "bb22.png", media_type: "image/png", made: true };
+
+test("pictures you sent show with your message, live and from history", () => {
+  const live = run([
+    event({ type: "user_message", session_id: session, text: "what's this?", images: [photo] }),
+  ]);
+  const saved = run([
+    {
+      type: "history",
+      messages: [message("user", "what's this?", { images: [photo] })],
+      live: null,
+    },
+  ]);
+
+  const expected: Entry[] = [{ kind: "you", text: "what's this?", images: [photo] }];
+  assert.deepEqual(live.entries, expected);
+  assert.deepEqual(saved.entries, expected);
+});
+
+test("a picture she made shows with the tool call that made it, live and from history", () => {
+  const draw = { id: "c1", name: "generate_image", arguments: { prompt: "a lighthouse" } };
+  const live = run([
+    started(1),
+    event({ type: "tool_started", session_id: session, turn_id: 1, call: draw }),
+    event({
+      type: "tool_finished",
+      session_id: session,
+      turn_id: 1,
+      call_id: "c1",
+      output: "Made the picture.",
+      is_error: false,
+      images: [drawing],
+    }),
+  ]);
+  const saved = run([
+    {
+      type: "history",
+      messages: [
+        message("user", "/image a lighthouse"),
+        message("assistant", "", { tool_calls: [draw] }),
+        message("tool", "Made the picture.", { tool_call_id: "c1", images: [drawing] }),
+      ],
+      live: null,
+    },
+  ]);
+
+  const tool = (t: Transcript) => t.entries.find((e) => e.kind === "tool");
+  const shown = tool(live);
+  assert.equal(shown?.kind === "tool" && shown.state, "done");
+  assert.deepEqual(shown?.kind === "tool" && shown.images, [drawing]);
+  assert.deepEqual(tool(saved), tool(live));
+});

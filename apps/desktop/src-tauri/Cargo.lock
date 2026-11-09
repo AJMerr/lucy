@@ -2905,18 +2905,21 @@ name = "lucy-providers"
 version = "0.5.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "futures",
  "lucy-protocol",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
 name = "lucy-tools"
 version = "0.5.0"
 dependencies = [
+ "base64 0.22.1",
  "dirs",
  "globset",
  "ignore",

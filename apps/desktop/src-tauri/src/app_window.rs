@@ -32,6 +32,8 @@ pub fn open(app: &AppHandle, chat: Option<String>) {
         .title("Lucy")
         .inner_size(1000.0, 700.0)
         .min_inner_size(360.0, 480.0)
+        // Dropped pictures go to the page (as files it can read), not to Tauri.
+        .disable_drag_drop_handler()
         .build();
     match built {
         Ok(window) => {

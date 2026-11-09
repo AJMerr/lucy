@@ -2,7 +2,7 @@
 // opened, kept current from the core's events (including replies in chats you aren't looking
 // at, and chats started elsewhere). Components subscribe to it like a Svelte store.
 
-import type { CoreEvent } from "../protocol.ts";
+import type { CoreEvent, ImageData } from "../protocol.ts";
 import type { Transport } from "../rpc/transport.ts";
 import {
   type StoredMessage,
@@ -56,6 +56,7 @@ export class ChatsStore {
   private readonly core: Transport;
   private state: ChatsState = { sessions: [], selected: null, chats: {} };
   private readonly subscribers = new Set<(state: ChatsState) => void>();
+  private readonly pictures = new Map<string, Promise<string>>();
 
   constructor(core: Transport) {
     this.core = core;
@@ -103,14 +104,20 @@ export class ChatsStore {
     this.update({ selected: null });
   }
 
-  /** Send a message in the open chat, or start a new chat with it. */
-  async send(text: string): Promise<void> {
+  /**
+   * Send a message (with any pictures) in the open chat, or start a new chat with it.
+   * `/image <description>` makes a picture straight away instead.
+   */
+  async send(text: string, images: ImageData[] = []): Promise<void> {
     const selected = this.state.selected;
+    const chat = selected === null ? {} : { session_id: selected };
+    const prompt = images.length === 0 ? /^\/image\s+(.+)$/s.exec(text)?.[1]?.trim() : undefined;
     try {
-      const sent = await this.core.call<{ session_id: string; turn_id: number }>(
-        "chat.send",
-        selected === null ? { text } : { session_id: selected, text },
-      );
+      const [method, params] =
+        prompt !== undefined
+          ? ["images.generate", { ...chat, prompt }]
+          : ["chat.send", { ...chat, text, ...(images.length > 0 ? { images } : {}) }];
+      const sent = await this.core.call<{ session_id: string; turn_id: number }>(method, params);
       if (selected === null) {
         await this.open(sent.session_id);
       }
@@ -119,6 +126,20 @@ export class ChatsStore {
         this.apply(selected, { type: "problem", message: messageOf(err) });
       }
     }
+  }
+
+  /** A picture kept with a chat, as a `data:` URL an `<img>` can show (fetched once). */
+  picture(id: string): Promise<string> {
+    let url = this.pictures.get(id);
+    if (url === undefined) {
+      url = this.core
+        .call<ImageData>("images.get", { id })
+        .then((image) => `data:${image.media_type};base64,${image.data}`);
+      // A failed fetch can be tried again later.
+      url.catch(() => this.pictures.delete(id));
+      this.pictures.set(id, url);
+    }
+    return url;
   }
 
   /** Stop the open chat's reply. */

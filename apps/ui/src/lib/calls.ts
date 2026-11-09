@@ -18,6 +18,10 @@ export function describeCall(name: string, args: Record<string, unknown>): strin
       return `search for "${arg("pattern")}"`;
     case "fetch_url":
       return `open ${arg("url")}`;
+    case "generate_image": {
+      const prompt = arg("prompt");
+      return `draw "${prompt.length > 80 ? `${prompt.slice(0, 79)}…` : prompt}"`;
+    }
     default:
       return `use ${name}`;
   }
