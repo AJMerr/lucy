@@ -8,17 +8,18 @@ publish.workspace = true
 
 [features]
 # Fake HTTP server for adapter tests, shared with other crates' tests.
-testing = ["dep:tokio"]
+testing = ["tokio/net", "tokio/io-util"]
 
 [dependencies]
 lucy-protocol.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 futures.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, optional = true, features = ["net", "io-util", "time"] }
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 lucy-providers = { path = ".", features = ["testing"] }
