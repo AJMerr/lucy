@@ -76,3 +76,12 @@ fn bad_commands_explain_themselves() {
     assert!(error("/mode chaos").contains("usage: /mode [assist|agent]"));
     assert!(error("/model a b").contains("usage: /model [profile]"));
 }
+
+#[test]
+fn image_takes_a_description() {
+    assert_eq!(
+        parse("/image a lighthouse at dusk"),
+        Ok(Input::Image("a lighthouse at dusk".into()))
+    );
+    assert!(error("/image").contains("usage: /image <description>"));
+}

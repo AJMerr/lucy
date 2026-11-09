@@ -74,6 +74,7 @@ pub fn save(dir: &Path, picture: &ImageData) -> Result<ImageRef, String> {
     Ok(ImageRef {
         id,
         media_type: picture.media_type.clone(),
+        made: false,
     })
 }
 
@@ -126,7 +127,8 @@ pub enum Sight {
 }
 
 /// Turn a saved message into what the model gets, given its sight. Pictures the helper hasn't
-/// described yet get a placeholder and are added to `pending`.
+/// described yet get a placeholder and are added to `pending`. Pictures she made are only
+/// sent to a model that can see; the others already know what they asked for.
 pub fn attach(
     dir: &Path,
     mut message: Message,
@@ -134,6 +136,14 @@ pub fn attach(
     sight: &Sight,
     pending: &mut Vec<ImageRef>,
 ) -> Message {
+    let shown: Vec<ImageRef>;
+    let images = match sight {
+        Sight::Sees => images,
+        Sight::Helped | Sight::Blind => {
+            shown = images.iter().filter(|i| !i.made).cloned().collect();
+            &shown[..]
+        }
+    };
     if images.is_empty() {
         return message;
     }

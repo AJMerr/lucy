@@ -79,6 +79,47 @@ pub struct ImageSettings {
     /// model can't.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vision_profile: Option<String>,
+    /// What makes pictures: `comfyui`, or a profile for an image model (like OpenRouter's).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generator: Option<String>,
+    /// Where pictures she makes are saved; `~/Pictures/Lucy` when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<PathBuf>,
+    #[serde(skip_serializing_if = "ComfyUiSettings::is_default")]
+    pub comfyui: ComfyUiSettings,
+}
+
+/// The generator name that means the local ComfyUI.
+pub const COMFYUI: &str = "comfyui";
+
+/// A local ComfyUI server (`[images] generator = "comfyui"`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ComfyUiSettings {
+    pub url: String,
+    /// A workflow exported from ComfyUI with "Export (API)", using placeholders like
+    /// `{{prompt}}`; Lucy's own text-to-image workflow when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<PathBuf>,
+    /// The model file for `{{checkpoint}}`; ComfyUI's first checkpoint when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<String>,
+}
+
+impl Default for ComfyUiSettings {
+    fn default() -> Self {
+        Self {
+            url: "http://127.0.0.1:8188".into(),
+            workflow: None,
+            checkpoint: None,
+        }
+    }
+}
+
+impl ComfyUiSettings {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 impl Profile {
@@ -540,6 +581,24 @@ impl Config {
                 Some(profile) if !profile.vision => {
                     return Err(ConfigError::Invalid(format!(
                         "images.vision_profile `{name}` can't see pictures; give it vision = true"
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+        if let Some(name) = &self.images.generator
+            && name != COMFYUI
+        {
+            match self.profiles.get(name) {
+                None => {
+                    return Err(ConfigError::Invalid(format!(
+                        "images.generator refers to unknown profile `{name}` (or use \"comfyui\")"
+                    )));
+                }
+                Some(profile) if profile.provider != ProviderKind::OpenAiCompat => {
+                    return Err(ConfigError::Invalid(format!(
+                        "images.generator `{name}` can't make pictures; use an openai_compat \
+                         image model (like OpenRouter's) or \"comfyui\""
                     )));
                 }
                 Some(_) => {}

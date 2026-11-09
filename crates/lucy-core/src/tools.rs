@@ -19,11 +19,17 @@ use serde_json::Value;
 use lucy_protocol::{AgentLevel, Mode};
 
 use crate::config::{ToolRule, ToolSettings};
+use crate::generate::{self, Generator};
 use crate::mcp::ExternalServer;
 pub use crate::mcp::ToolOutput;
 use crate::policy::{self, CallFacts, CallKind, Decision, Policy};
 
 pub const BUILTIN: &str = "builtin";
+/// What `generate_image` is listed under, and the rule name that covers it.
+pub const GENERATOR_SERVER: &str = "images";
+
+/// The picture maker for `generate_image`, or why there isn't one.
+pub type GeneratorSlot = Result<Arc<Generator>, String>;
 /// Longest tool output passed to the model.
 const MAX_OUTPUT: usize = 100 * 1024;
 /// Providers accept tool names of at most 64 characters from `[a-zA-Z0-9_-]`.
@@ -61,6 +67,8 @@ pub struct ToolBox {
     private: PrivatePaths,
     settings: ToolSettings,
     access: Access,
+    /// `generate_image`, when a generator is set: ready, or why it can't make pictures.
+    generator: Option<GeneratorSlot>,
 }
 
 /// The chat's mode and agent level, which decide how much runs without asking.
@@ -122,6 +130,7 @@ impl ToolBox {
             private,
             settings: settings.clone(),
             access: Access::default(),
+            generator: None,
         })
     }
 
@@ -131,8 +140,90 @@ impl ToolBox {
         self
     }
 
+    /// Offer `generate_image`, made by `generator`.
+    pub fn with_generator(mut self, generator: Option<GeneratorSlot>) -> Self {
+        self.generator = generator;
+        self
+    }
+
+    /// The config rule for `generate_image`: by its name, then by `images`.
+    fn generator_rule(&self) -> Option<ToolRule> {
+        let rules = &self.settings.rules;
+        rules
+            .get(generate::TOOL)
+            .or_else(|| rules.get(GENERATOR_SERVER))
+            .copied()
+    }
+
+    fn generator_spec(&self) -> Option<ToolSpec> {
+        self.generator.as_ref()?;
+        (self.generator_rule() != Some(ToolRule::Deny)).then(|| ToolSpec {
+            name: generate::TOOL.into(),
+            description: generate::DESCRIPTION.into(),
+            input_schema: generate::input_schema(),
+        })
+    }
+
+    /// Hosted generators cost money, so they ask; ComfyUI on this machine just runs.
+    fn generator_verdict(
+        &self,
+        slot: &GeneratorSlot,
+        call: &ToolCall,
+        allowed: &HashSet<String>,
+    ) -> Verdict {
+        let preview = call.arguments["prompt"].as_str().map(str::to_owned);
+        let ask = |reason: String| Verdict::Ask {
+            reason,
+            preview: preview.clone(),
+        };
+        let generator = match slot {
+            Ok(generator) => generator,
+            // Nothing to pay for; the call reports what's wrong.
+            Err(_) => return Verdict::Run,
+        };
+        match self.generator_rule() {
+            Some(ToolRule::Deny) => {
+                return Verdict::Refuse("The user's settings don't allow this tool.".into());
+            }
+            Some(ToolRule::Auto) => return Verdict::Run,
+            Some(ToolRule::Ask) => return ask("your settings say to ask".into()),
+            None => {}
+        }
+        if allowed.contains(&call.name) {
+            return Verdict::Run;
+        }
+        let agent = self.access.mode == Mode::Agent;
+        match self.access.level {
+            AgentLevel::Supervised if agent => ask("supervised: every call asks".into()),
+            AgentLevel::Unrestricted if agent => Verdict::Run,
+            _ if generator.hosted => ask(format!(
+                "makes a picture with {}, which costs money",
+                generator.label
+            )),
+            _ => Verdict::Run,
+        }
+    }
+
+    fn generator_info(&self, allowed: &HashSet<String>) -> Option<ToolInfo> {
+        let slot = self.generator.as_ref()?;
+        let rule = match (self.generator_rule(), slot) {
+            (Some(ToolRule::Auto), _) => ToolRuleInfo::Auto,
+            (Some(ToolRule::Ask), _) => ToolRuleInfo::Ask,
+            (Some(ToolRule::Deny), _) => ToolRuleInfo::Deny,
+            (None, _) if allowed.contains(generate::TOOL) => ToolRuleInfo::Auto,
+            (None, Ok(generator)) if generator.hosted => ToolRuleInfo::Ask,
+            (None, _) => ToolRuleInfo::Auto,
+        };
+        Some(ToolInfo {
+            name: generate::TOOL.into(),
+            server: GENERATOR_SERVER.into(),
+            description: first_sentence(generate::DESCRIPTION),
+            rule,
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
+        self.tools.is_empty() && self.generator.is_none()
     }
 
     /// The tools to offer the model (minus any the config denies outright).
@@ -145,6 +236,7 @@ impl ToolBox {
                 description: t.def.description.as_deref().unwrap_or_default().to_owned(),
                 input_schema: Value::Object((*t.def.input_schema).clone()),
             })
+            .chain(self.generator_spec())
             .collect()
     }
 
@@ -157,6 +249,7 @@ impl ToolBox {
                 description: first_sentence(t.def.description.as_deref().unwrap_or_default()),
                 rule: self.rule_info(t, allowed),
             })
+            .chain(self.generator_info(allowed))
             .collect()
     }
 
@@ -201,6 +294,11 @@ impl ToolBox {
     /// Whether `call` may run now. `allowed` holds tools the user approved "always" in this
     /// session.
     pub fn verdict(&self, call: &ToolCall, allowed: &HashSet<String>) -> Verdict {
+        if call.name == generate::TOOL
+            && let Some(slot) = &self.generator
+        {
+            return self.generator_verdict(slot, call, allowed);
+        }
         let Some(tool) = self.find(&call.name) else {
             return Verdict::Refuse(format!("There is no tool named `{}`.", call.name));
         };
@@ -288,6 +386,15 @@ impl ToolBox {
     }
 
     pub async fn call(&self, call: &ToolCall) -> ToolOutput {
+        if call.name == generate::TOOL
+            && let Some(slot) = &self.generator
+        {
+            return match (slot, generate::request(&call.arguments)) {
+                (Ok(generator), Ok(request)) => generator.run(&request).await,
+                (Err(err), _) => ToolOutput::failed(format!("Couldn't make the picture: {err}")),
+                (_, Err(err)) => ToolOutput::failed(err),
+            };
+        }
         let Some(tool) = self.find(&call.name) else {
             return ToolOutput::failed(format!("There is no tool named `{}`.", call.name));
         };

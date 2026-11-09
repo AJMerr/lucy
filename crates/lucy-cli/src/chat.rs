@@ -6,10 +6,11 @@ use std::io::Write;
 use anyhow::{Context, Result, bail};
 use lucy_client::{Client, ClientError};
 use lucy_protocol::rpc::{
-    ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event, ProfileInfo,
-    RenameParams, ResolveParams, Session, SessionParams, SessionSettings, SessionSummary,
-    SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams, ToolRuleInfo, ToolsList,
-    ToolsListParams, TurnOutcome, UndoParams, UndoResult, method,
+    ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event,
+    ImageGenerateParams, ProfileInfo, RenameParams, ResolveParams, Session, SessionParams,
+    SessionSettings, SessionSummary, SetLevelParams, SetModeParams, SetPlainParams,
+    SetProfileParams, ToolRuleInfo, ToolsList, ToolsListParams, TurnOutcome, UndoParams,
+    UndoResult, method,
 };
 use lucy_protocol::{AgentLevel, Mode, Role, ToolCall};
 use serde::Serialize;
@@ -97,6 +98,7 @@ pub async fn run_chat<S: LineSource, W: Write>(
             Ok(Input::Command(Command::Quit)) => break,
             Ok(Input::Command(command)) => chat.command(command, input).await,
             Ok(Input::Message(text)) => chat.send(text, &mut events, interrupts, input).await,
+            Ok(Input::Image(prompt)) => chat.image(prompt, &mut events, interrupts, input).await,
         };
         if let Err(err) = outcome {
             chat.problem(&err)?;
@@ -289,6 +291,38 @@ impl<W: Write> Chat<'_, W> {
                 },
             )
             .await?;
+        self.follow(sent, events, interrupts, input).await
+    }
+
+    /// `/image`: make a picture straight away.
+    async fn image<S: LineSource>(
+        &mut self,
+        prompt: String,
+        events: &mut mpsc::UnboundedReceiver<Event>,
+        interrupts: &mut mpsc::Receiver<()>,
+        input: &mut S,
+    ) -> Result<()> {
+        while interrupts.try_recv().is_ok() {}
+        let sent: ChatSendResult = self
+            .call(
+                method::IMAGES_GENERATE,
+                ImageGenerateParams {
+                    session_id: self.session.clone(),
+                    prompt,
+                },
+            )
+            .await?;
+        self.follow(sent, events, interrupts, input).await
+    }
+
+    /// Show a turn as it happens, answering approval prompts, until it finishes.
+    async fn follow<S: LineSource>(
+        &mut self,
+        sent: ChatSendResult,
+        events: &mut mpsc::UnboundedReceiver<Event>,
+        interrupts: &mut mpsc::Receiver<()>,
+        input: &mut S,
+    ) -> Result<()> {
         self.session = Some(sent.session_id.clone());
         let session_id = sent.session_id.clone();
 
@@ -334,10 +368,14 @@ impl<W: Write> Chat<'_, W> {
                         self.out.flush()?;
                         running = Some(call);
                     }
-                    Some(Event::ToolFinished { output, is_error, .. }) => {
+                    Some(Event::ToolFinished { output, is_error, images, .. }) => {
                         let mark = tool_display::finished(&output, is_error);
                         let mark = self.styled(if is_error { "31" } else { "32" }, &mark);
                         self.say(&format!("  {mark}"))?;
+                        let made = images.iter().any(|image| image.made);
+                        if let Some((_, path)) = output.rsplit_once("Saved to ").filter(|_| made) {
+                            self.note(&format!("Saved to {path}"))?;
+                        }
                         if let Some(call) = running.take() {
                             self.last_tool = Some((call, output, is_error));
                         }

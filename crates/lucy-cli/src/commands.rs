@@ -6,6 +6,8 @@ use lucy_protocol::{AgentLevel, Mode};
 pub enum Input {
     Nothing,
     Message(String),
+    /// `/image`: make a picture from this description.
+    Image(String),
     Command(Command),
 }
 
@@ -37,6 +39,7 @@ pub enum Command {
 /// Every command with its usage, for /help and Tab completion.
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show this list"),
+    ("/image", "<description>  make a picture straight away"),
     (
         "/model",
         "[profile]  list profiles, or switch this chat to one",
@@ -85,6 +88,11 @@ pub fn parse(line: &str) -> Result<Input, String> {
         None => (rest, None),
     };
     let usage = |text: &str| Err(format!("usage: {text}"));
+    match (name.to_ascii_lowercase().as_str(), arg) {
+        ("image", Some(prompt)) => return Ok(Input::Image(prompt.to_owned())),
+        ("image", None) => return usage("/image <description>"),
+        _ => {}
+    }
     let command = match (name.to_ascii_lowercase().as_str(), arg) {
         ("help", _) => Command::Help,
         ("quit" | "exit", _) => Command::Quit,

@@ -77,6 +77,8 @@ pub struct ToolOutput {
     pub text: String,
     pub is_error: bool,
     pub images: Vec<ImageData>,
+    /// The pictures are ones it made, not ones it looked at.
+    pub made: bool,
 }
 
 impl ToolOutput {
@@ -86,6 +88,7 @@ impl ToolOutput {
             text: text.into(),
             is_error: true,
             images: Vec::new(),
+            made: false,
         }
     }
 
@@ -115,6 +118,7 @@ impl ToolOutput {
             text: parts.join("\n"),
             is_error: result.is_error == Some(true),
             images,
+            made: false,
         }
     }
 }

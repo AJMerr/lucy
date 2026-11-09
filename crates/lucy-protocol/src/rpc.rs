@@ -60,6 +60,9 @@ pub mod method {
     pub const SETUP_PRESETS: &str = "setup.presets";
     /// A picture kept with a chat, by its id (`ImageRef::id`).
     pub const IMAGES_GET: &str = "images.get";
+    /// Make a picture straight away (`/image`), as a turn: returns at once, then the picture
+    /// arrives as a `generate_image` tool call's result.
+    pub const IMAGES_GENERATE: &str = "images.generate";
     /// Notification carrying an [`Event`](super::Event).
     pub const EVENT: &str = "event";
 }
@@ -402,6 +405,18 @@ pub struct ImageRef {
     pub id: String,
     /// e.g. `image/png`.
     pub media_type: String,
+    /// She made it (with `generate_image` or `/image`), rather than being shown it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub made: bool,
+}
+
+/// `images.generate`: make a picture from `prompt` in a chat.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageGenerateParams {
+    /// Continue this session (full ID or unique prefix); `None` starts a new one.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    pub prompt: String,
 }
 
 /// A picture sent to or from the core: `chat.send`'s attachments, and `images.get`'s answer.
@@ -556,6 +571,9 @@ pub enum Event {
         /// Exactly what the model was given.
         output: String,
         is_error: bool,
+        /// Pictures the call gave back, kept with the chat (`images.get`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<ImageRef>,
     },
     TurnFinished {
         session_id: String,
