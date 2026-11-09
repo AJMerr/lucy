@@ -22,6 +22,8 @@ pub struct Config {
     #[serde(default)]
     pub app: AppSettings,
     #[serde(default)]
+    pub images: ImageSettings,
+    #[serde(default)]
     pub user: UserSettings,
     #[serde(default)]
     pub tools: ToolSettings,
@@ -64,6 +66,19 @@ pub struct Profile {
     /// USD per million output tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub price_out: Option<f64>,
+    /// The model can see pictures; others get `[images] vision_profile`'s description.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub vision: bool,
+}
+
+/// Pictures in chats.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ImageSettings {
+    /// A profile that can see (`vision = true`), which describes pictures for chats whose
+    /// model can't.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vision_profile: Option<String>,
 }
 
 impl Profile {
@@ -451,6 +466,7 @@ impl Config {
             remote: RemoteSettings::default(),
             sprite: SpriteSettings::default(),
             app: AppSettings::default(),
+            images: ImageSettings::default(),
             user: UserSettings::default(),
             tools: ToolSettings::default(),
             mcp: McpSettings::default(),
@@ -514,6 +530,21 @@ impl Config {
             }
         }
 
+        if let Some(name) = &self.images.vision_profile {
+            match self.profiles.get(name) {
+                None => {
+                    return Err(ConfigError::Invalid(format!(
+                        "images.vision_profile refers to unknown profile `{name}`"
+                    )));
+                }
+                Some(profile) if !profile.vision => {
+                    return Err(ConfigError::Invalid(format!(
+                        "images.vision_profile `{name}` can't see pictures; give it vision = true"
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
         for (name, profile) in &self.profiles {
             if profile.provider == ProviderKind::OpenAiCompat && profile.base_url.is_none() {
                 return Err(ConfigError::Invalid(format!(

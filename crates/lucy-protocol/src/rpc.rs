@@ -58,6 +58,8 @@ pub mod method {
     pub const MCP_LOGIN: &str = "mcp.login";
     /// The model providers first-run setup offers (the same as `lucy config init`).
     pub const SETUP_PRESETS: &str = "setup.presets";
+    /// A picture kept with a chat, by its id (`ImageRef::id`).
+    pub const IMAGES_GET: &str = "images.get";
     /// Notification carrying an [`Event`](super::Event).
     pub const EVENT: &str = "event";
 }
@@ -297,6 +299,9 @@ pub struct ChatSendParams {
     /// The user's working folder: relative paths and commands start here. Defaults to home.
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Pictures to go with the message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageData>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -390,6 +395,28 @@ pub struct SessionSummary {
     pub message_count: u32,
 }
 
+/// A picture kept with a chat (`StoredMessage::images`), in the core's data folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageRef {
+    /// Its name in the core's image store (a content hash plus extension).
+    pub id: String,
+    /// e.g. `image/png`.
+    pub media_type: String,
+}
+
+/// A picture sent to or from the core: `chat.send`'s attachments, and `images.get`'s answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageData {
+    pub media_type: String,
+    /// The file's bytes, base64-encoded.
+    pub data: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageParams {
+    pub id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoredMessage {
     pub role: Role,
@@ -404,6 +431,9 @@ pub struct StoredMessage {
     pub model: Option<String>,
     pub incomplete: bool,
     pub created_at_ms: i64,
+    /// Pictures you attached (fetch one with `images.get`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

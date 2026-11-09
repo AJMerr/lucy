@@ -160,6 +160,7 @@ pub async fn send(
             .call::<_, ChatSendResult>(
                 method::CHAT_SEND,
                 ChatSendParams {
+                    images: Vec::new(),
                     session_id: Some(current.session.clone()),
                     text: text.clone(),
                     // Her tools work in the core's own default folder.

@@ -280,6 +280,7 @@ impl<W: Write> Chat<'_, W> {
             .call(
                 method::CHAT_SEND,
                 ChatSendParams {
+                    images: Vec::new(),
                     session_id: self.session.clone(),
                     text,
                     cwd: std::env::current_dir()

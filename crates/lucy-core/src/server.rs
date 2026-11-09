@@ -14,7 +14,7 @@ use lucy_client::Endpoint;
 use lucy_protocol::rpc::{
     self, ApproveParams, BusyChat, CancelResult, ChatSendParams, ChatSendResult,
     ConfigUpdateParams, ConfigUpdateResult, ConfigView, CoreStatus, Decision, Event, HelloParams,
-    HelloResult, KeyParams, KeySetParams, KeyStatus, Notification, PROTOCOL_VERSION,
+    HelloResult, ImageParams, KeyParams, KeySetParams, KeyStatus, Notification, PROTOCOL_VERSION,
     PersonaSetParams, PersonaView, ProfileInfo, RenameParams, Request, ResolveParams, Response,
     RpcError, ServerProblem, SessionParams, SessionSettings, SetLevelParams, SetModeParams,
     SetPlainParams, SetProfileParams, ShutdownParams, ShutdownResult, ToolsList, ToolsListParams,
@@ -665,6 +665,10 @@ async fn handle(
             result(Value::Null)
         }
         method::SETUP_PRESETS => result(crate::setup::presets()),
+        method::IMAGES_GET => {
+            let p: ImageParams = params(request.params)?;
+            result(crate::pictures::load(&core.images_dir(), &p.id).map_err(RpcError::app)?)
+        }
         method::MCP_LOGIN => {
             let p: KeyParams = params(request.params)?;
             let config = core.config()?;
@@ -785,6 +789,14 @@ impl Core {
                     self.options.config_path.display()
                 ))
             })
+    }
+
+    /// Where pictures you attach are kept: `images/` next to the chats database.
+    fn images_dir(&self) -> PathBuf {
+        self.options
+            .db_path
+            .parent()
+            .map_or_else(|| PathBuf::from("images"), |dir| dir.join("images"))
     }
 
     /// Where your own version of persona `name` lives (whether or not it exists yet).
@@ -954,10 +966,26 @@ fn chat_send(
         turns.insert(key.clone(), cancel.clone());
     }
 
+    let images_dir = core.images_dir();
+    let pictures: Result<Vec<_>, _> = p
+        .images
+        .iter()
+        .map(|picture| crate::pictures::save(&images_dir, picture))
+        .collect();
+    let pictures = match pictures {
+        Ok(pictures) => pictures,
+        Err(err) => {
+            core.turns.lock().unwrap().remove(&key);
+            return Err(RpcError::app(err));
+        }
+    };
     let history = {
         let store = core.store.lock().unwrap();
         store
-            .append(&session_id, NewMessage::user(p.text.clone()))
+            .append(
+                &session_id,
+                NewMessage::user_with_images(p.text.clone(), pictures),
+            )
             .and_then(|()| store.load(&session_id))
     };
     let history = match history {
@@ -1008,10 +1036,27 @@ fn chat_send(
             agent: agent_note,
         },
     );
+    // Pictures: sent as they are to a model that can see; otherwise described by the vision
+    // helper (if there is one), the first time during the reply.
+    let helper = match (&profile.vision, &config.images.vision_profile) {
+        (false, Some(name)) => {
+            let helper_profile = &config.profiles[name];
+            Some(build_provider(name, helper_profile, &core.options.secrets).map_err(app)?)
+        }
+        _ => None,
+    };
+    let sight = match (profile.vision, helper.is_some()) {
+        (true, _) => crate::pictures::Sight::Sees,
+        (false, true) => crate::pictures::Sight::Helped,
+        (false, false) => crate::pictures::Sight::Blind,
+    };
+    let mut pending = Vec::new();
+    let history = history
+        .into_iter()
+        .map(|m| crate::pictures::attach(&images_dir, m.message, &m.images, &sight, &mut pending))
+        .collect();
     let messages = std::iter::once(Message::new(Role::System, system))
-        .chain(close_dangling_calls(
-            history.into_iter().map(|m| m.message).collect(),
-        ))
+        .chain(close_dangling_calls(history))
         .collect();
 
     let turn_id = core.next_turn.fetch_add(1, Ordering::Relaxed);
@@ -1041,6 +1086,11 @@ fn chat_send(
         }),
         budget,
         cancel,
+        pictures: helper.map(|helper| PictureHelp {
+            helper,
+            pending,
+            dir: images_dir,
+        }),
     }));
     result(ChatSendResult {
         session_id: key,
@@ -1136,6 +1186,14 @@ struct Plan {
     tools: Option<ToolPlan>,
     budget: Budget,
     cancel: CancellationToken,
+    /// For a model that can't see: the vision helper and the pictures it still has to describe.
+    pictures: Option<PictureHelp>,
+}
+
+struct PictureHelp {
+    helper: Box<dyn Provider>,
+    pending: Vec<rpc::ImageRef>,
+    dir: PathBuf,
 }
 
 struct ToolPlan {
@@ -1234,10 +1292,23 @@ impl Turn {
             None => None,
         };
 
+        let mut messages = plan.messages;
+        if let Some(help) = &plan.pictures
+            && !help.pending.is_empty()
+        {
+            crate::pictures::describe_pending(
+                &help.dir,
+                &*help.helper,
+                &help.pending,
+                &mut messages,
+            )
+            .await;
+        }
+
         let mut progress = Progress::default();
         let steps = self.steps(
             &*plan.provider,
-            plan.messages,
+            messages,
             toolbox.as_ref(),
             &plan.budget,
             &mut progress,
@@ -1571,6 +1642,7 @@ fn session_dto(session: crate::sessions::Session) -> rpc::Session {
                 model: m.origin.map(|o| o.model),
                 incomplete: m.incomplete,
                 created_at_ms: millis(m.created_at),
+                images: m.images,
             })
             .collect(),
     }

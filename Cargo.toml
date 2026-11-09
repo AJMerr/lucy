@@ -58,6 +58,8 @@ tokio-util = "0.7"
 toml = "1.2"
 toml_edit = "0.25"
 ulid = "3"
+base64 = "0.22"
+sha2 = "0.10"
 url = "2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_Threading"] }
 widestring = "1.2"

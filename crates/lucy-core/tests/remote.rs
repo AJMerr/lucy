@@ -189,6 +189,7 @@ async fn send(client: &Client, session: Option<&str>, text: &str, cwd: &Path) ->
         .call(
             method::CHAT_SEND,
             ChatSendParams {
+                images: Vec::new(),
                 session_id: session.map(str::to_owned),
                 text: text.into(),
                 cwd: Some(cwd.display().to_string()),
