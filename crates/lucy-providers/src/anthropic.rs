@@ -132,6 +132,25 @@ fn messages(turns: &[&Message]) -> Vec<Value> {
                 out.push(json!({"role": "assistant", "content": blocks}));
             }
             Role::Assistant => out.push(json!({"role": "assistant", "content": m.content})),
+            _ if !m.images.is_empty() => {
+                // Anthropic recommends pictures before the text about them.
+                let mut blocks: Vec<Value> = m
+                    .images
+                    .iter()
+                    .map(|image| {
+                        json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image.media_type,
+                                "data": image.data,
+                            },
+                        })
+                    })
+                    .collect();
+                blocks.push(json!({"type": "text", "text": m.content}));
+                out.push(json!({"role": "user", "content": blocks}));
+            }
             _ => out.push(json!({"role": "user", "content": m.content})),
         }
     }

@@ -29,6 +29,18 @@ pub struct Message {
     /// The tool failed and `content` says why (tool messages only).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_error: bool,
+    /// Pictures that go with the message, for models that can see (user messages).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<Image>,
+}
+
+/// A picture, as providers take it: the image's bytes in base64.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Image {
+    /// e.g. `image/png`.
+    pub media_type: String,
+    /// The file's bytes, base64-encoded.
+    pub data: String,
 }
 
 impl Message {
@@ -39,6 +51,15 @@ impl Message {
             tool_calls: Vec::new(),
             tool_call_id: None,
             is_error: false,
+            images: Vec::new(),
+        }
+    }
+
+    /// Something you said, with pictures.
+    pub fn user_with_images(content: impl Into<String>, images: Vec<Image>) -> Self {
+        Self {
+            images,
+            ..Self::new(Role::User, content)
         }
     }
 

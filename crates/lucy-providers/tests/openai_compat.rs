@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use lucy_protocol::{Message, Role, ToolCall};
+use lucy_protocol::{Image, Message, Role, ToolCall};
 use lucy_providers::openai_compat::{OpenAiCompat, OpenAiCompatConfig};
 use lucy_providers::testing::{FakeResponse, FakeServer};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, ToolSpec, Usage};
@@ -479,4 +479,46 @@ fn usage_adds_up_across_steps() {
         }
     );
     assert_eq!(total.total(), 300);
+}
+
+#[tokio::test]
+async fn sends_your_pictures_as_image_parts_next_to_the_text() {
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+    let request = ChatRequest {
+        messages: vec![Message::user_with_images(
+            "what's in this?",
+            vec![Image {
+                media_type: "image/png".into(),
+                data: "iVBORw0KGgo=".into(),
+            }],
+        )],
+        tools: vec![],
+    };
+
+    collect_request(&provider(&server, None), request).await;
+
+    let [request] = server.requests().try_into().unwrap();
+    assert_eq!(
+        request.body["messages"],
+        json!([{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what's in this?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+            ],
+        }])
+    );
+}
+
+#[tokio::test]
+async fn messages_without_pictures_stay_plain_text() {
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+
+    collect(&provider(&server, None)).await;
+
+    let [request] = server.requests().try_into().unwrap();
+    assert_eq!(
+        request.body["messages"][1],
+        json!({"role": "user", "content": "hi"})
+    );
 }

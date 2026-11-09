@@ -111,6 +111,14 @@ fn message(m: &Message) -> Value {
             let content = (!m.content.is_empty()).then_some(m.content.as_str());
             json!({"role": "assistant", "content": content, "tool_calls": calls})
         }
+        role if !m.images.is_empty() => {
+            let mut parts = vec![json!({"type": "text", "text": m.content})];
+            for image in &m.images {
+                let url = format!("data:{};base64,{}", image.media_type, image.data);
+                parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+            }
+            json!({"role": role_name(role), "content": parts})
+        }
         role => json!({"role": role_name(role), "content": m.content}),
     }
 }
