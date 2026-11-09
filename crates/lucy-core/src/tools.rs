@@ -20,6 +20,7 @@ use lucy_protocol::{AgentLevel, Mode};
 
 use crate::config::{ToolRule, ToolSettings};
 use crate::mcp::ExternalServer;
+pub use crate::mcp::ToolOutput;
 use crate::policy::{self, CallFacts, CallKind, Decision, Policy};
 
 pub const BUILTIN: &str = "builtin";
@@ -286,19 +287,20 @@ impl ToolBox {
         }
     }
 
-    pub async fn call(&self, call: &ToolCall) -> (String, bool) {
+    pub async fn call(&self, call: &ToolCall) -> ToolOutput {
         let Some(tool) = self.find(&call.name) else {
-            return (format!("There is no tool named `{}`.", call.name), true);
+            return ToolOutput::failed(format!("There is no tool named `{}`.", call.name));
         };
-        let (output, is_error) = match (&tool.external, &self.builtin) {
+        let mut output = match (&tool.external, &self.builtin) {
             (Some(server), _) => server
                 .call(&tool.def.name, call.arguments.clone())
                 .await
-                .unwrap_or_else(|err| (err, true)),
+                .unwrap_or_else(ToolOutput::failed),
             (None, Some(client)) => call_builtin(client, &tool.def.name, &call.arguments).await,
-            (None, None) => ("The built-in tools are off.".into(), true),
+            (None, None) => ToolOutput::failed("The built-in tools are off."),
         };
-        (truncate(&output), is_error)
+        output.text = truncate(&output.text);
+        output
     }
 
     pub async fn close(self) {
@@ -425,24 +427,14 @@ async fn call_builtin(
     client: &RunningService<RoleClient, ()>,
     name: &str,
     arguments: &Value,
-) -> (String, bool) {
+) -> ToolOutput {
     let mut params = CallToolRequestParams::new(name.to_owned());
     if let Value::Object(arguments) = arguments {
         params = params.with_arguments(arguments.clone());
     }
     match client.call_tool(params).await {
-        Ok(result) => {
-            let text: Vec<String> = result
-                .content
-                .iter()
-                .map(|c| match c.as_text() {
-                    Some(text) => text.text.clone(),
-                    None => "[non-text content omitted]".into(),
-                })
-                .collect();
-            (text.join("\n"), result.is_error == Some(true))
-        }
-        Err(err) => (format!("The tool failed: {err}"), true),
+        Ok(result) => ToolOutput::from_result(result),
+        Err(err) => ToolOutput::failed(format!("The tool failed: {err}")),
     }
 }
 

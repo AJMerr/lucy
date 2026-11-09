@@ -5,9 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{ServerCapabilities, ServerConfig};
+use rmcp::model::{CallToolResult, ContentBlock, ServerCapabilities, ServerConfig};
 use rmcp::service::{ClientInitializeError, RunningService};
 use rmcp::{RoleClient, ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
@@ -22,6 +24,8 @@ use crate::paths::{display, resolve};
 const READ_LINES: usize = 2000;
 /// Cap on any single tool output, so one call can't flood the model's context.
 const MAX_OUTPUT: usize = 100 * 1024;
+/// The largest picture `read_file` shows (most providers stop around here).
+const MAX_PICTURE: usize = 20 * 1024 * 1024;
 const MAX_LISTING: usize = 1000;
 const MAX_MATCHES: usize = 200;
 const MAX_MATCH_LINE: usize = 300;
@@ -138,50 +142,33 @@ impl Builtin {
         }
     }
 
-    /// Read a text file. Long files come back a page at a time; the reply says how to read on.
+    /// Read a text file, or look at a picture (PNG, JPEG, GIF or WebP). Long files come back a
+    /// page at a time; the reply says how to read on.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
     async fn read_file(
         &self,
         Parameters(args): Parameters<ReadFileArgs>,
-    ) -> Result<String, String> {
+    ) -> Result<CallToolResult, String> {
         let path = resolve(&args.path, &self.cwd);
         let bytes = tokio::fs::read(&path)
             .await
             .map_err(|err| format!("could not read {}: {err}", path.display()))?;
-        if is_binary(&bytes) {
-            return Err(format!("{} is a binary file", path.display()));
-        }
-        let text = String::from_utf8_lossy(&bytes);
-        let lines: Vec<&str> = text.split_inclusive('\n').collect();
-        let start = args.offset.unwrap_or(1).max(1);
-        let limit = args.limit.unwrap_or(READ_LINES).max(1);
-        if start == 1 && lines.len() <= limit && text.len() <= MAX_OUTPUT {
-            return Ok(text.into_owned());
-        }
-        if start > lines.len() {
-            return Err(format!("{} has only {} lines", path.display(), lines.len()));
-        }
-
-        let mut page = String::new();
-        let mut end = start - 1;
-        for line in lines.iter().skip(start - 1).take(limit) {
-            if page.len() + line.len() > MAX_OUTPUT && end >= start {
-                break;
+        if let Some(media_type) = picture_type(&bytes) {
+            if bytes.len() > MAX_PICTURE {
+                return Err(format!(
+                    "{} is a picture over {} MB, too big to look at",
+                    path.display(),
+                    MAX_PICTURE / (1024 * 1024)
+                ));
             }
-            page.push_str(line);
-            end += 1;
+            return Ok(CallToolResult::success(vec![
+                ContentBlock::text(format!("The picture {}.", path.display())),
+                ContentBlock::image(STANDARD.encode(&bytes), media_type),
+            ]));
         }
-        if end < lines.len() {
-            if !page.ends_with('\n') {
-                page.push('\n');
-            }
-            page.push_str(&format!(
-                "[Showing lines {start}–{end} of {}. Read on with offset={}.]",
-                lines.len(),
-                end + 1
-            ));
-        }
-        Ok(page)
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            read_text(&path, &bytes, &args)?,
+        )]))
     }
 
     /// List a folder: subfolders first (ending in `/`), then files with their sizes.
@@ -529,6 +516,44 @@ async fn kill_tree(child: &mut tokio::process::Child) {
     let _ = child.kill().await;
 }
 
+/// A text file's contents, or the requested page of them.
+fn read_text(path: &Path, bytes: &[u8], args: &ReadFileArgs) -> Result<String, String> {
+    if is_binary(bytes) {
+        return Err(format!("{} is a binary file", path.display()));
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let start = args.offset.unwrap_or(1).max(1);
+    let limit = args.limit.unwrap_or(READ_LINES).max(1);
+    if start == 1 && lines.len() <= limit && text.len() <= MAX_OUTPUT {
+        return Ok(text.into_owned());
+    }
+    if start > lines.len() {
+        return Err(format!("{} has only {} lines", path.display(), lines.len()));
+    }
+
+    let mut page = String::new();
+    let mut end = start - 1;
+    for line in lines.iter().skip(start - 1).take(limit) {
+        if page.len() + line.len() > MAX_OUTPUT && end >= start {
+            break;
+        }
+        page.push_str(line);
+        end += 1;
+    }
+    if end < lines.len() {
+        if !page.ends_with('\n') {
+            page.push('\n');
+        }
+        page.push_str(&format!(
+            "[Showing lines {start}–{end} of {}. Read on with offset={}.]",
+            lines.len(),
+            end + 1
+        ));
+    }
+    Ok(page)
+}
+
 /// NUL bytes near the start mean binary data.
 fn is_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8192).any(|&b| b == 0)
@@ -614,4 +639,29 @@ pub async fn serve_stdio(options: BuiltinOptions) -> Result<(), String> {
         .await
         .map_err(|err| format!("MCP server stopped: {err}"))?;
     Ok(())
+}
+
+/// The type of a picture `read_file` can show, recognised by its first bytes.
+fn picture_type(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
+        [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
+        [b'G', b'I', b'F', b'8', ..] => Some("image/gif"),
+        [
+            b'R',
+            b'I',
+            b'F',
+            b'F',
+            _,
+            _,
+            _,
+            _,
+            b'W',
+            b'E',
+            b'B',
+            b'P',
+            ..,
+        ] => Some("image/webp"),
+        _ => None,
+    }
 }

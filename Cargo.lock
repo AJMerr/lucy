@@ -1855,6 +1855,7 @@ dependencies = [
 name = "lucy-tools"
 version = "0.5.0"
 dependencies = [
+ "base64 0.22.1",
  "dirs",
  "globset",
  "ignore",

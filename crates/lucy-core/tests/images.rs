@@ -7,7 +7,7 @@ use interprocess::local_socket::tokio::{Stream, prelude::*};
 use lucy_client::{Client, Endpoint};
 use lucy_core::secrets::{MemoryStore, Secrets};
 use lucy_core::server::{CoreOptions, serve};
-use lucy_protocol::rpc::{ChatSendResult, Event, Session, method};
+use lucy_protocol::rpc::{ApproveParams, ChatSendResult, Decision, Event, Session, method};
 use lucy_providers::testing::{FakeResponse, FakeServer};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -29,6 +29,16 @@ fn says(text: &str) -> FakeResponse {
     )
 }
 
+/// A step that reads `path` with the built-in `read_file`.
+fn reads(path: &str) -> FakeResponse {
+    let arguments = json!({"path": path}).to_string();
+    let call = json!({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0,
+        "id": "call_1", "type": "function",
+        "function": {"name": "read_file", "arguments": arguments}}]}, "finish_reason": null}]});
+    let done = json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]});
+    FakeResponse::sse(format!("data: {call}\n\ndata: {done}\n\ndata: [DONE]\n\n"))
+}
+
 struct Harness {
     dir: tempfile::TempDir,
     endpoint: Endpoint,
@@ -40,8 +50,13 @@ impl Harness {
     /// A core whose default profile `chat` can see or not (`vision`), with a helper profile
     /// `eyes` set as `[images] vision_profile` when `helper` is true.
     async fn start(vision: bool, helper: bool) -> Self {
+        Self::replying(vision, helper, vec![says("Nice picture.")]).await
+    }
+
+    /// Like [`Harness::start`], with the chat model giving `replies` in turn.
+    async fn replying(vision: bool, helper: bool, replies: Vec<FakeResponse>) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let chat_model = FakeServer::start([says("Nice picture.")]).await;
+        let chat_model = FakeServer::start(replies).await;
         let helper_model = FakeServer::start([says("A red bicycle against a brick wall.")]).await;
         let config_path = dir.path().join("config/config.toml");
         std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
@@ -114,6 +129,52 @@ impl Harness {
                 return sent.session_id;
             }
         }
+    }
+
+    /// Ask her to look at `photo.png` in a folder holding one, approving any tool she asks
+    /// for, and wait for the reply to finish.
+    async fn ask_to_look(&self, client: &Client, events: &mut UnboundedReceiver<Event>) {
+        let folder = self.dir.path().join("work");
+        std::fs::create_dir_all(&folder).unwrap();
+        let png = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, PNG).unwrap();
+        std::fs::write(folder.join("photo.png"), png).unwrap();
+        let sent: ChatSendResult = client
+            .call(
+                method::CHAT_SEND,
+                json!({"text": "what's in photo.png?", "cwd": folder}),
+            )
+            .await
+            .unwrap();
+        loop {
+            let event = tokio::time::timeout(Duration::from_secs(20), events.recv())
+                .await
+                .expect("turn timed out")
+                .expect("connection closed");
+            match &event {
+                Event::ToolApproval { call, .. } => {
+                    let _: Value = client
+                        .call(
+                            method::TOOL_APPROVE,
+                            ApproveParams {
+                                session_id: sent.session_id.clone(),
+                                call_id: call.id.clone(),
+                                decision: Decision::Once,
+                            },
+                        )
+                        .await
+                        .unwrap();
+                }
+                Event::TurnFinished { turn_id, .. } if *turn_id == sent.turn_id => return,
+                _ => {}
+            }
+        }
+    }
+
+    /// The messages the chat model was sent last.
+    fn last_messages(&self) -> Vec<Value> {
+        let requests = self.chat_model.requests();
+        let messages = &requests.last().expect("the chat model was asked").body["messages"];
+        messages.as_array().unwrap().clone()
     }
 
     /// The user message the chat model was sent last.
@@ -206,4 +267,41 @@ async fn without_a_helper_the_model_is_told_it_cant_see_the_picture() {
     let text = sent["content"].as_str().unwrap();
     assert!(text.contains("can't see"), "{text}");
     assert!(!text.contains(PNG));
+}
+
+#[tokio::test]
+async fn she_can_look_at_a_picture_file_herself() {
+    let harness = Harness::replying(true, false, vec![reads("photo.png"), says("A dot.")]).await;
+    let (client, mut events) = harness.client().await;
+
+    harness.ask_to_look(&client, &mut events).await;
+
+    let messages = harness.last_messages();
+    let result = messages.iter().position(|m| m["role"] == "tool").unwrap();
+    let text = messages[result]["content"].as_str().unwrap();
+    assert!(!text.contains("binary"), "{text}");
+    let picture = &messages[result + 1];
+    assert_eq!(picture["role"], "user");
+    assert_eq!(
+        picture["content"][1]["image_url"]["url"],
+        format!("data:image/png;base64,{PNG}")
+    );
+}
+
+#[tokio::test]
+async fn a_picture_file_is_described_for_a_model_that_cant_see() {
+    let harness =
+        Harness::replying(false, true, vec![reads("photo.png"), says("A bicycle.")]).await;
+    let (client, mut events) = harness.client().await;
+
+    harness.ask_to_look(&client, &mut events).await;
+
+    let messages = harness.last_messages();
+    let result = messages.iter().find(|m| m["role"] == "tool").unwrap();
+    let text = result["content"].as_str().unwrap();
+    assert!(
+        text.contains("A red bicycle against a brick wall."),
+        "{text}"
+    );
+    assert!(!messages.iter().any(|m| m["content"].is_array()));
 }

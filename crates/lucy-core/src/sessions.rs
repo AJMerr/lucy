@@ -122,10 +122,12 @@ impl NewMessage {
 
     /// Something you said, with pictures.
     pub fn user_with_images(content: impl Into<String>, images: Vec<ImageRef>) -> Self {
-        Self {
-            images,
-            ..Self::user(content)
-        }
+        Self::user(content).with_images(images)
+    }
+
+    /// The same message with pictures that go with it.
+    pub fn with_images(self, images: Vec<ImageRef>) -> Self {
+        Self { images, ..self }
     }
 
     pub fn assistant(content: impl Into<String>, origin: Origin) -> Self {

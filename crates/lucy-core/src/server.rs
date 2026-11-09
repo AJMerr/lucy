@@ -38,7 +38,7 @@ use crate::secrets::{KeySource, SecretStore, Secrets};
 use crate::sessions::{
     ChatSettings, NewMessage, Origin, SessionId, SessionStore, StoreError, new_reply_id,
 };
-use crate::tools::{Access, ToolBox, Verdict, close_dangling_calls};
+use crate::tools::{Access, ToolBox, ToolOutput, Verdict, close_dangling_calls};
 
 mod remote;
 
@@ -1086,11 +1086,12 @@ fn chat_send(
         }),
         budget,
         cancel,
-        pictures: helper.map(|helper| PictureHelp {
+        pictures: Pictures {
+            dir: images_dir,
+            sight,
             helper,
             pending,
-            dir: images_dir,
-        }),
+        },
     }));
     result(ChatSendResult {
         session_id: key,
@@ -1186,14 +1187,17 @@ struct Plan {
     tools: Option<ToolPlan>,
     budget: Budget,
     cancel: CancellationToken,
-    /// For a model that can't see: the vision helper and the pictures it still has to describe.
-    pictures: Option<PictureHelp>,
+    pictures: Pictures,
 }
 
-struct PictureHelp {
-    helper: Box<dyn Provider>,
-    pending: Vec<rpc::ImageRef>,
+/// How this reply handles pictures, from you or from tools.
+struct Pictures {
     dir: PathBuf,
+    sight: crate::pictures::Sight,
+    /// The vision helper, for a model that can't see.
+    helper: Option<Box<dyn Provider>>,
+    /// Pictures in the history the helper still has to describe.
+    pending: Vec<rpc::ImageRef>,
 }
 
 struct ToolPlan {
@@ -1293,13 +1297,12 @@ impl Turn {
         };
 
         let mut messages = plan.messages;
-        if let Some(help) = &plan.pictures
-            && !help.pending.is_empty()
-        {
+        let pictures = &plan.pictures;
+        if let Some(helper) = &pictures.helper {
             crate::pictures::describe_pending(
-                &help.dir,
-                &*help.helper,
-                &help.pending,
+                &pictures.dir,
+                &**helper,
+                &pictures.pending,
                 &mut messages,
             )
             .await;
@@ -1311,6 +1314,7 @@ impl Turn {
             messages,
             toolbox.as_ref(),
             &plan.budget,
+            pictures,
             &mut progress,
         );
         let (outcome, error) = tokio::select! {
@@ -1376,6 +1380,7 @@ impl Turn {
         mut messages: Vec<Message>,
         toolbox: Option<&ToolBox>,
         budget: &Budget,
+        pictures: &Pictures,
         progress: &mut Progress,
     ) -> Result<Ending, String> {
         let specs = toolbox.map(ToolBox::specs).unwrap_or_default();
@@ -1405,17 +1410,17 @@ impl Turn {
                 ));
             }
             for call in &calls {
-                let (output, is_error) = if !budget.agent && round > max_rounds {
+                let output = if !budget.agent && round > max_rounds {
                     let refusal = format!(
                         "Tool limit reached ({max_rounds} rounds for one message). Answer with \
                          what you have, and say what's left to do."
                     );
-                    self.announce(call, refusal, true)
+                    self.announce(call, refusal)
                 } else {
                     self.run_call(toolbox, call).await
                 };
-                self.save(NewMessage::tool_result(&call.id, &output, is_error));
-                messages.push(Message::tool_result(&call.id, output, is_error));
+                let message = self.tool_result(call, output, pictures).await;
+                messages.push(message);
             }
 
             if let Some(cap) = budget.reached(progress) {
@@ -1461,10 +1466,50 @@ impl Turn {
         ));
         for call in &calls {
             let refusal = format!("Not run: the task reached its {cap}.");
-            let (output, is_error) = self.announce(call, refusal, true);
-            self.save(NewMessage::tool_result(&call.id, &output, is_error));
+            let output = self.announce(call, refusal);
+            self.save(NewMessage::tool_result(
+                &call.id,
+                &output.text,
+                output.is_error,
+            ));
         }
         Ok(())
+    }
+
+    /// Save a call's result with any pictures it gave, and return it as the model gets it:
+    /// with the pictures for a model that can see, described by the helper otherwise.
+    async fn tool_result(
+        &self,
+        call: &ToolCall,
+        mut output: ToolOutput,
+        pictures: &Pictures,
+    ) -> Message {
+        let mut kept = Vec::new();
+        for image in &output.images {
+            match crate::pictures::save(&pictures.dir, image) {
+                Ok(image) => kept.push(image),
+                Err(err) => output.text += &format!("\n[A picture that couldn't be kept: {err}]"),
+            }
+        }
+        self.save(
+            NewMessage::tool_result(&call.id, &output.text, output.is_error)
+                .with_images(kept.clone()),
+        );
+        let mut pending = Vec::new();
+        let message = crate::pictures::attach(
+            &pictures.dir,
+            Message::tool_result(&call.id, output.text, output.is_error),
+            &kept,
+            &pictures.sight,
+            &mut pending,
+        );
+        let mut messages = [message];
+        if let Some(helper) = &pictures.helper {
+            crate::pictures::describe_pending(&pictures.dir, &**helper, &pending, &mut messages)
+                .await;
+        }
+        let [message] = messages;
+        message
     }
 
     /// One model response: streams its text, counts it, and returns the tool calls it made.
@@ -1504,7 +1549,7 @@ impl Turn {
     }
 
     /// Check permissions (asking the user if needed), then run the call.
-    async fn run_call(&self, toolbox: &ToolBox, call: &ToolCall) -> (String, bool) {
+    async fn run_call(&self, toolbox: &ToolBox, call: &ToolCall) -> ToolOutput {
         let allowed = self
             .core
             .overrides
@@ -1546,11 +1591,11 @@ impl Turn {
                     call: call.clone(),
                 });
                 self.back_up(toolbox, call);
-                let (output, is_error) = toolbox.call(call).await;
-                self.finished(call, &output, is_error);
-                (output, is_error)
+                let output = toolbox.call(call).await;
+                self.finished(call, &output);
+                output
             }
-            Err(reason) => self.announce(call, reason, true),
+            Err(reason) => self.announce(call, reason),
         }
     }
 
@@ -1604,24 +1649,25 @@ impl Turn {
         decision.ok().and_then(Result::ok)
     }
 
-    /// Report a call that didn't run, as if it ran and failed with `output`.
-    fn announce(&self, call: &ToolCall, output: String, is_error: bool) -> (String, bool) {
+    /// Report a call that didn't run, as if it ran and failed with `reason`.
+    fn announce(&self, call: &ToolCall, reason: String) -> ToolOutput {
         self.emit(Event::ToolStarted {
             session_id: self.key.clone(),
             turn_id: self.id,
             call: call.clone(),
         });
-        self.finished(call, &output, is_error);
-        (output, is_error)
+        let output = ToolOutput::failed(reason);
+        self.finished(call, &output);
+        output
     }
 
-    fn finished(&self, call: &ToolCall, output: &str, is_error: bool) {
+    fn finished(&self, call: &ToolCall, output: &ToolOutput) {
         self.emit(Event::ToolFinished {
             session_id: self.key.clone(),
             turn_id: self.id,
             call_id: call.id.clone(),
-            output: output.to_owned(),
-            is_error,
+            output: output.text.clone(),
+            is_error: output.is_error,
         });
     }
 }
