@@ -326,3 +326,48 @@ async fn sends_your_pictures_as_image_blocks_before_the_text() {
         }])
     );
 }
+
+#[tokio::test]
+async fn pictures_from_a_tool_go_inside_its_result() {
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+    let mut result = Message::tool_result("toolu_1", "Picture: cat.png", false);
+    result.images = vec![Image {
+        media_type: "image/png".into(),
+        data: "iVBORw0KGgo=".into(),
+    }];
+    let request = ChatRequest {
+        messages: vec![
+            Message::new(Role::User, "look at cat.png"),
+            Message::assistant_with_tools(
+                "",
+                vec![ToolCall {
+                    id: "toolu_1".into(),
+                    name: "read_file".into(),
+                    arguments: json!({"path": "cat.png"}),
+                }],
+            ),
+            result,
+        ],
+        tools: vec![],
+    };
+
+    provider(&server)
+        .stream(request)
+        .await
+        .unwrap()
+        .count()
+        .await;
+
+    let [request] = server.requests().try_into().unwrap();
+    assert_eq!(
+        request.body["messages"][2],
+        json!({"role": "user", "content": [{
+            "type": "tool_result",
+            "tool_use_id": "toolu_1",
+            "content": [
+                {"type": "text", "text": "Picture: cat.png"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
+            ],
+        }]})
+    );
+}

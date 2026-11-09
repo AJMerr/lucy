@@ -522,3 +522,41 @@ async fn messages_without_pictures_stay_plain_text() {
         json!({"role": "user", "content": "hi"})
     );
 }
+
+#[tokio::test]
+async fn pictures_from_a_tool_follow_its_result_in_a_user_message() {
+    // Tool messages can't carry images here, so the picture comes right after.
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+    let mut result = Message::tool_result("call_1", "Picture: cat.png", false);
+    result.images = vec![Image {
+        media_type: "image/png".into(),
+        data: "iVBORw0KGgo=".into(),
+    }];
+    let request = ChatRequest {
+        messages: vec![
+            Message::new(Role::User, "look at cat.png"),
+            Message::assistant_with_tools(
+                "",
+                vec![call("call_1", "read_file", json!({"path": "cat.png"}))],
+            ),
+            result,
+        ],
+        tools: vec![read_file_tool()],
+    };
+
+    collect_request(&provider(&server, None), request).await;
+
+    let [request] = server.requests().try_into().unwrap();
+    let messages = request.body["messages"].as_array().unwrap();
+    assert_eq!(
+        messages[2],
+        json!({"role": "tool", "tool_call_id": "call_1", "content": "Picture: cat.png"})
+    );
+    assert_eq!(
+        messages[3],
+        json!({"role": "user", "content": [
+            {"type": "text", "text": "(The picture from that tool result.)"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+        ]})
+    );
+}

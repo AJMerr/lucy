@@ -48,7 +48,7 @@ impl Provider for OpenAiCompat {
             "{}/chat/completions",
             self.config.base_url.trim_end_matches('/')
         );
-        let messages: Vec<Value> = request.messages.iter().map(message).collect();
+        let messages: Vec<Value> = request.messages.iter().flat_map(messages).collect();
         let mut body = json!({
             "model": self.config.model,
             "stream": true,
@@ -85,6 +85,24 @@ impl Provider for OpenAiCompat {
     }
 }
 
+/// A message on the wire: usually one, but this API's tool messages can't carry pictures, so a
+/// tool result's pictures follow it in a user message.
+fn messages(m: &Message) -> Vec<Value> {
+    let mut out = vec![message(m)];
+    if m.role == Role::Tool && !m.images.is_empty() {
+        let mut parts =
+            vec![json!({"type": "text", "text": "(The picture from that tool result.)"})];
+        parts.extend(m.images.iter().map(image_part));
+        out.push(json!({"role": "user", "content": parts}));
+    }
+    out
+}
+
+fn image_part(image: &lucy_protocol::Image) -> Value {
+    let url = format!("data:{};base64,{}", image.media_type, image.data);
+    json!({"type": "image_url", "image_url": {"url": url}})
+}
+
 fn message(m: &Message) -> Value {
     match m.role {
         Role::Tool => {
@@ -113,10 +131,7 @@ fn message(m: &Message) -> Value {
         }
         role if !m.images.is_empty() => {
             let mut parts = vec![json!({"type": "text", "text": m.content})];
-            for image in &m.images {
-                let url = format!("data:{};base64,{}", image.media_type, image.data);
-                parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
-            }
+            parts.extend(m.images.iter().map(image_part));
             json!({"role": role_name(role), "content": parts})
         }
         role => json!({"role": role_name(role), "content": m.content}),
