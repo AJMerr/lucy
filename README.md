@@ -28,6 +28,11 @@ and off.
 - **Any MCP server.** Add tool servers with `lucy mcp add` (GitHub, databases, browsers…).
   Lucy starts them when needed, fills their tokens from your keyring, and applies the same
   approval rules.
+- **She remembers you.** Lucy saves facts about you as you chat (your preferences, the people
+  in your life, your projects) and every chat starts with them. She notes when she saves
+  something, asks first for anything sensitive, and never keeps secrets. See and change it all
+  in Settings → Memory or with `lucy memory`; incognito chats (`lucy --incognito`) remember
+  nothing and aren't kept. See [docs/memory.md](docs/memory.md).
 - **Pictures.** Show her a picture (paste, drop or attach it in the window, drop it on the
   sprite, or have her open a picture file) and models that can see look at it; for those that
   can't, a vision helper describes it. Ask her to draw something, or type `/image <description>`,
@@ -38,7 +43,8 @@ and off.
   on her own, at a freedom level you choose (0–3), within step and cost caps. `/undo` rolls back
   the files a reply changed.
 - **Saved conversations.** Every chat is stored locally in SQLite. Continue the last one with
-  `lucy -c`, or resume any by ID prefix.
+  `lucy -c`, or resume any by ID prefix. Incognito chats are the exception: deleted when you
+  leave them.
 - **Keys kept out of files.** API keys live in your OS keyring, with environment-variable
   overrides.
 - **One background core.** The `lucy` command starts it on demand and it exits after 30 idle
@@ -107,6 +113,8 @@ Other ways to install:
 lucy                       # new chat
 lucy -c                    # continue your most recent chat
 lucy -r 01m6ne             # resume a chat by any unique ID prefix
+lucy --incognito           # a chat with no memory, deleted when you leave it
+lucy memory                # what Lucy remembers about you (`lucy memory edit` to change it)
 lucy ask "what's a flake?" # one answer, plain text, then exit
 lucy ask -y "tidy todo.md" # approve every tool call (only for scripts you trust)
 git diff | lucy ask        # the prompt can come from stdin
@@ -121,7 +129,7 @@ In the chat:
 | `/model [profile]` | list profiles, or switch this chat to one |
 | `/image <description>` | make a picture straight away (also in the window and the sprite) |
 | `/plain [on\|off]` | drop Lucy's voice (toggles without an argument) |
-| `/new`, `/sessions` | start a new chat, list saved chats |
+| `/new [incognito]`, `/sessions` | start a new chat (incognito: no memory, not kept), list saved chats |
 | `/resume <id>`, `/rename <title>`, `/delete <id>` | manage saved chats |
 | `/tools` | list tools and whether each runs by itself or asks |
 | `/last` | show the last tool call's full input and output |
@@ -133,7 +141,7 @@ In the chat:
 Keys: Tab completes commands and profile names, Alt+Enter (or a trailing `\`) starts a new line,
 Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a literal `/`.
 
-Other commands: `lucy config path`, `lucy auth set|remove|status`,
+Other commands: `lucy config path`, `lucy auth set|remove|status`, `lucy memory [edit]`,
 `lucy mcp add|list|remove|login|logout`, `lucy service install|uninstall|status|restart`,
 `lucy core stop`, `lucy remote connect|disconnect|token`, `lucy sprite [ask|chat|toggle|quit]`,
 `lucy app`.
@@ -302,6 +310,7 @@ plain mode.
 | Config | `~/.config/lucy/config.toml` | `LUCY_CONFIG` |
 | Chats, history, core log | `~/.local/share/lucy/` | `LUCY_DATA_DIR` |
 | Pictures she makes | `~/Pictures/Lucy/` | `[images] folder` |
+| What she remembers | `~/.local/share/lucy/memory.md` | `LUCY_DATA_DIR` |
 | Core socket | `$XDG_RUNTIME_DIR/lucy/core.sock` | `LUCY_SOCKET` |
 
 ### Troubleshooting
@@ -378,11 +387,11 @@ AppIndicator extension); without it, `lucy app` still opens the window.
 
 **Settings** (bottom of the chat list) cover everything in `config.toml` and more, without a
 terminal: models and their API keys (sent to the keyring, never shown again), how new chats
-start, agent caps and tool rules, your persona, MCP servers (and signing in to remote ones),
-pictures (what makes them, where they're saved, which model describes them), the sprite,
-remote access and its token, and the login service. Each section saves on its own, and the core
-refuses anything that would break the config, saying why. With no config yet, the window starts
-with first-run setup instead (the same providers as `lucy config init`).
+start, agent caps and tool rules, your persona, what she remembers, MCP servers (and signing in
+to remote ones), pictures (what makes them, where they're saved, which model describes them),
+the sprite, remote access and its token, and the login service. Each section saves on its own,
+and the core refuses anything that would break the config, saying why. With no config yet, the
+window starts with first-run setup instead (the same providers as `lucy config init`).
 
 No character art is committed. Lucy loads sprite packs from your data directory
 (`~/.local/share/lucy/packs/` on Linux). Copy `packs/placeholder`, swap the frames, and point

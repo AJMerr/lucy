@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased: memory
+
+Lucy remembers you. See [docs/memory.md](docs/memory.md).
+
+- **She saves facts about you on her own** (preferences, people, projects) in `memory.md`, with
+  a short note when she does, and every chat starts with them. Sensitive facts (health, money,
+  relationships, addresses, ID numbers) ask first; anything that looks like a secret is refused.
+  "Forget that" removes one, and she replaces facts that change.
+- **Big memories stay fast:** past about 8 KB, chats get your core facts plus the relevant ones,
+  picked by keyword, or by meaning with an embedding model (`[memory] embedding_profile`), and
+  she can search the rest with `recall`.
+- **Settings → Memory** lists everything with edit and forget, or edit it as text; `lucy
+  memory` and `lucy memory edit` in the terminal. `[memory] enabled = false` turns it off.
+- **Incognito chats:** `lucy --incognito`, `/new incognito`, or New incognito chat in the window.
+  No memory, and deleted (pictures too) when you leave.
+- **Protocol** (still v5, additions only): `memory.get`, `memory.set`, `chat.send.incognito`,
+  `SessionSummary.incognito`.
+- The roadmap file is gone from the repo; the changelog records what shipped.
+
 ## v0.6.0: pictures (2026-11-10)
 
 Lucy can see pictures and make them. See [docs/images.md](docs/images.md).
