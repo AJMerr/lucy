@@ -60,7 +60,7 @@
 </label>
 {#if images.generator !== "comfyui"}
   <p class="hint">
-    Use a profile for an image model, e.g. OpenRouter's <code>google/gemini-2.5-flash-image</code>
+    Use a profile for an image model, e.g. OpenRouter's <code>qwen/qwen-image-3-pro</code>
     (add one under Models &amp; keys).
   </p>
 {/if}

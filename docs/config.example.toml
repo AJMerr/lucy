@@ -43,7 +43,7 @@ key_name = "openrouter"
 [profiles.openrouter-image]
 provider = "openai_compat"
 base_url = "https://openrouter.ai/api/v1"
-model = "google/gemini-2.5-flash-image"   # an image model: use it as [images] generator below
+model = "qwen/qwen-image-3-pro"           # an image model: use it as [images] generator below
 key_name = "openrouter"
 
 [profiles.claude]

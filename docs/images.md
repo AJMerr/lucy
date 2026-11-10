@@ -55,7 +55,7 @@ Choose what makes them with `[images] generator`:
    [profiles.pics]
    provider = "openai_compat"
    base_url = "https://openrouter.ai/api/v1"
-   model = "google/gemini-2.5-flash-image"   # any OpenRouter model that outputs images
+   model = "qwen/qwen-image-3-pro"           # any of OpenRouter's image models
    key_name = "openrouter"
    ```
 
@@ -66,7 +66,10 @@ Choose what makes them with `[images] generator`:
    generator = "pics"
    ```
 
-Image models that output only pictures (no text) work too.
+Lucy calls OpenRouter's Image API (`POST /api/v1/images`), so the profile's endpoint can be
+the API root (`https://openrouter.ai/api/v1`) or the Image API itself
+(`https://openrouter.ai/api/v1/images`). Image models only make pictures: keep a chat model as
+the chat's model, and choose the image model under Pictures.
 
 ### ComfyUI on your own GPU
 
@@ -160,7 +163,10 @@ whatever it saves is what Lucy shows.
 - **"Value not in list: ckpt_name":** `[images.comfyui] checkpoint` names a file ComfyUI doesn't
   have; check the spelling or leave it empty.
 - **CUDA out of memory:** use a smaller model or size, or start ComfyUI with `--lowvram`.
-- **OpenRouter says the model doesn't support image output:** pick a model whose output
-  includes images on openrouter.ai.
+- **Every message in a chat fails (e.g. "404 Not Found"):** the chat's model is set to an image
+  model, which can't chat. Switch it back with `/model <chat profile>` or the chat's model menu,
+  and choose the image model under Settings → Pictures instead.
+- **OpenRouter refuses a setting** (an aspect ratio, say): each image model accepts its own; the
+  error says which.
 - **She says she can't see a picture:** mark the chat's model "Can see pictures" if it can, or
   choose a vision helper.

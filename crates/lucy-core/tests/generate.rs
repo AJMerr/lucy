@@ -71,10 +71,7 @@ fn comfyui_makes_one() -> Vec<FakeResponse> {
 fn openrouter_makes_one() -> Vec<FakeResponse> {
     vec![FakeResponse::json(
         200,
-        json!({"choices": [{"message": {"role": "assistant", "content": "",
-            "images": [{"type": "image_url",
-                        "image_url": {"url": format!("data:image/png;base64,{PNG}")}}]}}]})
-        .to_string(),
+        json!({"created": 1, "data": [{"b64_json": PNG, "media_type": "image/png"}]}).to_string(),
     )]
 }
 
@@ -396,7 +393,7 @@ async fn slash_image_makes_a_picture_straight_away_without_asking() {
 
     assert!(!asked_approval(&seen), "you typed it, so it doesn't ask");
     assert!(harness.chat_model.requests().is_empty(), "no model turn");
-    let sent_prompt = harness.maker.requests()[0].body["messages"][0]["content"].clone();
+    let sent_prompt = harness.maker.requests()[0].body["prompt"].clone();
     assert_eq!(sent_prompt, "a red bicycle");
     assert_eq!(harness.saved_pictures().len(), 1);
     assert!(seen.iter().any(|e| matches!(e,

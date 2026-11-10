@@ -2,7 +2,6 @@
 
 use std::time::Duration;
 
-use lucy_providers::ProviderError;
 use lucy_providers::generate::{
     ComfyUi, ComfyUiConfig, ImageGenerator, ImageRequest, OpenRouterImages,
 };
@@ -24,30 +23,33 @@ fn request(prompt: &str) -> ImageRequest {
 
 // --- OpenRouter ---------------------------------------------------------------------------
 
-fn openrouter(server: &FakeServer) -> OpenRouterImages {
+fn openrouter(server: &FakeServer, base: &str) -> OpenRouterImages {
     OpenRouterImages::new(OpenAiCompatConfig {
         name: "pics".into(),
-        base_url: format!("{}/api/v1", server.url()),
-        model: "maker/image-1".into(),
+        base_url: format!("{}{base}", server.url()),
+        model: "qwen/qwen-image-3-pro".into(),
         api_key: Some("sk-or-test".into()),
     })
 }
 
+/// OpenRouter's Image API answering with one picture.
 fn picture_reply() -> FakeResponse {
     FakeResponse::json(
         200,
-        json!({"choices": [{"message": {"role": "assistant", "content": "Here you go.",
-            "images": [{"type": "image_url",
-                        "image_url": {"url": format!("data:image/png;base64,{PNG}")}}]}}]})
+        json!({
+            "created": 1748372400,
+            "data": [{"b64_json": PNG, "media_type": "image/png"}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 4175, "total_tokens": 4175, "cost": 0.04},
+        })
         .to_string(),
     )
 }
 
 #[tokio::test]
-async fn asks_an_openrouter_image_model_for_a_picture() {
+async fn asks_openrouters_image_api_for_a_picture() {
     let server = FakeServer::start([picture_reply()]).await;
 
-    let pictures = openrouter(&server)
+    let pictures = openrouter(&server, "/api/v1")
         .generate(&ImageRequest {
             prompt: "a lighthouse at dusk".into(),
             negative: Some("people".into()),
@@ -61,52 +63,76 @@ async fn asks_an_openrouter_image_model_for_a_picture() {
     assert_eq!(pictures[0].media_type, "image/png");
     assert_eq!(pictures[0].data, PNG);
     let [sent] = server.requests().try_into().unwrap();
-    assert_eq!(sent.path, "/api/v1/chat/completions");
+    assert_eq!(sent.method, "POST");
+    assert_eq!(sent.path, "/api/v1/images");
     assert_eq!(sent.headers["authorization"], "Bearer sk-or-test");
-    assert_eq!(sent.body["model"], "maker/image-1");
-    assert_eq!(sent.body["modalities"], json!(["image", "text"]));
-    assert_eq!(sent.body["image_config"]["aspect_ratio"], "16:9");
-    let prompt = sent.body["messages"][0]["content"].as_str().unwrap();
+    assert_eq!(sent.body["model"], "qwen/qwen-image-3-pro");
+    assert_eq!(sent.body["aspect_ratio"], "16:9");
+    let prompt = sent.body["prompt"].as_str().unwrap();
     assert!(prompt.contains("a lighthouse at dusk"), "{prompt}");
     assert!(prompt.contains("people"), "{prompt}");
 }
 
 #[tokio::test]
-async fn image_only_models_are_asked_again_for_just_a_picture() {
-    let refused = FakeResponse::json(
-        400,
-        json!({"error": {"message": "No endpoints found that support the requested output modalities: image, text"}})
-            .to_string(),
-    );
-    let server = FakeServer::start([refused, picture_reply()]).await;
+async fn a_square_picture_sends_only_the_model_and_prompt() {
+    let server = FakeServer::start([picture_reply()]).await;
 
-    let pictures = openrouter(&server)
+    openrouter(&server, "/api/v1")
         .generate(&request("a fox"))
         .await
         .unwrap();
 
-    assert_eq!(pictures.len(), 1);
-    let requests = server.requests();
-    assert_eq!(requests.len(), 2);
-    assert_eq!(requests[1].body["modalities"], json!(["image"]));
+    let [sent] = server.requests().try_into().unwrap();
+    assert_eq!(
+        sent.body,
+        json!({"model": "qwen/qwen-image-3-pro", "prompt": "a fox"})
+    );
 }
 
 #[tokio::test]
-async fn a_reply_without_a_picture_says_what_the_model_said_instead() {
-    let words = FakeResponse::json(
-        200,
-        json!({"choices": [{"message": {"role": "assistant", "content": "I can't draw that."}}]})
-            .to_string(),
-    );
-    let server = FakeServer::start([words]).await;
+async fn an_endpoint_given_as_the_image_api_itself_works_too() {
+    let server = FakeServer::start([picture_reply()]).await;
 
-    let err = openrouter(&server)
+    openrouter(&server, "/api/v1/images/")
+        .generate(&request("a fox"))
+        .await
+        .unwrap();
+
+    assert_eq!(server.requests()[0].path, "/api/v1/images");
+}
+
+#[tokio::test]
+async fn a_reply_without_a_picture_is_an_error() {
+    let empty = FakeResponse::json(200, json!({"created": 1, "data": []}).to_string());
+    let server = FakeServer::start([empty]).await;
+
+    let err = openrouter(&server, "/api/v1")
         .generate(&request("a fox"))
         .await
         .unwrap_err();
 
-    assert!(matches!(err, ProviderError::Refused(_)), "{err:?}");
-    assert!(err.to_string().contains("I can't draw that."), "{err}");
+    assert!(err.to_string().contains("no picture"), "{err}");
+}
+
+#[tokio::test]
+async fn openrouters_reason_for_refusing_comes_through() {
+    let refused = FakeResponse::json(
+        400,
+        json!({"error": {"code": 400, "message": "aspect_ratio 21:9 is not supported"}})
+            .to_string(),
+    );
+    let server = FakeServer::start([refused]).await;
+
+    let err = openrouter(&server, "/api/v1")
+        .generate(&request("a fox"))
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("aspect_ratio 21:9 is not supported"),
+        "{err}"
+    );
 }
 
 // --- ComfyUI ------------------------------------------------------------------------------

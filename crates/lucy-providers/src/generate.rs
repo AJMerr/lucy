@@ -1,5 +1,5 @@
 //! Making pictures. Every backend implements [`ImageGenerator`]: OpenRouter's image models
-//! (through the chat API, asking for an image reply), and ComfyUI running a workflow file with
+//! (through its Image API, `POST /api/v1/images`), and ComfyUI running a workflow file with
 //! placeholders filled in.
 
 use std::hash::{BuildHasher, Hasher};
@@ -21,7 +21,7 @@ pub const DEFAULT_WORKFLOW: &str = include_str!("default_workflow.json");
 /// How long a ComfyUI run may take, including loading the model the first time.
 const COMFYUI_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-/// The aspect ratios OpenRouter's image models accept.
+/// Aspect ratios OpenRouter's image models generally accept (a model refuses ones it doesn't).
 const ASPECT_RATIOS: &[(&str, f64)] = &[
     ("1:1", 1.0),
     ("2:3", 2.0 / 3.0),
@@ -32,7 +32,6 @@ const ASPECT_RATIOS: &[(&str, f64)] = &[
     ("5:4", 1.25),
     ("9:16", 9.0 / 16.0),
     ("16:9", 16.0 / 9.0),
-    ("21:9", 21.0 / 9.0),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,7 +51,7 @@ pub trait ImageGenerator: Send + Sync {
 
 // --- OpenRouter ---------------------------------------------------------------------------
 
-/// An OpenRouter image model (or any OpenAI-compatible server that replies with `images`).
+/// An OpenRouter image model, through its Image API (`POST /api/v1/images`).
 pub struct OpenRouterImages {
     config: OpenAiCompatConfig,
     client: reqwest::Client,
@@ -65,66 +64,59 @@ impl OpenRouterImages {
             client: reqwest::Client::new(),
         }
     }
-
-    async fn ask(
-        &self,
-        request: &ImageRequest,
-        modalities: &[&str],
-    ) -> Result<Value, ProviderError> {
-        let url = format!(
-            "{}/chat/completions",
-            self.config.base_url.trim_end_matches('/')
-        );
-        let mut prompt = request.prompt.clone();
-        if let Some(negative) = request.negative.as_deref().filter(|n| !n.is_empty()) {
-            prompt += &format!("\n\nAvoid: {negative}");
-        }
-        let body = json!({
-            "model": self.config.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "modalities": modalities,
-            "image_config": {"aspect_ratio": aspect_ratio(request.width, request.height)},
-        });
-        let mut http = self.client.post(&url).json(&body);
-        if let Some(key) = &self.config.api_key {
-            http = http.bearer_auth(key);
-        }
-        let response = http.send().await.map_err(|err| send_error(&url, err))?;
-        check_status(response)
-            .await?
-            .json()
-            .await
-            .map_err(|err| ProviderError::Protocol(format!("bad reply: {err}")))
-    }
 }
 
 #[async_trait]
 impl ImageGenerator for OpenRouterImages {
     async fn generate(&self, request: &ImageRequest) -> Result<Vec<Image>, ProviderError> {
-        // Models that also write text want both; image-only models refuse that, so ask again.
-        let reply = match self.ask(request, &["image", "text"]).await {
-            Err(ProviderError::Request(message)) if message.contains("modalit") => {
-                self.ask(request, &["image"]).await?
-            }
-            other => other?,
+        // The API root (`…/api/v1`), or the Image API's own address.
+        let base = self.config.base_url.trim_end_matches('/');
+        let url = match base.ends_with("/images") {
+            true => base.to_owned(),
+            false => format!("{base}/images"),
         };
+        let mut prompt = request.prompt.clone();
+        // The Image API has no negative prompt.
+        if let Some(negative) = request.negative.as_deref().filter(|n| !n.is_empty()) {
+            prompt += &format!("\n\nAvoid: {negative}");
+        }
+        let mut body = json!({"model": self.config.model, "prompt": prompt});
+        // Square is every model's default; only a different shape is asked for.
+        let ratio = aspect_ratio(request.width, request.height);
+        if ratio != "1:1" {
+            body["aspect_ratio"] = json!(ratio);
+        }
+        let mut http = self.client.post(&url).json(&body);
+        if let Some(key) = &self.config.api_key {
+            http = http.bearer_auth(key);
+        }
+        let response = http.send().await.map_err(|err| send_error(&url, err))?;
+        let reply: Value = check_status(response)
+            .await?
+            .json()
+            .await
+            .map_err(|err| ProviderError::Protocol(format!("bad reply: {err}")))?;
         if let Some(message) = error_message(&reply) {
             return Err(ProviderError::Unavailable(message));
         }
-        let message = &reply["choices"][0]["message"];
-        let pictures: Vec<Image> = message["images"]
+        let pictures: Vec<Image> = reply["data"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|image| data_url(image["image_url"]["url"].as_str()?))
+            .filter_map(|picture| {
+                Some(Image {
+                    media_type: picture["media_type"]
+                        .as_str()
+                        .unwrap_or("image/png")
+                        .to_owned(),
+                    data: picture["b64_json"].as_str()?.to_owned(),
+                })
+            })
             .collect();
         if pictures.is_empty() {
-            let said = message["content"].as_str().unwrap_or_default().trim();
-            return Err(ProviderError::Refused(if said.is_empty() {
-                "the model sent back no picture".into()
-            } else {
-                format!("the model sent back no picture, only: {said}")
-            }));
+            return Err(ProviderError::Refused(
+                "the model sent back no picture".into(),
+            ));
         }
         Ok(pictures)
     }
@@ -137,16 +129,6 @@ fn aspect_ratio(width: u32, height: u32) -> &'static str {
         .iter()
         .min_by(|a, b| (a.1 - ratio).abs().total_cmp(&(b.1 - ratio).abs()))
         .map_or("1:1", |(name, _)| name)
-}
-
-/// A `data:<type>;base64,<data>` URL as a picture.
-fn data_url(url: &str) -> Option<Image> {
-    let (head, data) = url.strip_prefix("data:")?.split_once(',')?;
-    let media_type = head.strip_suffix(";base64")?;
-    Some(Image {
-        media_type: media_type.to_owned(),
-        data: data.to_owned(),
-    })
 }
 
 // --- ComfyUI ------------------------------------------------------------------------------
