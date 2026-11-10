@@ -5,7 +5,9 @@ use lucy_protocol::rpc::Decision;
 use serde_json::Value;
 
 /// Argument names worth showing first, in order of preference.
-const KEY_ARGS: &[&str] = &["command", "path", "url", "pattern", "query", "name"];
+const KEY_ARGS: &[&str] = &[
+    "command", "path", "url", "pattern", "query", "name", "fact", "prompt",
+];
 const SUMMARY_CHARS: usize = 60;
 
 pub const APPROVAL_PROMPT: &str = "Allow? [y]es · [a]lways this chat · [N]o › ";

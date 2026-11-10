@@ -7,6 +7,7 @@ pub mod core_process;
 pub mod inline_pictures;
 pub mod markdown;
 pub mod mcp;
+pub mod memory_command;
 pub mod remote;
 pub mod service;
 pub mod sprite;

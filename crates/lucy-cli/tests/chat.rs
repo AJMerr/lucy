@@ -291,3 +291,54 @@ async fn mistakes_are_explained_and_double_slash_sends_text() {
     assert!(transcript.contains("no session matching"), "{transcript}");
     assert_eq!(messages_sent(&h.main, 0).last().unwrap().1, "/etc/hosts?");
 }
+
+// --- Incognito ----------------------------------------------------------------------------------
+
+async fn sessions(h: &Harness) -> Vec<lucy_protocol::rpc::SessionSummary> {
+    let client = Client::connect(&h.endpoint, "list").await.unwrap();
+    client
+        .call(lucy_protocol::rpc::method::SESSIONS_LIST, json!({}))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn an_incognito_chat_says_so_and_leaves_nothing_behind() {
+    let h = Harness::start(vec![reply("Hi, stranger.")], vec![]).await;
+
+    let transcript = h.chat(Start::Incognito, &["hi"]).await;
+
+    assert!(transcript.contains("Incognito chat"), "{transcript}");
+    let body = &h.main.requests()[0].body;
+    assert!(!body["tools"].to_string().contains("remember"));
+    for _ in 0..100 {
+        if sessions(&h).await.is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the incognito chat was kept");
+}
+
+#[tokio::test]
+async fn new_incognito_starts_one_and_leaving_it_deletes_it() {
+    let h = Harness::start(vec![reply("Kept."), reply("Shh.")], vec![]).await;
+
+    let transcript = h
+        .chat(
+            Start::New,
+            &[
+                "a normal chat",
+                "/new incognito",
+                "a secret",
+                "/new",
+                "/sessions",
+            ],
+        )
+        .await;
+
+    assert!(transcript.contains("Incognito chat"), "{transcript}");
+    let listing = transcript.split("/sessions").last().unwrap_or(&transcript);
+    assert!(listing.contains("a normal chat"), "{transcript}");
+    assert!(!listing.contains("a secret"), "{transcript}");
+}

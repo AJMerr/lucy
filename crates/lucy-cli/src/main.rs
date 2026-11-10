@@ -20,6 +20,9 @@ struct Cli {
     /// Resume a saved chat by ID (any unique prefix).
     #[arg(short, long, value_name = "ID")]
     resume: Option<String>,
+    /// Start an incognito chat: nothing is remembered, and the chat isn't kept.
+    #[arg(long, conflicts_with_all = ["continue_latest", "resume"])]
+    incognito: bool,
     /// Talk to the Lucy core at this address (ws://host:7077) for this run; `LUCY_REMOTE` too.
     #[arg(long, global = true, value_name = "URL")]
     remote: Option<String>,
@@ -54,6 +57,11 @@ enum Command {
     Config {
         #[command(subcommand)]
         action: ConfigAction,
+    },
+    /// Show what Lucy remembers about you, or edit it.
+    Memory {
+        #[command(subcommand)]
+        action: Option<MemoryAction>,
     },
     /// Manage provider API keys in the OS keyring.
     Auth {
@@ -245,6 +253,7 @@ fn main() -> Result<()> {
             let start = match (cli.continue_latest, cli.resume) {
                 (true, _) => Start::Continue,
                 (_, Some(id)) => Start::Resume(id),
+                _ if cli.incognito => Start::Incognito,
                 _ => Start::New,
             };
             terminal::run(start)
@@ -280,6 +289,9 @@ fn main() -> Result<()> {
                 std::process::exit(2);
             }
             Ok(())
+        }
+        Some(Command::Memory { action }) => {
+            lucy_cli::memory_command::run(matches!(action, Some(MemoryAction::Edit)))
         }
         Some(Command::Core {
             action: CoreAction::Run { service },
@@ -552,4 +564,10 @@ impl wizard::Prompter for NoPrompts {
             None => bail!("can't ask \"{prompt}\" without a terminal; pass it on the command line"),
         }
     }
+}
+
+#[derive(Subcommand)]
+enum MemoryAction {
+    /// Open what she remembers in your editor ($VISUAL or $EDITOR) and save your changes.
+    Edit,
 }
