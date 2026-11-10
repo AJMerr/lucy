@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: memory
+## v0.7.0: memory (2026-11-10)
 
 Lucy remembers you. See [docs/memory.md](docs/memory.md).
 
