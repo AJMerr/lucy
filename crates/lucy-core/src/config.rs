@@ -25,6 +25,8 @@ pub struct Config {
     pub images: ImageSettings,
     #[serde(default, skip_serializing_if = "MemorySettings::is_default")]
     pub memory: MemorySettings,
+    #[serde(default, skip_serializing_if = "VoiceSettings::is_default")]
+    pub voice: VoiceSettings,
     #[serde(default)]
     pub user: UserSettings,
     #[serde(default)]
@@ -71,6 +73,49 @@ pub struct Profile {
     /// The model can see pictures; others get `[images] vision_profile`'s description.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub vision: bool,
+}
+
+/// Talking to Lucy and hearing her, in her desktop app (which runs the speech models).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct VoiceSettings {
+    /// Push-to-talk, and replies to what you said read aloud.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub enabled: bool,
+    /// Whisper's size for hearing you: tiny, base, small or turbo.
+    pub hearing: String,
+    /// Her voice: kokoro or piper (on this computer), or openai or elevenlabs (hosted, with a
+    /// key in the keyring under that name).
+    pub voice: String,
+    /// Which one: a Kokoro speaker (e.g. af_sarah), a Piper voice (e.g. en_US-amy-medium), an
+    /// OpenAI voice (e.g. nova) or an ElevenLabs voice ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+    /// Also read aloud replies to what you typed.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub read_typed: bool,
+    /// Listen for "Hey Lucy".
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub wake_word: bool,
+}
+
+impl Default for VoiceSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            hearing: "small".into(),
+            voice: "kokoro".into(),
+            speaker: None,
+            read_typed: false,
+            wake_word: false,
+        }
+    }
+}
+
+impl VoiceSettings {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Long-term memory (memory.md in the data folder).
@@ -539,6 +584,7 @@ impl Config {
             app: AppSettings::default(),
             images: ImageSettings::default(),
             memory: MemorySettings::default(),
+            voice: VoiceSettings::default(),
             user: UserSettings::default(),
             tools: ToolSettings::default(),
             mcp: McpSettings::default(),
@@ -616,6 +662,18 @@ impl Config {
                 }
                 Some(_) => {}
             }
+        }
+        if !["tiny", "base", "small", "turbo"].contains(&self.voice.hearing.as_str()) {
+            return Err(ConfigError::Invalid(format!(
+                "voice.hearing must be tiny, base, small or turbo, not \"{}\"",
+                self.voice.hearing
+            )));
+        }
+        if !["kokoro", "piper", "openai", "elevenlabs"].contains(&self.voice.voice.as_str()) {
+            return Err(ConfigError::Invalid(format!(
+                "voice.voice must be kokoro, piper, openai or elevenlabs, not \"{}\"",
+                self.voice.voice
+            )));
         }
         if let Some(name) = &self.memory.embedding_profile {
             match self.profiles.get(name) {

@@ -9,6 +9,7 @@ publish = false
 # A workspace of its own: building it needs WebKitGTK and friends (see the flake's dev shell),
 # which the main workspace's crates and tests don't.
 [workspace]
+members = ["voice"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

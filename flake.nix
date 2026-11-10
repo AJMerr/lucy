@@ -60,6 +60,7 @@
               gtk-layer-shell
               harfbuzz
               libayatana-appindicator
+              alsa-lib
               librsvg
               libsoup_3
               pango
