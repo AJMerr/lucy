@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased: scheduled tasks
+
+Lucy can remind you of things and do things on a schedule. See [docs/tasks.md](docs/tasks.md).
+
+- **Reminders** ("remind me at 5 to call Mom") show their message at the time; no model runs.
+- **Tasks** ("every weekday at 8, summarise my email and calendar") are prompts she runs on her
+  own as an agent, at the level you choose (0-3), with agent mode's step and cost caps. Calls
+  the level doesn't allow are refused on the spot and reported, since nobody's there to ask.
+- **Always shown first:** her `schedule` tool shows an approval card with what, when, the level
+  and the model before anything is saved. She can also list and cancel schedules.
+- **Results** land in a **Tasks** chat with a notification: from Lucy's app (a desktop
+  notification and the sprite's bubble) or, without the app, from the core itself.
+- **Managing them:** the window's ◷ Tasks list (pause, resume, reword, level, model, delete) and
+  `lucy tasks [pause|resume|delete <name>]`.
+- **Running:** an on-demand core stays up while anything is scheduled; she offers the login
+  service when you schedule your first task. A run missed while the core was stopped happens
+  once when it starts.
+- **Protocol** (still v5, additions only): `schedules.list|update|delete`, the `notification`
+  event, and `subscribe {notifications}` for clients that show notifications themselves.
+
 ## v0.7.0: memory (2026-11-10)
 
 Lucy remembers you. See [docs/memory.md](docs/memory.md).
