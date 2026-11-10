@@ -44,6 +44,8 @@ export interface View {
   chatOpen: boolean;
   /** Pictures waiting to go with your next message (dropped on her). */
   attached: Attached[];
+  /** Reminders and finished tasks that came in while she was replying. */
+  waiting: { title: string; body: string }[];
 }
 
 export type Input =
@@ -59,6 +61,8 @@ export type Input =
   | { type: "chat_window"; open: boolean }
   | { type: "dismiss" }
   | { type: "tick"; now: number }
+  /** A reminder, or a scheduled task finishing. */
+  | { type: "notification"; title: string; body: string; now: number }
   /** Something went wrong outside a reply, e.g. the message couldn't be sent. */
   | { type: "problem"; message: string; now: number };
 
@@ -75,6 +79,7 @@ export function initialView(): View {
     turnId: null,
     chatOpen: false,
     attached: [],
+    waiting: [],
   };
 }
 
@@ -139,11 +144,39 @@ export function reduce(view: View, input: Input, settings: Settings): View {
         animation: "error",
         bubble: { text: "", done: true, error: input.message, doneAt: input.now },
       };
+    case "notification": {
+      const note = { title: input.title, body: input.body };
+      // Don't cut her off: it goes under her reply once she's done.
+      if (view.turnId !== null || view.approval !== null) {
+        return { ...view, waiting: [...view.waiting, note] };
+      }
+      return {
+        ...view,
+        animation: "happy",
+        bubble: { text: notes([note]), done: true, doneAt: input.now },
+      };
+    }
     case "event": {
       const next = onEvent(view, input.event, input.now);
-      return view.chatOpen ? { ...next, bubble: null, approval: null } : next;
+      const shown = view.chatOpen ? { ...next, bubble: null, approval: null } : next;
+      // Notifications that waited for her reply go under it (or alone, if she said nothing).
+      if (input.event.type !== "turn_finished" || shown.waiting.length === 0) {
+        return shown;
+      }
+      const reply = shown.bubble?.text ?? "";
+      const text = [reply, notes(shown.waiting)].filter((t) => t !== "").join("\n\n");
+      return {
+        ...shown,
+        waiting: [],
+        bubble: { ...(shown.bubble ?? { done: true, doneAt: input.now }), text },
+      };
     }
   }
+}
+
+/** Notifications as bubble text: each title in bold, then its body. */
+function notes(waiting: { title: string; body: string }[]): string {
+  return waiting.map((n) => `**${n.title}**\n\n${n.body}`).join("\n\n");
 }
 
 function onEvent(view: View, event: CoreEvent, now: number): View {

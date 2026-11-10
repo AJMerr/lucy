@@ -6,12 +6,14 @@
   import type { ConnectionState, Transport } from "../lib/rpc/transport.ts";
   import { ChatsStore, type UndoResult } from "../lib/stores/chats.ts";
   import { SettingsStore } from "../lib/stores/settings.ts";
+  import { TasksStore } from "../lib/stores/tasks.ts";
   import FirstRun from "./FirstRun.svelte";
   import ChatHeader, { type ProfileInfo } from "./components/ChatHeader.svelte";
   import Composer from "./components/Composer.svelte";
   import Entry from "./components/Entry.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import Settings from "./settings/Settings.svelte";
+  import Tasks from "./tasks/Tasks.svelte";
 
   let { core }: { core: Transport } = $props();
 
@@ -19,8 +21,10 @@
   const chats = new ChatsStore(core);
   // svelte-ignore state_referenced_locally
   const settings = new SettingsStore(core);
+  // svelte-ignore state_referenced_locally
+  const tasks = new TasksStore(core);
   /** What the window shows: chats, settings, or first-run setup (no config yet). */
-  let view: "chat" | "settings" | "setup" = $state("chat");
+  let view: "chat" | "settings" | "tasks" | "setup" = $state("chat");
   const desktop = "__TAURI_INTERNALS__" in window;
 
   /** Run `lucy <args>` on this machine; only the desktop app can. */
@@ -164,6 +168,14 @@
       refresh();
     }}
   />
+{:else if view === "tasks"}
+  <div class="page">
+    <Tasks
+      store={tasks}
+      profiles={profiles.map((p) => p.name)}
+      onClose={() => (view = "chat")}
+    />
+  </div>
 {:else if view === "settings"}
   <div class="page">
     <Settings
@@ -194,6 +206,10 @@
       onRename={(id, title) => chats.rename(id, title).catch((err) => (problem = message(err)))}
       onDelete={(id) => chats.remove(id).catch((err) => (problem = message(err)))}
       onSettings={() => (view = "settings")}
+      onTasks={() => {
+        view = "tasks";
+        tasks.load().catch((err) => (problem = message(err)));
+      }}
     />
   </aside>
 

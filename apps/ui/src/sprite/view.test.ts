@@ -249,3 +249,29 @@ test("pictures from tools she only looked at don't go in the bubble", () => {
 
   assert.deepEqual(view.bubble?.pictures ?? [], []);
 });
+
+// --- Notifications -----------------------------------------------------------------------------
+
+test("a reminder or finished task shows in her bubble, and she looks pleased", () => {
+  const view = run([{ type: "notification", title: "Reminder", body: "Call Mom", now: 5 }]);
+
+  assert.equal(view.bubble?.text, "**Reminder**\n\nCall Mom");
+  assert.equal(view.bubble?.done, true);
+  assert.equal(view.bubble?.doneAt, 5);
+  assert.equal(view.animation, "happy");
+});
+
+test("a notification waits while she's replying, so it doesn't cut her off", () => {
+  const view = run([started(1), delta(1, "Thinking about it"), {
+    type: "notification",
+    title: "Reminder",
+    body: "Call Mom",
+    now: 5,
+  }]);
+
+  assert.equal(view.bubble?.text, "Thinking about it");
+  assert.deepEqual(view.waiting, [{ title: "Reminder", body: "Call Mom" }]);
+  const after = run([finished(1, "complete", 9)], view);
+  assert.equal(after.bubble?.text, "Thinking about it\n\n**Reminder**\n\nCall Mom");
+  assert.deepEqual(after.waiting, []);
+});
