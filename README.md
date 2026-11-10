@@ -10,7 +10,7 @@ and off.
 > pictures with OpenRouter image models or ComfyUI. The core can run from login and serve your
 > other machines. Lucy's app puts her on the desktop as an animated sprite, with a main window
 > for your chats and every setting, and a tray icon; no terminal needed. Installers, a Nix flake
-> and a home-manager module. See [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
+> and a home-manager module. See the [release notes](CHANGELOG.md).
 
 ## What works today
 
@@ -335,7 +335,7 @@ apps/ui/           its web pages (the sprite and the main window), shared with a
 persona/           built-in personas
 packs/placeholder/ the only sprite pack tracked in git
 nix/               the flake's packages, home-manager module and its check
-docs/              ADRs, roadmap, example config
+docs/              ADRs, guides, example config
 ```
 
 The design decisions are recorded in [`docs/adr/`](docs/adr/).
