@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased: pictures
+
+Lucy can see pictures and make them. See [docs/images.md](docs/images.md).
+
+### Seeing
+
+- **Send her pictures:** paste, drop or attach them in the main window, or drop one on the
+  sprite. Models marked **Can see pictures** (`vision = true`) get the picture; for others, a
+  **vision helper** (`[images] vision_profile`) describes it once, and the description is kept.
+- **She can look at picture files:** `read_file` shows PNG, JPEG, GIF and WebP files as
+  pictures, and pictures from any MCP tool reach the model instead of being dropped.
+- Pictures are kept with the chat in your data folder; `images.get` fetches one.
+
+### Making
+
+- **Ask her for a picture** and she writes the prompt and calls `generate_image`; or type
+  **`/image <description>`** in the terminal, the window or the sprite to make one straight
+  away.
+- **`[images] generator`:** an OpenRouter image model (asks before each picture, since it
+  costs money) or **ComfyUI** on your own GPU (free, runs by itself), with Lucy's built-in
+  text-to-image workflow or your own exported workflow using `{{prompt}}`, `{{negative}}`,
+  `{{width}}`, `{{height}}`, `{{seed}}` and `{{checkpoint}}`.
+- Pictures are saved to `~/Pictures/Lucy` (`[images] folder`) and shown in the main window,
+  in the sprite's bubble, and inline in Ghostty, kitty and WezTerm.
+- **Settings → Pictures** sets all of this; a ComfyUI setup guide for NixOS is in
+  docs/images.md.
+
+### Protocol
+
+- Still v5; additions only: `chat.send` takes `images`, `images.get` and `images.generate`,
+  and `user_message` and `tool_finished` events carry the pictures that came with them.
+
 ## v0.5.0: Lucy's app (2026-11-08)
 
 Lucy now has an app: one program, "Lucy", with her sprite, a main window for your chats and

@@ -103,3 +103,13 @@ test("a refused save shows why", async () => {
 
   assert.ok(screen.getByText("invalid config: profile `claude` needs a model"));
 });
+
+test("a model can be marked as able to see pictures", async () => {
+  const core = await setUp();
+  const claude = screen.getByRole("group", { name: "claude" });
+
+  await fireEvent.click(within(claude).getByLabelText("Can see pictures"));
+  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  assert.deepEqual(core.sent("config.update"), [{ patch: { profiles: { claude: { vision: true } } } }]);
+});
