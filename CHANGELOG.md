@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: pictures
+## v0.6.0: pictures (2026-11-10)
 
 Lucy can see pictures and make them. See [docs/images.md](docs/images.md).
 
