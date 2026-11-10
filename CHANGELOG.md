@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: scheduled tasks
+## v0.8.0: scheduled tasks (2026-11-10)
 
 Lucy can remind you of things and do things on a schedule. See [docs/tasks.md](docs/tasks.md).
 
