@@ -48,6 +48,8 @@ pub fn run(service: bool) -> Result<()> {
         secrets: Secrets::new(Box::new(OsKeyring), Box::new(|var| std::env::var(var).ok())),
         idle_timeout,
         token_store: Some(std::sync::Arc::new(OsKeyring)),
+        clock: None,
+        notifier: None,
     };
     let endpoint = options.endpoint.to_string();
     log(&format!(

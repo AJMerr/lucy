@@ -802,7 +802,7 @@ fn level_name(level: AgentLevel) -> &'static str {
 /// The turn an event belongs to.
 fn turn_of(event: &Event) -> Option<u64> {
     match event {
-        Event::UserMessage { .. } => None,
+        Event::UserMessage { .. } | Event::Notification { .. } => None,
         Event::TurnStarted { turn_id, .. }
         | Event::Delta { turn_id, .. }
         | Event::ToolApproval { turn_id, .. }

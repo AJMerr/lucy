@@ -63,6 +63,22 @@ const MIGRATIONS: &[&str] = &[
     -- Incognito chats: no memory, deleted when the client that started them leaves.
     ALTER TABLE sessions ADD COLUMN incognito INTEGER NOT NULL DEFAULT 0;
 "#,
+    r#"
+    -- Reminders and scheduled tasks.
+    CREATE TABLE schedules (
+        id          TEXT PRIMARY KEY,   -- ULID
+        kind        TEXT NOT NULL,      -- reminder | task
+        title       TEXT NOT NULL,
+        what        TEXT NOT NULL,      -- the reminder's message, or the task's prompt
+        spec        TEXT NOT NULL,      -- when it runs, as JSON (see schedule::When)
+        level       INTEGER NOT NULL,   -- tasks: agent level
+        profile     TEXT NOT NULL,      -- tasks: the profile that runs it
+        paused      INTEGER NOT NULL DEFAULT 0,
+        next_run    INTEGER,            -- unix ms; NULL once a one-off has run
+        last_run    INTEGER,
+        created_at  INTEGER NOT NULL
+    );
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -692,4 +708,110 @@ pub struct FileBackup {
 /// A new ID for a reply's backups (ULIDs sort by time).
 pub fn new_reply_id() -> String {
     Ulid::generate().to_string()
+}
+
+/// A reminder or scheduled task, as stored.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Schedule {
+    pub id: String,
+    /// `reminder` or `task`.
+    pub kind: String,
+    pub title: String,
+    pub what: String,
+    /// When it runs, as JSON (`schedule::When::spec`).
+    pub spec: String,
+    pub level: u8,
+    pub profile: String,
+    pub paused: bool,
+    /// Unix ms.
+    pub next_run: Option<i64>,
+    pub last_run: Option<i64>,
+}
+
+impl SessionStore {
+    pub fn add_schedule(&self, s: &Schedule) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO schedules (id, kind, title, what, spec, level, profile, paused,
+                                    next_run, last_run, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                s.id,
+                s.kind,
+                s.title,
+                s.what,
+                s.spec,
+                s.level,
+                s.profile,
+                s.paused,
+                s.next_run,
+                s.last_run,
+                now_ms()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Every schedule, soonest first (paused and finished ones last).
+    pub fn schedules(&self) -> Result<Vec<Schedule>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, kind, title, what, spec, level, profile, paused, next_run, last_run
+             FROM schedules
+             ORDER BY paused, next_run IS NULL, next_run, created_at",
+        )?;
+        let rows = stmt.query_map([], schedule_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn schedule(&self, id: &str) -> Result<Schedule, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT id, kind, title, what, spec, level, profile, paused, next_run, last_run
+                 FROM schedules WHERE id = ?1",
+                [id],
+                schedule_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(id.to_owned()))
+    }
+
+    pub fn save_schedule(&self, s: &Schedule) -> Result<(), StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE schedules SET kind = ?2, title = ?3, what = ?4, spec = ?5, level = ?6,
+                                  profile = ?7, paused = ?8, next_run = ?9, last_run = ?10
+             WHERE id = ?1",
+            params![
+                s.id, s.kind, s.title, s.what, s.spec, s.level, s.profile, s.paused, s.next_run,
+                s.last_run
+            ],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(s.id.clone()));
+        }
+        Ok(())
+    }
+
+    pub fn delete_schedule(&self, id: &str) -> Result<(), StoreError> {
+        let changed = self
+            .conn
+            .execute("DELETE FROM schedules WHERE id = ?1", [id])?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.to_owned()));
+        }
+        Ok(())
+    }
+}
+
+fn schedule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Schedule> {
+    Ok(Schedule {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        title: row.get(2)?,
+        what: row.get(3)?,
+        spec: row.get(4)?,
+        level: row.get(5)?,
+        profile: row.get(6)?,
+        paused: row.get(7)?,
+        next_run: row.get(8)?,
+        last_run: row.get(9)?,
+    })
 }

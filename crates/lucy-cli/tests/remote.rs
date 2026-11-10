@@ -87,6 +87,8 @@ impl Desktop {
             secrets: Secrets::new(Box::new(keyring), Box::new(|_: &str| None)),
             idle_timeout: Some(Duration::from_secs(3600)),
             token_store: None,
+            clock: None,
+            notifier: None,
         };
         tokio::spawn(async move { serve(options).await.unwrap() });
         let desktop = Self { dir, model, port };

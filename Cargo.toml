@@ -40,6 +40,7 @@ interprocess = { version = "2.4", features = ["tokio"] }
 keyring = "4.2"
 libc = "0.2"
 regex = "1"
+notify-rust = "4"
 reqwest = { version = "0.13", features = ["json", "stream"] }
 rmcp = { version = "3.9", features = ["client", "server", "macros", "schemars", "transport-io", "transport-child-process", "which-command", "transport-streamable-http-client-reqwest", "reqwest", "auth"] }
 rusqlite = { version = "0.41", features = ["bundled"] }

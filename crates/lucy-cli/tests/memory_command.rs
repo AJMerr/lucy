@@ -31,6 +31,8 @@ async fn core(memory: &str) -> (tempfile::TempDir, Client) {
         secrets: Secrets::new(Box::new(MemoryStore::default()), Box::new(|_: &str| None)),
         idle_timeout: Some(Duration::from_secs(3600)),
         token_store: None,
+        clock: None,
+        notifier: None,
     };
     tokio::spawn(async move { serve(options).await.unwrap() });
     for _ in 0..200 {

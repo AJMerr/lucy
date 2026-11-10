@@ -67,6 +67,11 @@ pub mod method {
     pub const MEMORY_GET: &str = "memory.get";
     /// Replace memory.md's text.
     pub const MEMORY_SET: &str = "memory.set";
+    /// Reminders and scheduled tasks, and whether the core runs at login.
+    pub const SCHEDULES_LIST: &str = "schedules.list";
+    /// Change a reminder or task (pause, reword, reschedule, level, model).
+    pub const SCHEDULES_UPDATE: &str = "schedules.update";
+    pub const SCHEDULES_DELETE: &str = "schedules.delete";
     /// Notification carrying an [`Event`](super::Event).
     pub const EVENT: &str = "event";
 }
@@ -588,6 +593,14 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<ImageRef>,
     },
+    /// Something to tell the user now: a reminder, or a scheduled task finishing. Clients
+    /// that subscribed with `notifications` show it; otherwise the core sends an OS
+    /// notification. `session_id` is the Tasks chat.
+    Notification {
+        session_id: String,
+        title: String,
+        body: String,
+    },
     TurnFinished {
         session_id: String,
         turn_id: u64,
@@ -610,7 +623,8 @@ impl Event {
             | Event::ToolApproval { session_id, .. }
             | Event::ToolStarted { session_id, .. }
             | Event::ToolFinished { session_id, .. }
-            | Event::TurnFinished { session_id, .. } => session_id,
+            | Event::TurnFinished { session_id, .. }
+            | Event::Notification { session_id, .. } => session_id,
         }
     }
 }
@@ -657,4 +671,66 @@ pub struct MemoryFact {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemorySetParams {
     pub text: String,
+}
+
+/// `subscribe`: every chat's events, not just the client's own.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SubscribeParams {
+    /// This client shows notifications itself (the desktop app), so the core doesn't.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub notifications: bool,
+}
+
+/// A reminder or scheduled task.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScheduleInfo {
+    pub id: String,
+    /// `reminder` (shows `what`) or `task` (runs `what` as a prompt).
+    pub kind: String,
+    pub title: String,
+    pub what: String,
+    /// When it runs, in words: "every day at 08:00".
+    pub when: String,
+    /// When it runs, as `schedule` takes it: `{"daily": "08:00"}`.
+    pub when_spec: Value,
+    /// Tasks: the agent level (0-3) it runs at.
+    pub level: u8,
+    /// Tasks: the profile that runs it.
+    pub profile: String,
+    pub paused: bool,
+    /// Unix ms; `None` once a one-off has run.
+    pub next_run_ms: Option<i64>,
+    pub last_run_ms: Option<i64>,
+}
+
+/// `schedules.list`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SchedulesList {
+    pub schedules: Vec<ScheduleInfo>,
+    /// The core runs at login, so tasks run even if nothing else started it.
+    pub always_on: bool,
+}
+
+/// `schedules.update`: fields left out stay as they are.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ScheduleUpdate {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub what: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+}
+
+/// `schedules.delete`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScheduleId {
+    pub id: String,
 }
