@@ -287,6 +287,7 @@ impl<W: Write> Chat<'_, W> {
             .call(
                 method::CHAT_SEND,
                 ChatSendParams {
+                    incognito: false,
                     images: Vec::new(),
                     session_id: self.session.clone(),
                     text,

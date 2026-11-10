@@ -59,6 +59,10 @@ const MIGRATIONS: &[&str] = &[
     -- Pictures you attached: JSON array of {id, media_type}; the files are in <data>/images.
     ALTER TABLE messages ADD COLUMN images TEXT;
 "#,
+    r#"
+    -- Incognito chats: no memory, deleted when the client that started them leaves.
+    ALTER TABLE sessions ADD COLUMN incognito INTEGER NOT NULL DEFAULT 0;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -88,6 +92,8 @@ pub struct SessionSummary {
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
     pub message_count: u32,
+    /// No memory, and deleted when the client that started it leaves.
+    pub incognito: bool,
 }
 
 /// Which profile and model produced an assistant message.
@@ -246,11 +252,77 @@ impl SessionStore {
         Ok(id)
     }
 
+    /// A new incognito chat (no memory; deleted when its client leaves).
+    pub fn create_incognito(&self) -> Result<SessionId, StoreError> {
+        let id = self.create()?;
+        self.conn.execute(
+            "UPDATE sessions SET incognito = 1 WHERE id = ?1",
+            [id.to_string()],
+        )?;
+        Ok(id)
+    }
+
+    pub fn is_incognito(&self, id: &SessionId) -> Result<bool, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT incognito FROM sessions WHERE id = ?1",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(id.to_string()))
+    }
+
+    /// Delete a chat; returns the pictures only it used (so their files can go too).
+    pub fn delete_with_pictures(&self, id: &SessionId) -> Result<Vec<String>, StoreError> {
+        let id_text = id.to_string();
+        let mut mine: Vec<String> = Vec::new();
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT images FROM messages WHERE session_id = ?1 AND images IS NOT NULL",
+            )?;
+            let rows = stmt.query_map([&id_text], |row| row.get::<_, String>(0))?;
+            for json in rows {
+                let refs: Vec<ImageRef> = serde_json::from_str(&json?).unwrap_or_default();
+                mine.extend(refs.into_iter().map(|r| r.id));
+            }
+        }
+        mine.sort();
+        mine.dedup();
+        let mut orphans = Vec::new();
+        for image in mine {
+            let elsewhere: bool = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM messages
+                               WHERE session_id != ?1 AND images LIKE '%' || ?2 || '%')",
+                params![id_text, image],
+                |row| row.get(0),
+            )?;
+            if !elsewhere {
+                orphans.push(image);
+            }
+        }
+        self.delete(id)?;
+        Ok(orphans)
+    }
+
+    /// Incognito chats left behind (e.g. by a core that stopped while one was open).
+    pub fn incognito_sessions(&self) -> Result<Vec<SessionId>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM sessions WHERE incognito = 1")?;
+        let ids = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        Ok(ids
+            .filter_map(Result::ok)
+            .filter_map(|id| id.parse().ok())
+            .collect())
+    }
+
     /// All sessions, most recently active first.
     pub fn list(&self) -> Result<Vec<SessionSummary>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.title, s.created_at, s.updated_at,
-                    (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role != 'tool')
+                    (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role != 'tool'),
+                    s.incognito
              FROM sessions s ORDER BY s.activity DESC",
         )?;
         let rows = stmt.query_map([], summary_from_row)?;
@@ -446,7 +518,8 @@ impl SessionStore {
             .conn
             .query_row(
                 "SELECT s.id, s.title, s.created_at, s.updated_at,
-                        (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role != 'tool')
+                        (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.role != 'tool'),
+                        s.incognito
                  FROM sessions s WHERE s.id = ?1",
                 [&id_text],
                 summary_from_row,
@@ -570,6 +643,7 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary>
         created_at: from_ms(row.get(2)?),
         updated_at: from_ms(row.get(3)?),
         message_count: row.get(4)?,
+        incognito: row.get(5)?,
     })
 }
 

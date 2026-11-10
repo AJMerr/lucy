@@ -1798,6 +1798,7 @@ dependencies = [
  "lucy-protocol",
  "lucy-providers",
  "lucy-tools",
+ "regex",
  "reqwest",
  "rmcp",
  "rusqlite",

@@ -6,6 +6,7 @@
 pub mod config;
 pub mod generate;
 pub mod mcp;
+pub mod memory;
 pub mod oauth;
 pub mod persona;
 pub mod pictures;

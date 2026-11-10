@@ -83,6 +83,7 @@ async fn ask(text: String, options: AskOptions) -> Result<Finish> {
         .call(
             method::CHAT_SEND,
             ChatSendParams {
+                incognito: false,
                 images: Vec::new(),
                 session_id,
                 text,

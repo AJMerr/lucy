@@ -23,6 +23,8 @@ pub struct Config {
     pub app: AppSettings,
     #[serde(default)]
     pub images: ImageSettings,
+    #[serde(default, skip_serializing_if = "MemorySettings::is_default")]
+    pub memory: MemorySettings,
     #[serde(default)]
     pub user: UserSettings,
     #[serde(default)]
@@ -69,6 +71,34 @@ pub struct Profile {
     /// The model can see pictures; others get `[images] vision_profile`'s description.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub vision: bool,
+}
+
+/// Long-term memory (memory.md in the data folder).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MemorySettings {
+    /// She reads and saves memories; off, memory.md is left alone.
+    #[serde(skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    /// An OpenAI-compatible embedding model's profile, to pick relevant memories by meaning
+    /// instead of by keyword.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding_profile: Option<String>,
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            embedding_profile: None,
+        }
+    }
+}
+
+impl MemorySettings {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Pictures in chats.
@@ -508,6 +538,7 @@ impl Config {
             sprite: SpriteSettings::default(),
             app: AppSettings::default(),
             images: ImageSettings::default(),
+            memory: MemorySettings::default(),
             user: UserSettings::default(),
             tools: ToolSettings::default(),
             mcp: McpSettings::default(),
@@ -581,6 +612,22 @@ impl Config {
                 Some(profile) if !profile.vision => {
                     return Err(ConfigError::Invalid(format!(
                         "images.vision_profile `{name}` can't see pictures; give it vision = true"
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+        if let Some(name) = &self.memory.embedding_profile {
+            match self.profiles.get(name) {
+                None => {
+                    return Err(ConfigError::Invalid(format!(
+                        "memory.embedding_profile refers to unknown profile `{name}`"
+                    )));
+                }
+                Some(profile) if profile.provider != ProviderKind::OpenAiCompat => {
+                    return Err(ConfigError::Invalid(format!(
+                        "memory.embedding_profile `{name}` must be an openai_compat profile with an \
+                         embedding model (e.g. Ollama's nomic-embed-text)"
                     )));
                 }
                 Some(_) => {}

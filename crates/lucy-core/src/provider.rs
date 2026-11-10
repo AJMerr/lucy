@@ -2,6 +2,7 @@
 
 use lucy_providers::Provider;
 use lucy_providers::anthropic::{Anthropic, AnthropicConfig};
+use lucy_providers::embed::Embedder;
 use lucy_providers::generate::{ImageGenerator, OpenRouterImages};
 use lucy_providers::openai_compat::{OpenAiCompat, OpenAiCompatConfig};
 
@@ -104,4 +105,25 @@ where
             env_var: secrets::env_var_name(key_name),
         })?;
     Ok(Some(secret.value))
+}
+
+/// An embedding model from profile `name` (an OpenAI-compatible one, e.g. Ollama's
+/// nomic-embed-text), for finding memories by meaning.
+pub fn build_embedder<S, E>(
+    name: &str,
+    profile: &Profile,
+    secrets: &Secrets<S, E>,
+) -> Result<Embedder, BuildError>
+where
+    S: SecretStore,
+    E: Fn(&str) -> Option<String>,
+{
+    Ok(Embedder::new(OpenAiCompatConfig {
+        name: name.to_owned(),
+        base_url: profile.base_url.clone().ok_or_else(|| {
+            BuildError::Invalid(name.to_owned(), "openai_compat needs a base_url".into())
+        })?,
+        model: profile.model.clone(),
+        api_key: api_key(name, profile, secrets)?,
+    }))
 }
