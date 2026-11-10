@@ -191,3 +191,61 @@ test("a message that couldn't be sent shows why", () => {
   assert.equal(view.animation, "error");
   assert.equal(view.bubble?.error, "the core isn't running");
 });
+
+// --- Pictures ----------------------------------------------------------------------------------
+
+const shot = { name: "shot.png", media_type: "image/png", data: "QUJD" };
+const drawing = { id: "bb22.png", media_type: "image/png", made: true };
+const made = (turn_id: number) =>
+  event({
+    type: "tool_finished",
+    session_id: session,
+    turn_id,
+    call_id: "c1",
+    output: "Made the picture.",
+    is_error: false,
+    images: [drawing],
+  });
+
+test("a picture dropped on her opens the input box with it attached, until sent", () => {
+  const dropped = run([{ type: "attached", pictures: [shot] }]);
+  assert.equal(dropped.inputOpen, true);
+  assert.equal(dropped.animation, "listening");
+  assert.deepEqual(dropped.attached, [shot]);
+
+  assert.deepEqual(run([{ type: "sent" }], dropped).attached, []);
+  assert.deepEqual(run([{ type: "close_input" }], dropped).attached, [], "closing drops it");
+});
+
+test("a picture she made shows in her bubble, and stays when she has nothing to say", () => {
+  const view = run([started(1), made(1), finished(1, "complete", 5)]);
+
+  assert.deepEqual(view.bubble?.pictures, [drawing]);
+  assert.equal(view.bubble?.done, true);
+  assert.equal(view.animation, "happy");
+});
+
+test("what she says after making a picture keeps the picture in the bubble", () => {
+  const view = run([started(1), made(1), delta(1, "Here you go.")]);
+
+  assert.equal(view.bubble?.text, "Here you go.");
+  assert.deepEqual(view.bubble?.pictures, [drawing]);
+});
+
+test("pictures from tools she only looked at don't go in the bubble", () => {
+  const view = run([
+    started(1),
+    event({
+      type: "tool_finished",
+      session_id: session,
+      turn_id: 1,
+      call_id: "c1",
+      output: "The picture ./a.png.",
+      is_error: false,
+      images: [{ id: "cc33.png", media_type: "image/png" }],
+    }),
+    delta(1, "It's a cat."),
+  ]);
+
+  assert.deepEqual(view.bubble?.pictures ?? [], []);
+});

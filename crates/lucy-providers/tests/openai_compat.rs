@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use lucy_protocol::{Message, Role, ToolCall};
+use lucy_protocol::{Image, Message, Role, ToolCall};
 use lucy_providers::openai_compat::{OpenAiCompat, OpenAiCompatConfig};
 use lucy_providers::testing::{FakeResponse, FakeServer};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, ToolSpec, Usage};
@@ -479,4 +479,84 @@ fn usage_adds_up_across_steps() {
         }
     );
     assert_eq!(total.total(), 300);
+}
+
+#[tokio::test]
+async fn sends_your_pictures_as_image_parts_next_to_the_text() {
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+    let request = ChatRequest {
+        messages: vec![Message::user_with_images(
+            "what's in this?",
+            vec![Image {
+                media_type: "image/png".into(),
+                data: "iVBORw0KGgo=".into(),
+            }],
+        )],
+        tools: vec![],
+    };
+
+    collect_request(&provider(&server, None), request).await;
+
+    let [request] = server.requests().try_into().unwrap();
+    assert_eq!(
+        request.body["messages"],
+        json!([{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what's in this?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+            ],
+        }])
+    );
+}
+
+#[tokio::test]
+async fn messages_without_pictures_stay_plain_text() {
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+
+    collect(&provider(&server, None)).await;
+
+    let [request] = server.requests().try_into().unwrap();
+    assert_eq!(
+        request.body["messages"][1],
+        json!({"role": "user", "content": "hi"})
+    );
+}
+
+#[tokio::test]
+async fn pictures_from_a_tool_follow_its_result_in_a_user_message() {
+    // Tool messages can't carry images here, so the picture comes right after.
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+    let mut result = Message::tool_result("call_1", "Picture: cat.png", false);
+    result.images = vec![Image {
+        media_type: "image/png".into(),
+        data: "iVBORw0KGgo=".into(),
+    }];
+    let request = ChatRequest {
+        messages: vec![
+            Message::new(Role::User, "look at cat.png"),
+            Message::assistant_with_tools(
+                "",
+                vec![call("call_1", "read_file", json!({"path": "cat.png"}))],
+            ),
+            result,
+        ],
+        tools: vec![read_file_tool()],
+    };
+
+    collect_request(&provider(&server, None), request).await;
+
+    let [request] = server.requests().try_into().unwrap();
+    let messages = request.body["messages"].as_array().unwrap();
+    assert_eq!(
+        messages[2],
+        json!({"role": "tool", "tool_call_id": "call_1", "content": "Picture: cat.png"})
+    );
+    assert_eq!(
+        messages[3],
+        json!({"role": "user", "content": [
+            {"type": "text", "text": "(The picture from that tool result.)"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+        ]})
+    );
 }

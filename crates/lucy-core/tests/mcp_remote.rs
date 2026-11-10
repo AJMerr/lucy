@@ -17,7 +17,7 @@ use lucy_core::config::{McpServer, ToolSettings};
 use lucy_core::mcp::McpHost;
 use lucy_core::oauth::{self, TokenStore};
 use lucy_core::secrets::{MemoryStore, SecretStore, Secrets};
-use lucy_core::tools::{ToolBox, Verdict};
+use lucy_core::tools::{ToolBox, ToolOutput, Verdict};
 use lucy_protocol::ToolCall;
 use lucy_tools::PrivatePaths;
 use lucy_tools::builtin::{Builtin, BuiltinOptions};
@@ -262,7 +262,11 @@ async fn read_notes(
     secrets: &TestSecrets,
 ) -> String {
     let remote = host.server(name, server, secrets).await.unwrap();
-    let (output, is_error) = remote
+    let ToolOutput {
+        text: output,
+        is_error,
+        ..
+    } = remote
         .call("read_file", json!({"path": "notes.txt"}))
         .await
         .unwrap();

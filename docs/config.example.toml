@@ -40,12 +40,20 @@ base_url = "https://openrouter.ai/api/v1"
 model = "qwen/qwen3-235b-a22b"
 key_name = "openrouter"
 
+[profiles.openrouter-image]
+provider = "openai_compat"
+base_url = "https://openrouter.ai/api/v1"
+model = "qwen/qwen-image-3-pro"           # an image model: use it as [images] generator below
+key_name = "openrouter"
+
 [profiles.claude]
 provider = "anthropic"
 model = "claude-sonnet-5-5"
 key_name = "anthropic"          # env override: LUCY_KEY_ANTHROPIC (or ANTHROPIC_API_KEY)
 price_in = 3.00                 # USD per million tokens, for agent cost caps
 price_out = 15.00
+vision = true                   # can see pictures you send; others get [images] vision_profile's
+                                # description
 
 # --- Tools (Assist mode) ------------------------------------------------------------------
 # Read-only tools run by themselves for files in your home folder. Anything that changes
@@ -88,6 +96,23 @@ url = "https://mcp.linear.app/mcp"
 # headers = { X-Region = "eu" }                          # plain headers
 # oauth_client_id = "your-app-id"                        # if the server won't register Lucy itself
 # oauth_redirect_port = 8976                             # if that app needs a fixed redirect
+
+# --- Pictures (docs/images.md) ------------------------------------------------------------
+
+[images]
+generator = "comfyui"           # what makes pictures: "comfyui", or an image model's profile
+                                # (e.g. "openrouter-image", which asks before each picture);
+                                # leave out to turn picture making off
+# folder = "~/Pictures/Lucy"    # where pictures she makes are saved
+vision_profile = "claude"       # describes pictures for models that can't see; needs a profile
+                                # with vision = true
+
+[images.comfyui]                # ComfyUI running on this machine
+url = "http://127.0.0.1:8188"
+# checkpoint = "sd_xl_base_1.0.safetensors"   # default: ComfyUI's first checkpoint
+# workflow = "~/ComfyUI/my-workflow.json"     # exported with "Export (API)", using {{prompt}},
+                                              # {{negative}}, {{width}}, {{height}}, {{seed}},
+                                              # {{checkpoint}}; default: Lucy's built-in one
 
 # --- Remote access (off by default) -------------------------------------------------------
 # Lets `lucy` on other machines use this core over WebSocket (ws://<bind>/rpc). Each needs the

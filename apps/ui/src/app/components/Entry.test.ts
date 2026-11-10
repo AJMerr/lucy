@@ -87,3 +87,37 @@ test("a finished tool call is one quiet line, marked if it failed", () => {
   assert.ok(screen.getByText(/failed/));
   assert.equal(screen.queryByRole("button", { name: "Allow" }), null);
 });
+
+// --- Pictures ----------------------------------------------------------------------------------
+
+const load = async (id: string) => `data:image/png;base64,${id}`;
+
+test("pictures you sent show with your message", async () => {
+  render(Entry, {
+    entry: { kind: "you", text: "what's this?", images: [{ id: "aa11", media_type: "image/png" }] },
+    onDecide: () => {},
+    picture: load,
+  });
+
+  const shown = (await screen.findByRole("img")) as HTMLImageElement;
+  assert.equal(shown.src, "data:image/png;base64,aa11");
+  assert.ok(screen.getByText("what's this?"));
+});
+
+test("a picture she made shows under the call that made it", async () => {
+  render(Entry, {
+    entry: {
+      kind: "tool",
+      callId: "c1",
+      summary: "make a picture of a lighthouse",
+      state: "done",
+      images: [{ id: "bb22", media_type: "image/png", made: true }],
+    },
+    onDecide: () => {},
+    picture: load,
+  });
+
+  const shown = (await screen.findByRole("img")) as HTMLImageElement;
+  assert.equal(shown.src, "data:image/png;base64,bb22");
+  assert.ok(shown.closest(".made"), "shown large, as her work");
+});

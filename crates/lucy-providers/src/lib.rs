@@ -12,6 +12,7 @@ use lucy_protocol::{Message, ToolCall};
 use serde_json::Value;
 
 pub mod anthropic;
+pub mod generate;
 mod http;
 pub mod mock;
 pub mod openai_compat;

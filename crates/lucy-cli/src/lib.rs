@@ -4,6 +4,7 @@ pub mod ask;
 pub mod chat;
 pub mod commands;
 pub mod core_process;
+pub mod inline_pictures;
 pub mod markdown;
 pub mod mcp;
 pub mod remote;

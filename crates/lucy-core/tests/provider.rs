@@ -26,6 +26,7 @@ fn profile(provider: ProviderKind, base_url: &str, key_name: Option<&str>) -> Pr
         tools: true,
         price_in: None,
         price_out: None,
+        vision: false,
     }
 }
 

@@ -55,6 +55,7 @@ fn main() {
             pack::pack,
             chat::send,
             chat::approve,
+            chat::picture,
             app_window::open_chat,
             app_window::take_pending_chat,
             bridge::rpc_call,

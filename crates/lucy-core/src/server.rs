@@ -14,11 +14,12 @@ use lucy_client::Endpoint;
 use lucy_protocol::rpc::{
     self, ApproveParams, BusyChat, CancelResult, ChatSendParams, ChatSendResult,
     ConfigUpdateParams, ConfigUpdateResult, ConfigView, CoreStatus, Decision, Event, HelloParams,
-    HelloResult, KeyParams, KeySetParams, KeyStatus, Notification, PROTOCOL_VERSION,
-    PersonaSetParams, PersonaView, ProfileInfo, RenameParams, Request, ResolveParams, Response,
-    RpcError, ServerProblem, SessionParams, SessionSettings, SetLevelParams, SetModeParams,
-    SetPlainParams, SetProfileParams, ShutdownParams, ShutdownResult, ToolsList, ToolsListParams,
-    TurnOutcome, TurnUsage, UndoFile, UndoParams, UndoResult, code, method,
+    HelloResult, ImageGenerateParams, ImageParams, KeyParams, KeySetParams, KeyStatus,
+    Notification, PROTOCOL_VERSION, PersonaSetParams, PersonaView, ProfileInfo, RenameParams,
+    Request, ResolveParams, Response, RpcError, ServerProblem, SessionParams, SessionSettings,
+    SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams, ShutdownParams,
+    ShutdownResult, ToolsList, ToolsListParams, TurnOutcome, TurnUsage, UndoFile, UndoParams,
+    UndoResult, code, method,
 };
 use lucy_protocol::{AgentLevel, Message, Mode, Role, ToolCall};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, Usage};
@@ -34,11 +35,12 @@ use crate::mcp::McpHost;
 use crate::persona::{Personas, PromptContext, build_system_prompt, detect_machine};
 use crate::provider::build_provider;
 
+use crate::generate::Generator;
 use crate::secrets::{KeySource, SecretStore, Secrets};
 use crate::sessions::{
     ChatSettings, NewMessage, Origin, SessionId, SessionStore, StoreError, new_reply_id,
 };
-use crate::tools::{Access, ToolBox, Verdict, close_dangling_calls};
+use crate::tools::{Access, GeneratorSlot, ToolBox, ToolOutput, Verdict, close_dangling_calls};
 
 mod remote;
 
@@ -459,6 +461,7 @@ async fn handle(
     }
     match request.method.as_str() {
         method::CHAT_SEND => chat_send(core, state, params(request.params)?),
+        method::IMAGES_GENERATE => images_generate(core, state, params(request.params)?),
         method::CHAT_CANCEL => {
             let p: SessionParams = params(request.params)?;
             let key = core.resolve_key(&p.session_id)?;
@@ -665,6 +668,10 @@ async fn handle(
             result(Value::Null)
         }
         method::SETUP_PRESETS => result(crate::setup::presets()),
+        method::IMAGES_GET => {
+            let p: ImageParams = params(request.params)?;
+            result(crate::pictures::load(&core.images_dir(), &p.id).map_err(RpcError::app)?)
+        }
         method::MCP_LOGIN => {
             let p: KeyParams = params(request.params)?;
             let config = core.config()?;
@@ -753,7 +760,8 @@ async fn handle(
             let toolbox = ToolBox::open(&config.tools, cwd, external)
                 .await
                 .map_err(app)?
-                .with_access(access);
+                .with_access(access)
+                .with_generator(core.generator(&config));
             let tools = toolbox.infos(&allowed);
             toolbox.close().await;
             result(ToolsList {
@@ -785,6 +793,23 @@ impl Core {
                     self.options.config_path.display()
                 ))
             })
+    }
+
+    /// Where pictures you attach are kept: `images/` next to the chats database.
+    fn images_dir(&self) -> PathBuf {
+        self.options
+            .db_path
+            .parent()
+            .map_or_else(|| PathBuf::from("images"), |dir| dir.join("images"))
+    }
+
+    /// The picture maker `config` sets up, for `generate_image`: ready, or why not.
+    fn generator(&self, config: &Config) -> Option<GeneratorSlot> {
+        match Generator::from_config(config, &self.options.secrets) {
+            Ok(None) => None,
+            Ok(Some(generator)) => Some(Ok(Arc::new(generator))),
+            Err(err) => Some(Err(err)),
+        }
     }
 
     /// Where your own version of persona `name` lives (whether or not it exists yet).
@@ -954,10 +979,26 @@ fn chat_send(
         turns.insert(key.clone(), cancel.clone());
     }
 
+    let images_dir = core.images_dir();
+    let pictures: Result<Vec<_>, _> = p
+        .images
+        .iter()
+        .map(|picture| crate::pictures::save(&images_dir, picture))
+        .collect();
+    let pictures = match pictures {
+        Ok(pictures) => pictures,
+        Err(err) => {
+            core.turns.lock().unwrap().remove(&key);
+            return Err(RpcError::app(err));
+        }
+    };
     let history = {
         let store = core.store.lock().unwrap();
         store
-            .append(&session_id, NewMessage::user(p.text.clone()))
+            .append(
+                &session_id,
+                NewMessage::user_with_images(p.text.clone(), pictures.clone()),
+            )
             .and_then(|()| store.load(&session_id))
     };
     let history = match history {
@@ -970,6 +1011,7 @@ fn chat_send(
     let _ = core.events.send(Event::UserMessage {
         session_id: key.clone(),
         text: p.text,
+        images: pictures,
     });
 
     // A remote client's folder is on another machine; its chats work in the core's.
@@ -1008,10 +1050,27 @@ fn chat_send(
             agent: agent_note,
         },
     );
+    // Pictures: sent as they are to a model that can see; otherwise described by the vision
+    // helper (if there is one), the first time during the reply.
+    let helper = match (&profile.vision, &config.images.vision_profile) {
+        (false, Some(name)) => {
+            let helper_profile = &config.profiles[name];
+            Some(build_provider(name, helper_profile, &core.options.secrets).map_err(app)?)
+        }
+        _ => None,
+    };
+    let sight = match (profile.vision, helper.is_some()) {
+        (true, _) => crate::pictures::Sight::Sees,
+        (false, true) => crate::pictures::Sight::Helped,
+        (false, false) => crate::pictures::Sight::Blind,
+    };
+    let mut pending = Vec::new();
+    let history = history
+        .into_iter()
+        .map(|m| crate::pictures::attach(&images_dir, m.message, &m.images, &sight, &mut pending))
+        .collect();
     let messages = std::iter::once(Message::new(Role::System, system))
-        .chain(close_dangling_calls(
-            history.into_iter().map(|m| m.message).collect(),
-        ))
+        .chain(close_dangling_calls(history))
         .collect();
 
     let turn_id = core.next_turn.fetch_add(1, Ordering::Relaxed);
@@ -1038,10 +1097,101 @@ fn chat_send(
             servers: config.mcp.servers.clone(),
             cwd,
             access,
+            generator: core.generator(&config),
         }),
         budget,
         cancel,
+        pictures: Pictures {
+            dir: images_dir,
+            sight,
+            helper,
+            pending,
+        },
     }));
+    result(ChatSendResult {
+        session_id: key,
+        turn_id,
+    })
+}
+
+/// `/image`: make a picture straight away, without asking (you typed it) and without a model
+/// turn. Returns at once; the picture arrives as a `generate_image` result.
+fn images_generate(
+    core: &Arc<Core>,
+    state: &Arc<Mutex<ConnState>>,
+    p: ImageGenerateParams,
+) -> Result<Value, RpcError> {
+    let prompt = p.prompt.trim().to_owned();
+    if prompt.is_empty() {
+        return Err(RpcError::app(
+            "say what to draw, like /image a lighthouse at dusk",
+        ));
+    }
+    let config = core.config()?;
+    let generator = Generator::from_config(&config, &core.options.secrets)
+        .map_err(RpcError::app)?
+        .ok_or_else(|| {
+            RpcError::app(
+                "nothing is set up to make pictures yet: choose an image generator in Settings \
+                 ([images] generator: an image model profile, or \"comfyui\")",
+            )
+        })?;
+    let session_id = {
+        let store = core.store.lock().unwrap();
+        match &p.session_id {
+            Some(prefix) => store.resolve(prefix),
+            None => store.create(),
+        }
+        .map_err(app)?
+    };
+    let key = session_id.to_string();
+    let settings = core.settings(&key, &config)?;
+    let origin = Origin {
+        profile: settings.profile.clone(),
+        model: config.profiles[&settings.profile].model.clone(),
+    };
+
+    let cancel = CancellationToken::new();
+    {
+        let mut turns = core.turns.lock().unwrap();
+        if core.shutdown.is_cancelled() {
+            return Err(RpcError::app("Lucy's core is shutting down; try again"));
+        }
+        if turns.contains_key(&key) {
+            return Err(RpcError::app(
+                "Lucy is still replying in this session; wait or cancel first",
+            ));
+        }
+        turns.insert(key.clone(), cancel.clone());
+    }
+    let text = format!("/image {prompt}");
+    let saved = core
+        .store
+        .lock()
+        .unwrap()
+        .append(&session_id, NewMessage::user(text.clone()));
+    if let Err(err) = saved {
+        core.turns.lock().unwrap().remove(&key);
+        return Err(app(err));
+    }
+    let _ = core.events.send(Event::UserMessage {
+        session_id: key.clone(),
+        text,
+        images: Vec::new(),
+    });
+
+    let turn_id = core.next_turn.fetch_add(1, Ordering::Relaxed);
+    state.lock().unwrap().own_sessions.insert(key.clone());
+    core.activity.add(&core.activity.turns, 1);
+    let turn = Turn {
+        core: Arc::clone(core),
+        session_id,
+        key: key.clone(),
+        id: turn_id,
+        origin,
+        reply: new_reply_id(),
+    };
+    tokio::spawn(turn.image(generator, prompt, cancel));
     result(ChatSendResult {
         session_id: key,
         turn_id,
@@ -1084,7 +1234,7 @@ fn agent_note(settings: &SessionSettings, config: &Config, budget: &Budget) -> S
 }
 
 /// `~/x` as an absolute path.
-fn expand_home(path: &Path) -> PathBuf {
+pub(crate) fn expand_home(path: &Path) -> PathBuf {
     match (path.strip_prefix("~"), dirs::home_dir()) {
         (Ok(rest), Some(home)) => home.join(rest),
         _ => path.to_owned(),
@@ -1136,6 +1286,17 @@ struct Plan {
     tools: Option<ToolPlan>,
     budget: Budget,
     cancel: CancellationToken,
+    pictures: Pictures,
+}
+
+/// How this reply handles pictures, from you or from tools.
+struct Pictures {
+    dir: PathBuf,
+    sight: crate::pictures::Sight,
+    /// The vision helper, for a model that can't see.
+    helper: Option<Box<dyn Provider>>,
+    /// Pictures in the history the helper still has to describe.
+    pending: Vec<rpc::ImageRef>,
 }
 
 struct ToolPlan {
@@ -1144,6 +1305,7 @@ struct ToolPlan {
     /// The user's working folder.
     cwd: PathBuf,
     access: Access,
+    generator: Option<GeneratorSlot>,
 }
 
 /// How far one reply may go.
@@ -1225,7 +1387,11 @@ impl Turn {
 
         let toolbox = match plan.tools {
             Some(tools) => match self.open_tools(&tools).await {
-                Ok(toolbox) => Some(toolbox.with_access(tools.access)),
+                Ok(toolbox) => Some(
+                    toolbox
+                        .with_access(tools.access)
+                        .with_generator(tools.generator),
+                ),
                 Err(err) => {
                     eprintln!("tools unavailable for this reply: {err}");
                     None
@@ -1234,12 +1400,25 @@ impl Turn {
             None => None,
         };
 
+        let mut messages = plan.messages;
+        let pictures = &plan.pictures;
+        if let Some(helper) = &pictures.helper {
+            crate::pictures::describe_pending(
+                &pictures.dir,
+                &**helper,
+                &pictures.pending,
+                &mut messages,
+            )
+            .await;
+        }
+
         let mut progress = Progress::default();
         let steps = self.steps(
             &*plan.provider,
-            plan.messages,
+            messages,
             toolbox.as_ref(),
             &plan.budget,
+            pictures,
             &mut progress,
         );
         let (outcome, error) = tokio::select! {
@@ -1305,6 +1484,7 @@ impl Turn {
         mut messages: Vec<Message>,
         toolbox: Option<&ToolBox>,
         budget: &Budget,
+        pictures: &Pictures,
         progress: &mut Progress,
     ) -> Result<Ending, String> {
         let specs = toolbox.map(ToolBox::specs).unwrap_or_default();
@@ -1334,21 +1514,21 @@ impl Turn {
                 ));
             }
             for call in &calls {
-                let (output, is_error) = if !budget.agent && round > max_rounds {
+                let output = if !budget.agent && round > max_rounds {
                     let refusal = format!(
                         "Tool limit reached ({max_rounds} rounds for one message). Answer with \
                          what you have, and say what's left to do."
                     );
-                    self.announce(call, refusal, true)
+                    self.announce(call, refusal)
                 } else {
                     self.run_call(toolbox, call).await
                 };
-                self.save(NewMessage::tool_result(&call.id, &output, is_error));
-                messages.push(Message::tool_result(&call.id, output, is_error));
+                let message = self.tool_result(call, output, pictures).await;
+                messages.push(message);
             }
 
             if let Some(cap) = budget.reached(progress) {
-                self.wrap_up(provider, messages, &specs, &cap, progress)
+                self.wrap_up(provider, messages, &specs, &cap, pictures, progress)
                     .await?;
                 return Ok(Ending::Capped(cap));
             }
@@ -1364,6 +1544,7 @@ impl Turn {
         mut messages: Vec<Message>,
         specs: &[lucy_providers::ToolSpec],
         cap: &str,
+        pictures: &Pictures,
         progress: &mut Progress,
     ) -> Result<(), String> {
         messages.push(Message::new(
@@ -1390,10 +1571,58 @@ impl Turn {
         ));
         for call in &calls {
             let refusal = format!("Not run: the task reached its {cap}.");
-            let (output, is_error) = self.announce(call, refusal, true);
-            self.save(NewMessage::tool_result(&call.id, &output, is_error));
+            let output = self.announce(call, refusal);
+            self.tool_result(call, output, pictures).await;
         }
         Ok(())
+    }
+
+    /// Save a call's result with any pictures it gave, announce it, and return it as the
+    /// model gets it: with the pictures for a model that can see, described by the helper
+    /// otherwise.
+    async fn tool_result(
+        &self,
+        call: &ToolCall,
+        mut output: ToolOutput,
+        pictures: &Pictures,
+    ) -> Message {
+        let mut kept = Vec::new();
+        for image in &output.images {
+            match crate::pictures::save(&pictures.dir, image) {
+                Ok(image) => kept.push(rpc::ImageRef {
+                    made: output.made,
+                    ..image
+                }),
+                Err(err) => output.text += &format!("\n[A picture that couldn't be kept: {err}]"),
+            }
+        }
+        self.save(
+            NewMessage::tool_result(&call.id, &output.text, output.is_error)
+                .with_images(kept.clone()),
+        );
+        self.emit(Event::ToolFinished {
+            session_id: self.key.clone(),
+            turn_id: self.id,
+            call_id: call.id.clone(),
+            output: output.text.clone(),
+            is_error: output.is_error,
+            images: kept.clone(),
+        });
+        let mut pending = Vec::new();
+        let message = crate::pictures::attach(
+            &pictures.dir,
+            Message::tool_result(&call.id, output.text, output.is_error),
+            &kept,
+            &pictures.sight,
+            &mut pending,
+        );
+        let mut messages = [message];
+        if let Some(helper) = &pictures.helper {
+            crate::pictures::describe_pending(&pictures.dir, &**helper, &pending, &mut messages)
+                .await;
+        }
+        let [message] = messages;
+        message
     }
 
     /// One model response: streams its text, counts it, and returns the tool calls it made.
@@ -1433,7 +1662,7 @@ impl Turn {
     }
 
     /// Check permissions (asking the user if needed), then run the call.
-    async fn run_call(&self, toolbox: &ToolBox, call: &ToolCall) -> (String, bool) {
+    async fn run_call(&self, toolbox: &ToolBox, call: &ToolCall) -> ToolOutput {
         let allowed = self
             .core
             .overrides
@@ -1475,11 +1704,9 @@ impl Turn {
                     call: call.clone(),
                 });
                 self.back_up(toolbox, call);
-                let (output, is_error) = toolbox.call(call).await;
-                self.finished(call, &output, is_error);
-                (output, is_error)
+                toolbox.call(call).await
             }
-            Err(reason) => self.announce(call, reason, true),
+            Err(reason) => self.announce(call, reason),
         }
     }
 
@@ -1533,25 +1760,72 @@ impl Turn {
         decision.ok().and_then(Result::ok)
     }
 
-    /// Report a call that didn't run, as if it ran and failed with `output`.
-    fn announce(&self, call: &ToolCall, output: String, is_error: bool) -> (String, bool) {
+    /// Report a call that didn't run, as if it ran and failed with `reason` (its result is
+    /// announced with the others').
+    fn announce(&self, call: &ToolCall, reason: String) -> ToolOutput {
         self.emit(Event::ToolStarted {
             session_id: self.key.clone(),
             turn_id: self.id,
             call: call.clone(),
         });
-        self.finished(call, &output, is_error);
-        (output, is_error)
+        ToolOutput::failed(reason)
     }
 
-    fn finished(&self, call: &ToolCall, output: &str, is_error: bool) {
-        self.emit(Event::ToolFinished {
+    /// `/image`: make a picture with no model in between, recorded as if she'd called
+    /// `generate_image`, so it's kept and shown like one.
+    async fn image(self, generator: Generator, prompt: String, cancel: CancellationToken) {
+        self.emit(Event::TurnStarted {
             session_id: self.key.clone(),
             turn_id: self.id,
-            call_id: call.id.clone(),
-            output: output.to_owned(),
-            is_error,
+            profile: self.origin.profile.clone(),
+            model: self.origin.model.clone(),
         });
+        let call = ToolCall {
+            id: format!("image_{}", self.id),
+            name: crate::generate::TOOL.into(),
+            arguments: serde_json::json!({"prompt": prompt}),
+        };
+        self.save(NewMessage::assistant_with_tools(
+            "",
+            vec![call.clone()],
+            self.origin.clone(),
+        ));
+        self.emit(Event::ToolStarted {
+            session_id: self.key.clone(),
+            turn_id: self.id,
+            call: call.clone(),
+        });
+        let request = lucy_providers::generate::ImageRequest {
+            prompt,
+            negative: None,
+            width: crate::generate::DEFAULT_SIZE,
+            height: crate::generate::DEFAULT_SIZE,
+        };
+        let output = tokio::select! {
+            _ = cancel.cancelled() => ToolOutput::failed("Stopped before the picture was made."),
+            output = generator.run(&request) => output,
+        };
+        let (outcome, error) = match (cancel.is_cancelled(), output.is_error) {
+            (true, _) => (TurnOutcome::Cancelled, None),
+            (false, true) => (TurnOutcome::Failed, Some(output.text.clone())),
+            (false, false) => (TurnOutcome::Complete, None),
+        };
+        let pictures = Pictures {
+            dir: self.core.images_dir(),
+            sight: crate::pictures::Sight::Sees,
+            helper: None,
+            pending: Vec::new(),
+        };
+        self.tool_result(&call, output, &pictures).await;
+        self.core.turns.lock().unwrap().remove(&self.key);
+        self.emit(Event::TurnFinished {
+            session_id: self.key.clone(),
+            turn_id: self.id,
+            outcome,
+            error,
+            usage: None,
+        });
+        self.core.activity.add(&self.core.activity.turns, -1);
     }
 }
 
@@ -1571,6 +1845,7 @@ fn session_dto(session: crate::sessions::Session) -> rpc::Session {
                 model: m.origin.map(|o| o.model),
                 incomplete: m.incomplete,
                 created_at_ms: millis(m.created_at),
+                images: m.images,
             })
             .collect(),
     }

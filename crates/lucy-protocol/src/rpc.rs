@@ -58,6 +58,11 @@ pub mod method {
     pub const MCP_LOGIN: &str = "mcp.login";
     /// The model providers first-run setup offers (the same as `lucy config init`).
     pub const SETUP_PRESETS: &str = "setup.presets";
+    /// A picture kept with a chat, by its id (`ImageRef::id`).
+    pub const IMAGES_GET: &str = "images.get";
+    /// Make a picture straight away (`/image`), as a turn: returns at once, then the picture
+    /// arrives as a `generate_image` tool call's result.
+    pub const IMAGES_GENERATE: &str = "images.generate";
     /// Notification carrying an [`Event`](super::Event).
     pub const EVENT: &str = "event";
 }
@@ -297,6 +302,9 @@ pub struct ChatSendParams {
     /// The user's working folder: relative paths and commands start here. Defaults to home.
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Pictures to go with the message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageData>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -390,6 +398,40 @@ pub struct SessionSummary {
     pub message_count: u32,
 }
 
+/// A picture kept with a chat (`StoredMessage::images`), in the core's data folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageRef {
+    /// Its name in the core's image store (a content hash plus extension).
+    pub id: String,
+    /// e.g. `image/png`.
+    pub media_type: String,
+    /// She made it (with `generate_image` or `/image`), rather than being shown it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub made: bool,
+}
+
+/// `images.generate`: make a picture from `prompt` in a chat.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageGenerateParams {
+    /// Continue this session (full ID or unique prefix); `None` starts a new one.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    pub prompt: String,
+}
+
+/// A picture sent to or from the core: `chat.send`'s attachments, and `images.get`'s answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageData {
+    pub media_type: String,
+    /// The file's bytes, base64-encoded.
+    pub data: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageParams {
+    pub id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoredMessage {
     pub role: Role,
@@ -404,6 +446,9 @@ pub struct StoredMessage {
     pub model: Option<String>,
     pub incomplete: bool,
     pub created_at_ms: i64,
+    /// Pictures you attached (fetch one with `images.get`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -490,6 +535,9 @@ pub enum Event {
     UserMessage {
         session_id: String,
         text: String,
+        /// Pictures sent with it, kept with the chat (`images.get`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<ImageRef>,
     },
     TurnStarted {
         session_id: String,
@@ -526,6 +574,9 @@ pub enum Event {
         /// Exactly what the model was given.
         output: String,
         is_error: bool,
+        /// Pictures the call gave back, kept with the chat (`images.get`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<ImageRef>,
     },
     TurnFinished {
         session_id: String,

@@ -297,3 +297,51 @@ test("a reply that was already going when you opened the chat appears in full wh
     streaming: false,
   });
 });
+
+// --- Pictures ----------------------------------------------------------------------------------
+
+const png = { media_type: "image/png", data: "iVBORw0KGgo=" };
+
+test("pictures go with your message", async () => {
+  const fake = core();
+  fake.answers["chat.send"] = { session_id: "01OLD", turn_id: 7 };
+  const store = new ChatsStore(fake);
+  await store.load();
+  await store.open("01OLD");
+
+  await store.send("what's this?", [png]);
+  await store.send("", [png]);
+
+  assert.deepEqual(fake.sent("chat.send"), [
+    { session_id: "01OLD", text: "what's this?", images: [png] },
+    { session_id: "01OLD", text: "", images: [png] },
+  ]);
+});
+
+test("/image makes a picture straight away instead of sending a message", async () => {
+  const fake = core();
+  fake.answers["images.generate"] = { session_id: "01FRESH", turn_id: 2 };
+  fake.answers["sessions.load"] = { summary: summary("01FRESH", null, 300), messages: [] };
+  const store = new ChatsStore(fake);
+  const state = watch(store);
+  await store.load();
+
+  await store.send("/image a lighthouse at dusk");
+
+  assert.deepEqual(fake.sent("images.generate"), [{ prompt: "a lighthouse at dusk" }]);
+  assert.deepEqual(fake.sent("chat.send"), []);
+  assert.equal(state().selected, "01FRESH");
+});
+
+test("a picture is fetched from the core once, as something an <img> can show", async () => {
+  const fake = core();
+  fake.answers["images.get"] = png;
+  const store = new ChatsStore(fake);
+
+  const first = await store.picture("aa11.png");
+  const again = await store.picture("aa11.png");
+
+  assert.equal(first, "data:image/png;base64,iVBORw0KGgo=");
+  assert.equal(again, first);
+  assert.deepEqual(fake.sent("images.get"), [{ id: "aa11.png" }]);
+});

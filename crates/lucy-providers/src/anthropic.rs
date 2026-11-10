@@ -95,15 +95,30 @@ impl Provider for Anthropic {
     }
 }
 
+/// A picture as an Anthropic content block.
+fn image_block(image: &lucy_protocol::Image) -> Value {
+    json!({
+        "type": "image",
+        "source": {"type": "base64", "media_type": image.media_type, "data": image.data},
+    })
+}
+
 fn messages(turns: &[&Message]) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     for m in turns {
         match m.role {
             Role::Tool => {
+                let content = if m.images.is_empty() {
+                    json!(m.content)
+                } else {
+                    let mut blocks = vec![json!({"type": "text", "text": m.content})];
+                    blocks.extend(m.images.iter().map(image_block));
+                    json!(blocks)
+                };
                 let mut result = json!({
                     "type": "tool_result",
                     "tool_use_id": m.tool_call_id,
-                    "content": m.content,
+                    "content": content,
                 });
                 if m.is_error {
                     result["is_error"] = json!(true);
@@ -132,6 +147,12 @@ fn messages(turns: &[&Message]) -> Vec<Value> {
                 out.push(json!({"role": "assistant", "content": blocks}));
             }
             Role::Assistant => out.push(json!({"role": "assistant", "content": m.content})),
+            _ if !m.images.is_empty() => {
+                // Anthropic recommends pictures before the text about them.
+                let mut blocks: Vec<Value> = m.images.iter().map(image_block).collect();
+                blocks.push(json!({"type": "text", "text": m.content}));
+                out.push(json!({"role": "user", "content": blocks}));
+            }
             _ => out.push(json!({"role": "user", "content": m.content})),
         }
     }

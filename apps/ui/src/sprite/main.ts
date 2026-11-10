@@ -7,6 +7,8 @@ import { listen } from "@tauri-apps/api/event";
 
 import { Animator, type States } from "./animator.ts";
 import { renderBubble } from "../lib/bubble.ts";
+import { readPicture } from "../lib/pictures.ts";
+import type { ImageRef } from "../lib/protocol.ts";
 import { type CoreEvent, type Input, type View, initialView, reduce } from "./view.ts";
 
 /** The pack as `lucy-sprite` hands it over (see src-tauri/src/pack.rs). */
@@ -133,6 +135,44 @@ async function start(): Promise<void> {
   const show = element<HTMLButtonElement>("#show");
   const ask = element<HTMLFormElement>("#ask");
   const input = element<HTMLInputElement>("#ask input");
+  const pictures = element<HTMLDivElement>("#pictures");
+  const attached = element<HTMLDivElement>("#attached");
+
+  /** Pictures she made, by id, as `data:` URLs (fetched once from the core). */
+  const pictureUrls = new Map<string, Promise<string>>();
+  let shownPictures = "";
+  function showPictures(refs: ImageRef[]): void {
+    const key = refs.map((image) => image.id).join(",");
+    if (key === shownPictures) {
+      return;
+    }
+    shownPictures = key;
+    pictures.hidden = refs.length === 0;
+    pictures.replaceChildren(
+      ...refs.map((image) => {
+        const shown = document.createElement("img");
+        shown.alt = "a picture she made";
+        shown.title = "Open the chat";
+        shown.addEventListener("click", () => {
+          invoke("open_chat").catch((err: unknown) => console.error("lucy-sprite:", err));
+        });
+        shown.addEventListener("load", () => {
+          layout();
+          repaintAll();
+        });
+        let url = pictureUrls.get(image.id);
+        if (url === undefined) {
+          url = invoke<string>("picture", { id: image.id });
+          pictureUrls.set(image.id, url);
+        }
+        url.then(
+          (src) => (shown.src = src),
+          (err: unknown) => console.error("lucy-sprite:", err),
+        );
+        return shown;
+      }),
+    );
+  }
 
   function render(): void {
     if (view.animation !== animation) {
@@ -153,7 +193,9 @@ async function start(): Promise<void> {
       error.hidden = reply.error === undefined;
       error.textContent = reply.error ?? "";
       close.hidden = !reply.done;
+      showPictures(reply.pictures ?? []);
     } else {
+      showPictures([]);
       text.hidden = true;
       more.hidden = true;
       error.hidden = true;
@@ -181,6 +223,8 @@ async function start(): Promise<void> {
     }
     const opening = ask.hidden && view.inputOpen;
     ask.hidden = !view.inputOpen;
+    attached.hidden = view.attached.length === 0;
+    attached.textContent = `📎 ${view.attached.map((picture) => picture.name).join(", ")}`;
     if (opening) {
       input.value = "";
       input.focus();
@@ -224,12 +268,31 @@ async function start(): Promise<void> {
   ask.addEventListener("submit", (event) => {
     event.preventDefault();
     const message = input.value.trim();
-    if (message === "") {
+    const images = view.attached.map(({ media_type, data }) => ({ media_type, data }));
+    if (message === "" && images.length === 0) {
       return;
     }
     dispatch({ type: "sent" });
-    invoke("send", { text: message }).catch((err: unknown) =>
+    invoke("send", { text: message, images }).catch((err: unknown) =>
       dispatch({ type: "problem", message: String(err), now: Date.now() }),
+    );
+  });
+  // A picture dropped on her goes with your next message.
+  stage.addEventListener("dragover", (event) => event.preventDefault());
+  stage.addEventListener("drop", (event) => {
+    const files = [...(event.dataTransfer?.files ?? [])];
+    if (files.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    Promise.all(files.map(readPicture)).then(
+      (read) => dispatch({ type: "attached", pictures: read }),
+      (err: unknown) =>
+        dispatch({
+          type: "problem",
+          message: err instanceof Error ? err.message : String(err),
+          now: Date.now(),
+        }),
     );
   });
   // Typing changes only the input box; repaint the rest with it (see repaintAll). keydown

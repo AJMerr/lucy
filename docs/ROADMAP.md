@@ -66,6 +66,18 @@ tray icon; the core stays a separate service.
 4. ✅ **3d — One app.** "Lucy" (`lucy-desktop`, `apps/desktop`), `[sprite] enabled`,
    `[app] autostart`, installers, Nix and docs.
 
+## Pictures ✅
+
+Seeing and making pictures, in every front end. Guide: [images.md](images.md).
+
+1. ✅ **Seeing.** Pictures in chats (kept in the data folder), `vision = true` models get them,
+   a vision helper describes them for the rest, `read_file` and MCP tools return them.
+2. ✅ **Making.** OpenRouter image models and ComfyUI workflows, `generate_image` (hosted asks,
+   local doesn't), `/image`, saved to `~/Pictures/Lucy`.
+3. ✅ **Front ends.** Paste, drop and attach in the window, drop on the sprite, pictures in the
+   chat and her bubble, inline in kitty-protocol terminals.
+4. ✅ **Settings and docs.** Settings → Pictures, "Can see pictures", the ComfyUI guide.
+
 ## Later
 
 - Long-term memory (editable file of facts about the user)

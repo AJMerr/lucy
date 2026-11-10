@@ -8,8 +8,9 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use lucy_protocol::rpc::ImageData;
 use reqwest::header::{HeaderName, HeaderValue};
-use rmcp::model::CallToolRequestParams;
+use rmcp::model::{CallToolRequestParams, CallToolResult};
 use rmcp::service::RunningService;
 use rmcp::transport::auth::{AuthClient, AuthorizationManager};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -54,9 +55,9 @@ impl ExternalServer {
         !self.client.is_transport_closed()
     }
 
-    /// Call one of its tools by the server's own name. Returns the text output and whether
-    /// the tool reported an error; `Err` means the call itself failed (e.g. the server died).
-    pub async fn call(&self, tool: &str, arguments: Value) -> Result<(String, bool), String> {
+    /// Call one of its tools by the server's own name. `Err` means the call itself failed (e.g.
+    /// the server died).
+    pub async fn call(&self, tool: &str, arguments: Value) -> Result<ToolOutput, String> {
         let mut params = CallToolRequestParams::new(tool.to_owned());
         if let Value::Object(arguments) = arguments {
             params = params.with_arguments(arguments);
@@ -66,20 +67,59 @@ impl ExternalServer {
             .call_tool(params)
             .await
             .map_err(|err| format!("the {} server failed: {err}", self.name))?;
-        let mut parts: Vec<String> = result
-            .content
-            .iter()
-            .map(|c| match c.as_text() {
-                Some(text) => text.text.clone(),
-                None => "[non-text content omitted]".into(),
-            })
-            .collect();
+        Ok(ToolOutput::from_result(result))
+    }
+}
+
+/// What a tool call gave back: its text, whether it failed, and any pictures.
+#[derive(Debug, Default)]
+pub struct ToolOutput {
+    pub text: String,
+    pub is_error: bool,
+    pub images: Vec<ImageData>,
+    /// The pictures are ones it made, not ones it looked at.
+    pub made: bool,
+}
+
+impl ToolOutput {
+    /// A call that failed, or didn't run, with `text` saying why.
+    pub fn failed(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            is_error: true,
+            images: Vec::new(),
+            made: false,
+        }
+    }
+
+    /// An MCP result: its text parts joined and its pictures kept.
+    pub fn from_result(result: CallToolResult) -> Self {
+        let mut parts = Vec::new();
+        let mut images = Vec::new();
+        for content in &result.content {
+            if let Some(text) = content.as_text() {
+                parts.push(text.text.clone());
+            } else if let Some(image) = content.as_image() {
+                images.push(ImageData {
+                    media_type: image.mime_type.clone(),
+                    data: image.data.clone(),
+                });
+            } else {
+                parts.push("[non-text content omitted]".into());
+            }
+        }
         if parts.is_empty()
+            && images.is_empty()
             && let Some(structured) = &result.structured_content
         {
             parts.push(structured.to_string());
         }
-        Ok((parts.join("\n"), result.is_error == Some(true)))
+        Self {
+            text: parts.join("\n"),
+            is_error: result.is_error == Some(true),
+            images,
+            made: false,
+        }
     }
 }
 

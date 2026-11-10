@@ -2,7 +2,7 @@
 // and the core's live events to the list of entries it shows.
 
 import { describeCall } from "./calls.ts";
-import type { CoreEvent } from "./protocol.ts";
+import type { CoreEvent, ImageRef } from "./protocol.ts";
 
 /** A saved message, as `sessions.load` returns it (`lucy_protocol::rpc::StoredMessage`). */
 export interface StoredMessage {
@@ -13,10 +13,12 @@ export interface StoredMessage {
   tool_call_id?: string;
   is_error: boolean;
   incomplete: boolean;
+  /** Pictures with it; left out when there are none. */
+  images?: ImageRef[];
 }
 
 export type Entry =
-  | { kind: "you"; text: string }
+  | { kind: "you"; text: string; /** Pictures you sent with it. */ images?: ImageRef[] }
   | {
       kind: "lucy";
       text: string;
@@ -37,6 +39,8 @@ export type Entry =
       reason?: string;
       /** What it would change (while asking), if the core sent it. */
       preview?: string;
+      /** Pictures it gave back, e.g. one she made. */
+      images?: ImageRef[];
     };
 
 export interface Transcript {
@@ -106,7 +110,7 @@ export function reduce(transcript: Transcript, input: TranscriptInput): Transcri
 function onEvent(transcript: Transcript, event: CoreEvent): Transcript {
   const entries = [...transcript.entries];
   if (event.type === "user_message") {
-    entries.push({ kind: "you", text: event.text ?? "" });
+    entries.push(you(event.text ?? "", event.images));
     return { ...transcript, entries };
   }
   if (event.type === "turn_started") {
@@ -163,6 +167,7 @@ function onEvent(transcript: Transcript, event: CoreEvent): Transcript {
           callId: tool.callId,
           summary: tool.summary,
           state: event.is_error === true ? "failed" : "done",
+          ...pictures(event.images),
         };
       }
       break;
@@ -194,7 +199,7 @@ function fromHistory(messages: StoredMessage[]): Entry[] {
   for (const message of messages) {
     switch (message.role) {
       case "user":
-        entries.push({ kind: "you", text: message.content });
+        entries.push(you(message.content, message.images));
         break;
       case "assistant":
         if (message.content !== "") {
@@ -221,9 +226,21 @@ function fromHistory(messages: StoredMessage[]): Entry[] {
         if (tool?.kind === "tool" && message.is_error) {
           tool.state = "failed";
         }
+        if (tool?.kind === "tool" && (message.images?.length ?? 0) > 0) {
+          tool.images = message.images;
+        }
         break;
       }
     }
   }
   return entries;
+}
+
+function you(text: string, images: unknown): Entry {
+  return { kind: "you", text, ...pictures(images) };
+}
+
+/** `images` as an entry's pictures, left out when there are none. */
+function pictures(images: unknown): { images?: ImageRef[] } {
+  return Array.isArray(images) && images.length > 0 ? { images: images as ImageRef[] } : {};
 }

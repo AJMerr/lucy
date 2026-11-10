@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use lucy_protocol::{Message, Role, ToolCall};
+use lucy_protocol::{Image, Message, Role, ToolCall};
 use lucy_providers::anthropic::{Anthropic, AnthropicConfig};
 use lucy_providers::testing::{FakeResponse, FakeServer};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, ToolSpec, Usage};
@@ -290,5 +290,84 @@ async fn cached_prompt_tokens_count_as_input() {
             }),
             StreamEvent::Done,
         ]
+    );
+}
+
+#[tokio::test]
+async fn sends_your_pictures_as_image_blocks_before_the_text() {
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+    let request = ChatRequest {
+        messages: vec![Message::user_with_images(
+            "what's in this?",
+            vec![Image {
+                media_type: "image/jpeg".into(),
+                data: "/9j/4AAQ".into(),
+            }],
+        )],
+        tools: vec![],
+    };
+
+    provider(&server)
+        .stream(request)
+        .await
+        .unwrap()
+        .count()
+        .await;
+
+    let [request] = server.requests().try_into().unwrap();
+    assert_eq!(
+        request.body["messages"],
+        json!([{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "/9j/4AAQ"}},
+                {"type": "text", "text": "what's in this?"},
+            ],
+        }])
+    );
+}
+
+#[tokio::test]
+async fn pictures_from_a_tool_go_inside_its_result() {
+    let server = FakeServer::start([FakeResponse::sse(TEXT)]).await;
+    let mut result = Message::tool_result("toolu_1", "Picture: cat.png", false);
+    result.images = vec![Image {
+        media_type: "image/png".into(),
+        data: "iVBORw0KGgo=".into(),
+    }];
+    let request = ChatRequest {
+        messages: vec![
+            Message::new(Role::User, "look at cat.png"),
+            Message::assistant_with_tools(
+                "",
+                vec![ToolCall {
+                    id: "toolu_1".into(),
+                    name: "read_file".into(),
+                    arguments: json!({"path": "cat.png"}),
+                }],
+            ),
+            result,
+        ],
+        tools: vec![],
+    };
+
+    provider(&server)
+        .stream(request)
+        .await
+        .unwrap()
+        .count()
+        .await;
+
+    let [request] = server.requests().try_into().unwrap();
+    assert_eq!(
+        request.body["messages"][2],
+        json!({"role": "user", "content": [{
+            "type": "tool_result",
+            "tool_use_id": "toolu_1",
+            "content": [
+                {"type": "text", "text": "Picture: cat.png"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
+            ],
+        }]})
     );
 }

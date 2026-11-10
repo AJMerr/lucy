@@ -3,11 +3,20 @@
 <script lang="ts">
   import { renderBubble } from "../../lib/bubble.ts";
   import type { Entry } from "../../lib/transcript.ts";
+  import Picture from "./Picture.svelte";
 
   type Decision = "once" | "always" | "deny";
 
-  let { entry, onDecide }: { entry: Entry; onDecide: (callId: string, decision: Decision) => void } =
-    $props();
+  let {
+    entry,
+    onDecide,
+    picture = () => Promise.reject(new Error("no pictures here")),
+  }: {
+    entry: Entry;
+    onDecide: (callId: string, decision: Decision) => void;
+    /** A kept picture as a URL an `<img>` can show. */
+    picture?: (id: string) => Promise<string>;
+  } = $props();
 
   let showChanges = $state(false);
 
@@ -25,7 +34,12 @@
 </script>
 
 {#if entry.kind === "you"}
-  <div class="you">{entry.text}</div>
+  <div class="you">
+    {#each entry.images ?? [] as image (image.id)}
+      <Picture {image} load={picture} />
+    {/each}
+    {#if entry.text !== ""}<div class="said">{entry.text}</div>{/if}
+  </div>
 {:else if entry.kind === "lucy"}
   <div class="lucy" class:streaming={entry.streaming}>
     {#if html !== ""}
@@ -68,6 +82,13 @@
     {#if entry.state === "running"}<span class="state"> · running</span>{/if}
     {#if entry.state === "failed"}<span class="state"> · failed</span>{/if}
   </div>
+  {#if (entry.images ?? []).length > 0}
+    <div class="made">
+      {#each entry.images ?? [] as image (image.id)}
+        <Picture {image} load={picture} />
+      {/each}
+    </div>
+  {/if}
 {/if}
 
 <style>
@@ -78,7 +99,6 @@
     background: var(--you-bg);
     border: 1px solid var(--line);
     border-radius: 12px 12px 2px 12px;
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
   .lucy {
@@ -126,6 +146,17 @@
     border: 1px solid var(--hot);
     border-radius: 10px;
     max-width: 92%;
+  }
+  .made {
+    align-self: flex-start;
+    max-width: 92%;
+    --picture-height: 420px;
+  }
+  .you :global(img) {
+    margin-bottom: 6px;
+  }
+  .said {
+    white-space: pre-wrap;
   }
   .reason {
     color: var(--muted);

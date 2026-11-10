@@ -52,7 +52,9 @@ fn example_config_in_docs_parses() {
     assert_eq!(config.defaults.agent_profile.as_deref(), Some("claude"));
     assert_eq!(config.agent.workspace, Some(PathBuf::from("~/Projects")));
     assert_eq!(config.profiles["claude"].provider, ProviderKind::Anthropic);
-    assert_eq!(config.profiles.len(), 4);
+    assert_eq!(config.profiles.len(), 5);
+    assert!(config.profiles["claude"].vision);
+    assert_eq!(config.images.generator.as_deref(), Some("comfyui"));
 }
 
 fn error_for(source: &str) -> String {
@@ -156,4 +158,46 @@ fn the_app_starts_at_login_with_app_autostart_or_the_older_sprite_setting() {
 
     let hidden = Config::from_toml_str(&format!("{MINIMAL}\n[sprite]\nenabled = false\n")).unwrap();
     assert!(!hidden.sprite.enabled);
+}
+
+// --- Pictures ----------------------------------------------------------------------------------
+
+#[test]
+fn pictures_are_off_until_a_generator_is_set() {
+    let config = Config::from_toml_str(MINIMAL).unwrap();
+
+    assert_eq!(config.images.generator, None);
+    assert_eq!(config.images.vision_profile, None);
+    assert_eq!(config.images.comfyui.url, "http://127.0.0.1:8188");
+    assert!(!config.profiles["local"].vision);
+}
+
+#[test]
+fn comfyui_or_an_openai_compatible_profile_can_make_pictures() {
+    let comfyui = format!("{MINIMAL}\n[images]\ngenerator = \"comfyui\"\n");
+    let profile = format!("{MINIMAL}\n[images]\ngenerator = \"local\"\n");
+
+    assert!(Config::from_toml_str(&comfyui).is_ok());
+    assert!(Config::from_toml_str(&profile).is_ok());
+}
+
+#[test]
+fn a_generator_must_be_a_profile_that_can_make_pictures() {
+    let unknown = error_for(&format!("{MINIMAL}\n[images]\ngenerator = \"dalle\"\n"));
+    let claude = error_for(&format!(
+        "{MINIMAL}\n[profiles.claude]\nprovider = \"anthropic\"\nmodel = \"claude-opus-5-5\"\n\
+         key_name = \"anthropic\"\n\n[images]\ngenerator = \"claude\"\n"
+    ));
+
+    assert!(unknown.contains("unknown profile `dalle`"), "{unknown}");
+    assert!(claude.contains("can't make pictures"), "{claude}");
+}
+
+#[test]
+fn the_vision_helper_must_be_able_to_see() {
+    let err = error_for(&format!(
+        "{MINIMAL}\n[images]\nvision_profile = \"local\"\n"
+    ));
+
+    assert!(err.contains("vision = true"), "{err}");
 }

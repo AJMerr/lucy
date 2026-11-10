@@ -5,6 +5,7 @@
 
   import type { SettingsStore } from "../../lib/stores/settings.ts";
   import AgentSection from "./AgentSection.svelte";
+  import ImagesSection from "./ImagesSection.svelte";
   import McpSection from "./McpSection.svelte";
   import ModelsSection from "./ModelsSection.svelte";
   import PersonaSection from "./PersonaSection.svelte";
@@ -23,12 +24,13 @@
     onClose: () => void;
   } = $props();
 
-  type Page = "models" | "agent" | "persona" | "mcp" | "sprite" | "remote" | "service";
+  type Page = "models" | "agent" | "persona" | "mcp" | "images" | "sprite" | "remote" | "service";
   const pages: { id: Page; label: string }[] = $derived([
     { id: "models", label: "Models & keys" },
     { id: "agent", label: "Chat & agent" },
     { id: "persona", label: "Persona" },
     { id: "mcp", label: "MCP servers" },
+    { id: "images", label: "Pictures" },
     { id: "sprite", label: "Sprite" },
     { id: "remote", label: "Remote access" },
     ...(runLucy ? [{ id: "service" as const, label: "Service & startup" }] : []),
@@ -88,6 +90,7 @@
       {:else if page === "agent"}<AgentSection {store} />
       {:else if page === "persona"}<PersonaSection {store} />
       {:else if page === "mcp"}<McpSection {store} />
+      {:else if page === "images"}<ImagesSection {store} />
       {:else if page === "sprite"}<SpriteSection {store} />
       {:else if page === "remote"}<RemoteSection
           {store}

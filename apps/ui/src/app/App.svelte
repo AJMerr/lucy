@@ -34,6 +34,7 @@
   let menuOpen = $state(false);
   let undoing: UndoResult | null = $state(null);
   let log: HTMLElement | undefined = $state();
+  let composer: Composer | undefined = $state();
 
   const selected = $derived($chats.selected);
   const chat = $derived(selected === null ? undefined : $chats.chats[selected]);
@@ -192,7 +193,17 @@
     />
   </aside>
 
-  <main>
+  <main
+    ondragover={(event) => event.preventDefault()}
+    ondrop={(event) => {
+      // A picture dropped anywhere on the chat goes with your next message.
+      const files = [...(event.dataTransfer?.files ?? [])];
+      if (files.length > 0) {
+        event.preventDefault();
+        void composer?.add(files);
+      }
+    }}
+  >
     <button class="menu" aria-label="Chats" onclick={() => (menuOpen = !menuOpen)}>☰</button>
     {#if connection === "lost"}
       <div class="banner">Lost the connection to Lucy's core. Trying again…</div>
@@ -235,22 +246,32 @@
       {/if}
       <section class="log" bind:this={log}>
         {#each chat.transcript.entries as entry, i (i)}
-          <Entry {entry} onDecide={(callId, decision) => chats.approve(callId, decision)} />
+          <Entry
+            {entry}
+            onDecide={(callId, decision) => chats.approve(callId, decision)}
+            picture={(id) => chats.picture(id)}
+          />
         {/each}
         {#if thinking}
           <div class="thinking" aria-label="Lucy is thinking">…</div>
         {/if}
       </section>
-      <Composer busy={chat.busy} onSend={(text) => chats.send(text)} onStop={() => chats.cancel()} />
+      <Composer
+        bind:this={composer}
+        busy={chat.busy}
+        onSend={(text, images) => chats.send(text, images)}
+        onStop={() => chats.cancel()}
+      />
     {:else}
       <section class="welcome">
         <h1>Lucy</h1>
         <p>Pick a chat, or start a new one below.</p>
       </section>
       <Composer
+        bind:this={composer}
         busy={false}
         placeholder="Start a new chat… (Enter sends)"
-        onSend={(text) => chats.send(text)}
+        onSend={(text, images) => chats.send(text, images)}
         onStop={() => {}}
       />
     {/if}

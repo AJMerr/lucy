@@ -4,12 +4,13 @@ A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her 
 or let her live on your desktop as an animated sprite with speech bubbles that you can toggle on
 and off.
 
-> **Status:** v0.5.0: terminal chat with any OpenAI-compatible or Anthropic model, able to
+> **Status:** v0.6.0: terminal chat with any OpenAI-compatible or Anthropic model, able to
 > read, search, run and edit with your approval, use any MCP server you add, and work through
-> tasks on her own within limits you set. The core can run from login and serve your other
-> machines. Lucy's app puts her on the desktop as an animated sprite, with a main window for
-> your chats and every setting, and a tray icon; no terminal needed. Installers, a Nix flake and
-> a home-manager module. See [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
+> tasks on her own within limits you set. She can look at pictures you show her and make
+> pictures with OpenRouter image models or ComfyUI. The core can run from login and serve your
+> other machines. Lucy's app puts her on the desktop as an animated sprite, with a main window
+> for your chats and every setting, and a tray icon; no terminal needed. Installers, a Nix flake
+> and a home-manager module. See [release notes](CHANGELOG.md) and the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -27,6 +28,12 @@ and off.
 - **Any MCP server.** Add tool servers with `lucy mcp add` (GitHub, databases, browsers…).
   Lucy starts them when needed, fills their tokens from your keyring, and applies the same
   approval rules.
+- **Pictures.** Show her a picture (paste, drop or attach it in the window, drop it on the
+  sprite, or have her open a picture file) and models that can see look at it; for those that
+  can't, a vision helper describes it. Ask her to draw something, or type `/image <description>`,
+  and she makes it with an OpenRouter image model or ComfyUI on your own GPU. Pictures are saved
+  to `~/Pictures/Lucy` and shown in the window, the sprite's bubble, and inline in Ghostty,
+  kitty and WezTerm. See [docs/images.md](docs/images.md).
 - **Agent mode.** `/mode agent` or `lucy agent "task"`: Lucy works through a task step by step
   on her own, at a freedom level you choose (0–3), within step and cost caps. `/undo` rolls back
   the files a reply changed.
@@ -112,6 +119,7 @@ In the chat:
 | Command | What it does |
 | --- | --- |
 | `/model [profile]` | list profiles, or switch this chat to one |
+| `/image <description>` | make a picture straight away (also in the window and the sprite) |
 | `/plain [on\|off]` | drop Lucy's voice (toggles without an argument) |
 | `/new`, `/sessions` | start a new chat, list saved chats |
 | `/resume <id>`, `/rename <title>`, `/delete <id>` | manage saved chats |
@@ -293,6 +301,7 @@ plain mode.
 | --- | --- | --- |
 | Config | `~/.config/lucy/config.toml` | `LUCY_CONFIG` |
 | Chats, history, core log | `~/.local/share/lucy/` | `LUCY_DATA_DIR` |
+| Pictures she makes | `~/Pictures/Lucy/` | `[images] folder` |
 | Core socket | `$XDG_RUNTIME_DIR/lucy/core.sock` | `LUCY_SOCKET` |
 
 ### Troubleshooting
@@ -370,9 +379,10 @@ AppIndicator extension); without it, `lucy app` still opens the window.
 **Settings** (bottom of the chat list) cover everything in `config.toml` and more, without a
 terminal: models and their API keys (sent to the keyring, never shown again), how new chats
 start, agent caps and tool rules, your persona, MCP servers (and signing in to remote ones),
-the sprite, remote access and its token, and the login service. Each section saves on its own,
-and the core refuses anything that would break the config, saying why. With no config yet, the
-window starts with first-run setup instead (the same providers as `lucy config init`).
+pictures (what makes them, where they're saved, which model describes them), the sprite,
+remote access and its token, and the login service. Each section saves on its own, and the core
+refuses anything that would break the config, saying why. With no config yet, the window starts
+with first-run setup instead (the same providers as `lucy config init`).
 
 No character art is committed. Lucy loads sprite packs from your data directory
 (`~/.local/share/lucy/packs/` on Linux). Copy `packs/placeholder`, swap the frames, and point

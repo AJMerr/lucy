@@ -2,6 +2,7 @@
 
 use lucy_providers::Provider;
 use lucy_providers::anthropic::{Anthropic, AnthropicConfig};
+use lucy_providers::generate::{ImageGenerator, OpenRouterImages};
 use lucy_providers::openai_compat::{OpenAiCompat, OpenAiCompatConfig};
 
 use crate::config::{Profile, ProviderKind};
@@ -34,19 +35,7 @@ where
     S: SecretStore,
     E: Fn(&str) -> Option<String>,
 {
-    let api_key = match &profile.key_name {
-        Some(key_name) => Some(
-            secrets
-                .resolve(key_name)?
-                .ok_or_else(|| BuildError::MissingKey {
-                    profile: name.to_owned(),
-                    key_name: key_name.clone(),
-                    env_var: secrets::env_var_name(key_name),
-                })?
-                .value,
-        ),
-        None => None,
-    };
+    let api_key = api_key(name, profile, secrets)?;
 
     Ok(match profile.provider {
         ProviderKind::OpenAiCompat => Box::new(OpenAiCompat::new(OpenAiCompatConfig {
@@ -66,4 +55,53 @@ where
             })?,
         })),
     })
+}
+
+/// Create an image generator from profile `name` (an OpenAI-compatible image model, like
+/// OpenRouter's).
+pub fn build_generator<S, E>(
+    name: &str,
+    profile: &Profile,
+    secrets: &Secrets<S, E>,
+) -> Result<Box<dyn ImageGenerator>, BuildError>
+where
+    S: SecretStore,
+    E: Fn(&str) -> Option<String>,
+{
+    if profile.provider != ProviderKind::OpenAiCompat {
+        return Err(BuildError::Invalid(
+            name.to_owned(),
+            "only openai_compat profiles (like OpenRouter's image models) can make pictures".into(),
+        ));
+    }
+    Ok(Box::new(OpenRouterImages::new(OpenAiCompatConfig {
+        name: name.to_owned(),
+        base_url: profile.base_url.clone().ok_or_else(|| {
+            BuildError::Invalid(name.to_owned(), "openai_compat needs a base_url".into())
+        })?,
+        model: profile.model.clone(),
+        api_key: api_key(name, profile, secrets)?,
+    })))
+}
+
+fn api_key<S, E>(
+    name: &str,
+    profile: &Profile,
+    secrets: &Secrets<S, E>,
+) -> Result<Option<String>, BuildError>
+where
+    S: SecretStore,
+    E: Fn(&str) -> Option<String>,
+{
+    let Some(key_name) = &profile.key_name else {
+        return Ok(None);
+    };
+    let secret = secrets
+        .resolve(key_name)?
+        .ok_or_else(|| BuildError::MissingKey {
+            profile: name.to_owned(),
+            key_name: key_name.clone(),
+            env_var: secrets::env_var_name(key_name),
+        })?;
+    Ok(Some(secret.value))
 }

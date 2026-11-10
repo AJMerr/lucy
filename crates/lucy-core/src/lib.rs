@@ -5,9 +5,11 @@
 //! See `docs/ROADMAP.md` for what lands in each milestone.
 
 pub mod config;
+pub mod generate;
 pub mod mcp;
 pub mod oauth;
 pub mod persona;
+pub mod pictures;
 pub mod policy;
 pub mod provider;
 pub mod secrets;

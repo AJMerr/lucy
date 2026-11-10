@@ -172,6 +172,14 @@
       />
       Offer tools to this model
     </label>
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={profile.vision === true}
+        onchange={(e) => set(name, "vision", e.currentTarget.checked ? true : undefined)}
+      />
+      Can see pictures
+    </label>
     <button class="link danger-text" onclick={() => remove(name)}>Remove {name}</button>
   </fieldset>
 {/each}

@@ -151,12 +151,12 @@ async fn read_file_pages_through_long_files() {
 #[tokio::test]
 async fn read_file_reports_missing_and_binary_files() {
     let tools = Tools::start().await;
-    tools.write("image.png", [0x89, b'P', b'N', b'G', 0, 0, 0, 13]);
+    tools.write("data.bin", [0x7f, b'E', b'L', b'F', 0, 0, 0, 13]);
 
     let missing = tools.err("read_file", json!({"path": "nope.txt"})).await;
     assert!(missing.contains("nope.txt"), "{missing}");
 
-    let binary = tools.err("read_file", json!({"path": "image.png"})).await;
+    let binary = tools.err("read_file", json!({"path": "data.bin"})).await;
     assert!(binary.contains("binary"), "{binary}");
 }
 

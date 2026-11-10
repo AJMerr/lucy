@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use lucy_protocol::rpc::ImageRef;
 use lucy_protocol::{AgentLevel, Message, Mode, Role};
 use rusqlite::{Connection, OptionalExtension, params};
 use ulid::Ulid;
@@ -53,6 +54,10 @@ const MIGRATIONS: &[&str] = &[
         content     BLOB,           -- NULL: the reply created the file
         PRIMARY KEY (session_id, reply, path)
     );
+"#,
+    r#"
+    -- Pictures you attached: JSON array of {id, media_type}; the files are in <data>/images.
+    ALTER TABLE messages ADD COLUMN images TEXT;
 "#,
 ];
 
@@ -106,11 +111,23 @@ pub struct NewMessage {
     /// The reply was cut off (interrupted, connection lost, refused) before finishing.
     pub incomplete: bool,
     pub usage: Option<Usage>,
+    /// Pictures you attached (kept in the core's image store).
+    pub images: Vec<ImageRef>,
 }
 
 impl NewMessage {
     pub fn user(content: impl Into<String>) -> Self {
         Self::new(Message::new(Role::User, content), None)
+    }
+
+    /// Something you said, with pictures.
+    pub fn user_with_images(content: impl Into<String>, images: Vec<ImageRef>) -> Self {
+        Self::user(content).with_images(images)
+    }
+
+    /// The same message with pictures that go with it.
+    pub fn with_images(self, images: Vec<ImageRef>) -> Self {
+        Self { images, ..self }
     }
 
     pub fn assistant(content: impl Into<String>, origin: Origin) -> Self {
@@ -143,6 +160,7 @@ impl NewMessage {
             origin,
             incomplete: false,
             usage: None,
+            images: Vec::new(),
         }
     }
 
@@ -164,6 +182,8 @@ pub struct StoredMessage {
     pub incomplete: bool,
     pub usage: Option<Usage>,
     pub created_at: SystemTime,
+    /// Pictures you attached (kept in the core's image store).
+    pub images: Vec<ImageRef>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -253,12 +273,14 @@ impl SessionStore {
         let origin = new.origin.as_ref();
         let tool_calls = (!new.message.tool_calls.is_empty())
             .then(|| serde_json::to_string(&new.message.tool_calls).expect("tool calls serialize"));
+        let images = (!new.images.is_empty())
+            .then(|| serde_json::to_string(&new.images).expect("image refs serialize"));
         self.conn.execute(
             "INSERT INTO messages (session_id, seq, role, content, profile, model, incomplete,
                                    input_tokens, output_tokens, created_at, tool_calls,
-                                   tool_call_id, is_error)
+                                   tool_call_id, is_error, images)
              VALUES (?1, (SELECT COUNT(*) FROM messages WHERE session_id = ?1),
-                     ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                     ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 id_text,
                 role_name(new.message.role),
@@ -272,6 +294,7 @@ impl SessionStore {
                 tool_calls,
                 new.message.tool_call_id,
                 new.message.is_error,
+                images,
             ],
         )?;
 
@@ -433,7 +456,7 @@ impl SessionStore {
 
         let mut stmt = self.conn.prepare(
             "SELECT role, content, profile, model, incomplete, input_tokens, output_tokens,
-                    created_at, tool_calls, tool_call_id, is_error
+                    created_at, tool_calls, tool_call_id, is_error, images
              FROM messages WHERE session_id = ?1 ORDER BY seq",
         )?;
         let messages = stmt
@@ -448,6 +471,17 @@ impl SessionStore {
                     Some(json) => serde_json::from_str(&json).map_err(|err| {
                         rusqlite::Error::FromSqlConversionFailure(
                             8,
+                            rusqlite::types::Type::Text,
+                            Box::new(err),
+                        )
+                    })?,
+                    None => Vec::new(),
+                };
+                let images: Option<String> = row.get(11)?;
+                let images = match images {
+                    Some(json) => serde_json::from_str(&json).map_err(|err| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            11,
                             rusqlite::types::Type::Text,
                             Box::new(err),
                         )
@@ -470,6 +504,7 @@ impl SessionStore {
                         output_tokens: o,
                     }),
                     created_at: from_ms(row.get(7)?),
+                    images,
                 })
             })?
             .collect::<Result<_, _>>()?;

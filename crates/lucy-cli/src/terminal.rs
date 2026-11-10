@@ -52,6 +52,8 @@ pub fn run(start: Start) -> Result<()> {
             ChatOptions {
                 color,
                 width,
+                pictures: color
+                    && crate::inline_pictures::supported(|name| std::env::var(name).ok()),
                 start,
             },
         )

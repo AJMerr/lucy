@@ -7,7 +7,7 @@ use std::time::Duration;
 use lucy_core::config::{McpServer, ToolSettings};
 use lucy_core::mcp::McpHost;
 use lucy_core::secrets::{MemoryStore, SecretStore, Secrets};
-use lucy_core::tools::ToolBox;
+use lucy_core::tools::{ToolBox, ToolOutput};
 use serde_json::json;
 
 type TestSecrets = Secrets<MemoryStore, fn(&str) -> Option<String>>;
@@ -85,7 +85,11 @@ async fn its_tools_reach_the_model_prefixed_with_the_server_name() {
             "files__write_file",
         ]
     );
-    let (output, is_error) = toolbox
+    let ToolOutput {
+        text: output,
+        is_error,
+        ..
+    } = toolbox
         .call(&lucy_protocol::ToolCall {
             id: "call_1".into(),
             name: "files__list_dir".into(),
@@ -107,7 +111,11 @@ async fn calls_run_in_the_servers_folder() {
         .await
         .unwrap();
 
-    let (output, is_error) = server
+    let ToolOutput {
+        text: output,
+        is_error,
+        ..
+    } = server
         .call("read_file", json!({"path": "notes.txt"}))
         .await
         .unwrap();
@@ -136,7 +144,11 @@ async fn keyring_entries_and_plain_values_fill_its_environment() {
     } else {
         "echo $LUCY_TEST_TOKEN-$LUCY_TEST_PLAIN"
     };
-    let (output, is_error) = server
+    let ToolOutput {
+        text: output,
+        is_error,
+        ..
+    } = server
         .call("run_command", json!({"command": command}))
         .await
         .unwrap();
@@ -232,7 +244,11 @@ async fn a_crashed_server_is_restarted_on_next_use() {
 
     let second = host.server("files", &config, &secrets(&[])).await.unwrap();
     assert!(second.is_alive());
-    let (output, is_error) = second.call("list_dir", json!({})).await.unwrap();
+    let ToolOutput {
+        text: output,
+        is_error,
+        ..
+    } = second.call("list_dir", json!({})).await.unwrap();
     assert!(!is_error, "{output}");
     host.shutdown().await;
 }

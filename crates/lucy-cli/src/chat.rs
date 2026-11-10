@@ -6,10 +6,11 @@ use std::io::Write;
 use anyhow::{Context, Result, bail};
 use lucy_client::{Client, ClientError};
 use lucy_protocol::rpc::{
-    ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event, ProfileInfo,
-    RenameParams, ResolveParams, Session, SessionParams, SessionSettings, SessionSummary,
-    SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams, ToolRuleInfo, ToolsList,
-    ToolsListParams, TurnOutcome, UndoParams, UndoResult, method,
+    ApproveParams, CancelResult, ChatSendParams, ChatSendResult, Decision, Event, ImageData,
+    ImageGenerateParams, ImageParams, ImageRef, ProfileInfo, RenameParams, ResolveParams, Session,
+    SessionParams, SessionSettings, SessionSummary, SetLevelParams, SetModeParams, SetPlainParams,
+    SetProfileParams, ToolRuleInfo, ToolsList, ToolsListParams, TurnOutcome, UndoParams,
+    UndoResult, method,
 };
 use lucy_protocol::{AgentLevel, Mode, Role, ToolCall};
 use serde::Serialize;
@@ -18,6 +19,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::commands::{COMMANDS, Command, Input, parse};
+use crate::inline_pictures;
 use crate::markdown::{Op, Renderer};
 use crate::tool_display;
 
@@ -47,6 +49,8 @@ pub struct ChatOptions {
     pub color: bool,
     /// Terminal width, for redrawing wrapped lines.
     pub width: usize,
+    /// Draw pictures she makes inline (the terminal speaks kitty's graphics protocol).
+    pub pictures: bool,
     pub start: Start,
 }
 
@@ -68,6 +72,7 @@ pub async fn run_chat<S: LineSource, W: Write>(
         out,
         color: options.color,
         width: options.width.max(20),
+        pictures: options.pictures,
         session: None,
         last_tool: None,
     };
@@ -97,6 +102,7 @@ pub async fn run_chat<S: LineSource, W: Write>(
             Ok(Input::Command(Command::Quit)) => break,
             Ok(Input::Command(command)) => chat.command(command, input).await,
             Ok(Input::Message(text)) => chat.send(text, &mut events, interrupts, input).await,
+            Ok(Input::Image(prompt)) => chat.image(prompt, &mut events, interrupts, input).await,
         };
         if let Err(err) = outcome {
             chat.problem(&err)?;
@@ -110,6 +116,7 @@ struct Chat<'a, W: Write> {
     out: &'a mut W,
     color: bool,
     width: usize,
+    pictures: bool,
     /// `None` until the first message (or a command that needs a session).
     session: Option<String>,
     /// The most recent tool call, its output and whether it failed, for `/last`.
@@ -280,6 +287,7 @@ impl<W: Write> Chat<'_, W> {
             .call(
                 method::CHAT_SEND,
                 ChatSendParams {
+                    images: Vec::new(),
                     session_id: self.session.clone(),
                     text,
                     cwd: std::env::current_dir()
@@ -288,6 +296,38 @@ impl<W: Write> Chat<'_, W> {
                 },
             )
             .await?;
+        self.follow(sent, events, interrupts, input).await
+    }
+
+    /// `/image`: make a picture straight away.
+    async fn image<S: LineSource>(
+        &mut self,
+        prompt: String,
+        events: &mut mpsc::UnboundedReceiver<Event>,
+        interrupts: &mut mpsc::Receiver<()>,
+        input: &mut S,
+    ) -> Result<()> {
+        while interrupts.try_recv().is_ok() {}
+        let sent: ChatSendResult = self
+            .call(
+                method::IMAGES_GENERATE,
+                ImageGenerateParams {
+                    session_id: self.session.clone(),
+                    prompt,
+                },
+            )
+            .await?;
+        self.follow(sent, events, interrupts, input).await
+    }
+
+    /// Show a turn as it happens, answering approval prompts, until it finishes.
+    async fn follow<S: LineSource>(
+        &mut self,
+        sent: ChatSendResult,
+        events: &mut mpsc::UnboundedReceiver<Event>,
+        interrupts: &mut mpsc::Receiver<()>,
+        input: &mut S,
+    ) -> Result<()> {
         self.session = Some(sent.session_id.clone());
         let session_id = sent.session_id.clone();
 
@@ -333,10 +373,11 @@ impl<W: Write> Chat<'_, W> {
                         self.out.flush()?;
                         running = Some(call);
                     }
-                    Some(Event::ToolFinished { output, is_error, .. }) => {
+                    Some(Event::ToolFinished { output, is_error, images, .. }) => {
                         let mark = tool_display::finished(&output, is_error);
                         let mark = self.styled(if is_error { "31" } else { "32" }, &mark);
                         self.say(&format!("  {mark}"))?;
+                        self.show_made(&images, &output).await?;
                         if let Some(call) = running.take() {
                             self.last_tool = Some((call, output, is_error));
                         }
@@ -366,6 +407,34 @@ impl<W: Write> Chat<'_, W> {
             ))?,
         }
         self.say("")?;
+        Ok(())
+    }
+
+    /// Pictures she made: drawn inline where the terminal can, then where they were saved.
+    async fn show_made(&mut self, images: &[ImageRef], output: &str) -> Result<()> {
+        let made: Vec<&ImageRef> = images.iter().filter(|image| image.made).collect();
+        if made.is_empty() {
+            return Ok(());
+        }
+        if self.pictures {
+            let columns = (self.width / 2).clamp(20, 60) as u16;
+            for image in made.iter().filter(|image| image.media_type == "image/png") {
+                let data: Result<ImageData> = self
+                    .call(
+                        method::IMAGES_GET,
+                        ImageParams {
+                            id: image.id.clone(),
+                        },
+                    )
+                    .await;
+                if let Ok(data) = data {
+                    write!(self.out, "{}", inline_pictures::draw(&data.data, columns))?;
+                }
+            }
+        }
+        if let Some((_, path)) = output.rsplit_once("Saved to ") {
+            self.note(&format!("Saved to {path}"))?;
+        }
         Ok(())
     }
 

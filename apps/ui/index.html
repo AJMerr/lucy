@@ -148,6 +148,25 @@
         padding: 8px 10px;
         outline: none;
       }
+      #pictures img {
+        display: block;
+        max-width: 100%;
+        max-height: 200px;
+        margin-bottom: 6px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      #attached {
+        box-sizing: border-box;
+        width: 280px;
+        margin-bottom: 4px;
+        padding: 4px 8px;
+        font-size: 12px;
+        color: var(--text);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
       canvas {
         display: block;
         cursor: pointer;
@@ -158,6 +177,7 @@
     <div id="stage">
       <div id="bubble" hidden>
         <button id="close" title="Dismiss" hidden>×</button>
+        <div id="pictures" hidden></div>
         <div id="text"></div>
         <div id="error" hidden></div>
         <button id="more" class="link" hidden>more…</button>
@@ -174,6 +194,7 @@
         </div>
       </div>
       <form id="ask" hidden>
+        <div id="attached" hidden></div>
         <input autocomplete="off" placeholder="Ask Lucy…" />
       </form>
       <canvas id="sprite"></canvas>
