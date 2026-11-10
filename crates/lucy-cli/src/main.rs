@@ -58,6 +58,11 @@ enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Reminders and scheduled tasks (ask Lucy to make them): list, pause, resume, delete.
+    Tasks {
+        #[command(subcommand)]
+        action: Option<TasksAction>,
+    },
     /// Show what Lucy remembers about you, or edit it.
     Memory {
         #[command(subcommand)]
@@ -290,6 +295,12 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Some(Command::Tasks { action }) => lucy_cli::tasks_command::run(match action {
+            None => lucy_cli::tasks_command::Action::List,
+            Some(TasksAction::Pause { which }) => lucy_cli::tasks_command::Action::Pause(which),
+            Some(TasksAction::Resume { which }) => lucy_cli::tasks_command::Action::Resume(which),
+            Some(TasksAction::Delete { which }) => lucy_cli::tasks_command::Action::Delete(which),
+        }),
         Some(Command::Memory { action }) => {
             lucy_cli::memory_command::run(matches!(action, Some(MemoryAction::Edit)))
         }
@@ -570,4 +581,17 @@ impl wizard::Prompter for NoPrompts {
 enum MemoryAction {
     /// Open what she remembers in your editor ($VISUAL or $EDITOR) and save your changes.
     Edit,
+}
+
+#[derive(Subcommand)]
+enum TasksAction {
+    /// Stop one running until it's resumed.
+    Pause {
+        /// Its ID (or start of it) or title (or part of it), from `lucy tasks`.
+        which: String,
+    },
+    /// Start a paused one again (from its next time on).
+    Resume { which: String },
+    /// Delete one.
+    Delete { which: String },
 }
