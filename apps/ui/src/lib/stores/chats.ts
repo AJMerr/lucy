@@ -19,6 +19,8 @@ export interface SessionSummary {
   created_at_ms: number;
   updated_at_ms: number;
   message_count: number;
+  /** No memory, and deleted when you leave it. */
+  incognito?: boolean;
 }
 
 /** A chat's own settings (`lucy_protocol::rpc::SessionSettings`). */
@@ -48,13 +50,15 @@ export interface ChatsState {
   sessions: SessionSummary[];
   selected: string | null;
   chats: Record<string, ChatState>;
+  /** The open chat (or the next one you start) is incognito. */
+  incognito: boolean;
 }
 
 type Decision = "once" | "always" | "deny";
 
 export class ChatsStore {
   private readonly core: Transport;
-  private state: ChatsState = { sessions: [], selected: null, chats: {} };
+  private state: ChatsState = { sessions: [], selected: null, chats: {}, incognito: false };
   private readonly subscribers = new Set<(state: ChatsState) => void>();
   private readonly pictures = new Map<string, Promise<string>>();
 
@@ -78,6 +82,9 @@ export class ChatsStore {
 
   /** Show a chat, loading its history the first time. */
   async open(id: string): Promise<void> {
+    if (id !== this.state.selected) {
+      await this.leaveIncognito();
+    }
     const known = this.state.chats[id];
     if (known === undefined) {
       const [session, settings] = await Promise.all([
@@ -99,9 +106,26 @@ export class ChatsStore {
     this.update({ selected: id });
   }
 
-  /** Close the open chat (the next message starts a new one). */
-  newChat(): void {
-    this.update({ selected: null });
+  /** Close the open chat (the next message starts a new one, incognito if asked). */
+  async newChat(incognito = false): Promise<void> {
+    await this.leaveIncognito();
+    this.update({ selected: null, incognito });
+  }
+
+  /** Leaving an incognito chat deletes it. */
+  private async leaveIncognito(): Promise<void> {
+    const id = this.state.selected;
+    if (!this.state.incognito || id === null) {
+      return;
+    }
+    await this.core.call("sessions.delete", { session_id: id }).catch(() => {});
+    const { [id]: _gone, ...chats } = this.state.chats;
+    this.update({
+      sessions: this.state.sessions.filter((s) => s.id !== id),
+      chats,
+      selected: null,
+      incognito: false,
+    });
   }
 
   /**
@@ -116,7 +140,15 @@ export class ChatsStore {
       const [method, params] =
         prompt !== undefined
           ? ["images.generate", { ...chat, prompt }]
-          : ["chat.send", { ...chat, text, ...(images.length > 0 ? { images } : {}) }];
+          : [
+              "chat.send",
+              {
+                ...chat,
+                text,
+                ...(images.length > 0 ? { images } : {}),
+                ...(selected === null && this.state.incognito ? { incognito: true } : {}),
+              },
+            ];
       const sent = await this.core.call<{ session_id: string; turn_id: number }>(method, params);
       if (selected === null) {
         await this.open(sent.session_id);

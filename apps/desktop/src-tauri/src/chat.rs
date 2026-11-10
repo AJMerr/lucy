@@ -181,6 +181,7 @@ pub async fn send(
                     .call::<_, ChatSendResult>(
                         method::CHAT_SEND,
                         ChatSendParams {
+                            incognito: false,
                             images: images.clone(),
                             session_id,
                             text: text.clone(),

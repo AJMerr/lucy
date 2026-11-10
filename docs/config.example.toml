@@ -97,6 +97,14 @@ url = "https://mcp.linear.app/mcp"
 # oauth_client_id = "your-app-id"                        # if the server won't register Lucy itself
 # oauth_redirect_port = 8976                             # if that app needs a fixed redirect
 
+# --- Memory (docs/memory.md) --------------------------------------------------------------
+# What she remembers about you lives in memory.md in the data folder (`lucy memory edit`).
+
+[memory]
+enabled = true                  # false: she neither reads nor saves memories
+# embedding_profile = "embed"   # an embedding model's profile (e.g. Ollama's nomic-embed-text)
+                                # to find relevant memories by meaning instead of keyword
+
 # --- Pictures (docs/images.md) ------------------------------------------------------------
 
 [images]

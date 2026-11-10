@@ -14,7 +14,7 @@ use lucy_tools::paths::resolve;
 use rmcp::RoleClient;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use lucy_protocol::{AgentLevel, Mode};
 
@@ -22,11 +22,14 @@ use crate::config::{ToolRule, ToolSettings};
 use crate::generate::{self, Generator};
 use crate::mcp::ExternalServer;
 pub use crate::mcp::ToolOutput;
+use crate::memory::{self, Memory};
 use crate::policy::{self, CallFacts, CallKind, Decision, Policy};
 
 pub const BUILTIN: &str = "builtin";
 /// What `generate_image` is listed under, and the rule name that covers it.
 pub const GENERATOR_SERVER: &str = "images";
+/// What the memory tools are listed under, and the rule name that covers them all.
+pub const MEMORY_SERVER: &str = "memory";
 
 /// The picture maker for `generate_image`, or why there isn't one.
 pub type GeneratorSlot = Result<Arc<Generator>, String>;
@@ -69,6 +72,8 @@ pub struct ToolBox {
     access: Access,
     /// `generate_image`, when a generator is set: ready, or why it can't make pictures.
     generator: Option<GeneratorSlot>,
+    /// `remember`, `forget` and `recall`, unless memory is off or the chat is incognito.
+    memory: Option<Arc<Memory>>,
 }
 
 /// The chat's mode and agent level, which decide how much runs without asking.
@@ -131,6 +136,7 @@ impl ToolBox {
             settings: settings.clone(),
             access: Access::default(),
             generator: None,
+            memory: None,
         })
     }
 
@@ -144,6 +150,116 @@ impl ToolBox {
     pub fn with_generator(mut self, generator: Option<GeneratorSlot>) -> Self {
         self.generator = generator;
         self
+    }
+
+    /// Offer `remember`, `forget` and `recall` on `memory`.
+    pub fn with_memory(mut self, memory: Option<Arc<Memory>>) -> Self {
+        self.memory = memory;
+        self
+    }
+
+    /// The config rule for a memory tool: by its name, then by `memory`.
+    fn memory_rule(&self, name: &str) -> Option<ToolRule> {
+        let rules = &self.settings.rules;
+        rules
+            .get(name)
+            .or_else(|| rules.get(MEMORY_SERVER))
+            .copied()
+    }
+
+    fn memory_specs(&self) -> Vec<ToolSpec> {
+        if self.memory.is_none() {
+            return Vec::new();
+        }
+        memory_tools()
+            .into_iter()
+            .filter(|spec| self.memory_rule(&spec.name) != Some(ToolRule::Deny))
+            .collect()
+    }
+
+    fn memory_infos(&self, allowed: &HashSet<String>) -> Vec<ToolInfo> {
+        if self.memory.is_none() {
+            return Vec::new();
+        }
+        memory_tools()
+            .into_iter()
+            .map(|spec| ToolInfo {
+                rule: match self.memory_rule(&spec.name) {
+                    Some(ToolRule::Auto) => ToolRuleInfo::Auto,
+                    Some(ToolRule::Ask) => ToolRuleInfo::Ask,
+                    Some(ToolRule::Deny) => ToolRuleInfo::Deny,
+                    None if allowed.contains(&spec.name) => ToolRuleInfo::Auto,
+                    None => ToolRuleInfo::Auto,
+                },
+                description: first_sentence(&spec.description),
+                server: MEMORY_SERVER.into(),
+                name: spec.name,
+            })
+            .collect()
+    }
+
+    /// Memory tools run by themselves, except a sensitive fact (always asks) and a secret
+    /// (always refused).
+    fn memory_verdict(&self, call: &ToolCall, allowed: &HashSet<String>) -> Verdict {
+        let fact = call.arguments["fact"].as_str().unwrap_or_default();
+        let ask = |reason: String| Verdict::Ask {
+            reason,
+            preview: (!fact.is_empty()).then(|| fact.to_owned()),
+        };
+        if call.name == MEMORY_REMEMBER {
+            if let Some(kind) = memory::looks_secret(fact) {
+                return Verdict::Refuse(memory::refusal(kind));
+            }
+            if call.arguments["sensitive"].as_bool() == Some(true)
+                && self.memory_rule(&call.name) != Some(ToolRule::Deny)
+            {
+                return ask("remembers something sensitive about you".into());
+            }
+        }
+        match self.memory_rule(&call.name) {
+            Some(ToolRule::Deny) => {
+                return Verdict::Refuse("The user's settings don't allow this tool.".into());
+            }
+            Some(ToolRule::Auto) => return Verdict::Run,
+            Some(ToolRule::Ask) => return ask("your settings say to ask".into()),
+            None => {}
+        }
+        let supervised =
+            self.access.mode == Mode::Agent && self.access.level == AgentLevel::Supervised;
+        if supervised && !allowed.contains(&call.name) {
+            return ask("supervised: every call asks".into());
+        }
+        Verdict::Run
+    }
+
+    fn memory_call(&self, memory: &Memory, call: &ToolCall) -> ToolOutput {
+        let arg = |key: &str| call.arguments[key].as_str().unwrap_or_default();
+        let done = match call.name.as_str() {
+            MEMORY_REMEMBER => {
+                let replaces = Some(arg("replaces")).filter(|r| !r.is_empty());
+                memory.remember(arg("heading"), arg("fact"), replaces)
+            }
+            MEMORY_FORGET => memory.forget(arg("fact")),
+            _ => {
+                let found = memory.recall(arg("query"), 20);
+                Ok(if found.is_empty() {
+                    "Nothing in memory matches that.".into()
+                } else {
+                    found
+                        .iter()
+                        .map(|fact| format!("- {} ({})", fact.text, fact.heading))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+            }
+        };
+        match done {
+            Ok(text) => ToolOutput {
+                text,
+                ..ToolOutput::default()
+            },
+            Err(err) => ToolOutput::failed(err),
+        }
     }
 
     /// The config rule for `generate_image`: by its name, then by `images`.
@@ -223,7 +339,7 @@ impl ToolBox {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.tools.is_empty() && self.generator.is_none()
+        self.tools.is_empty() && self.generator.is_none() && self.memory.is_none()
     }
 
     /// The tools to offer the model (minus any the config denies outright).
@@ -237,6 +353,7 @@ impl ToolBox {
                 input_schema: Value::Object((*t.def.input_schema).clone()),
             })
             .chain(self.generator_spec())
+            .chain(self.memory_specs())
             .collect()
     }
 
@@ -250,6 +367,7 @@ impl ToolBox {
                 rule: self.rule_info(t, allowed),
             })
             .chain(self.generator_info(allowed))
+            .chain(self.memory_infos(allowed))
             .collect()
     }
 
@@ -294,6 +412,9 @@ impl ToolBox {
     /// Whether `call` may run now. `allowed` holds tools the user approved "always" in this
     /// session.
     pub fn verdict(&self, call: &ToolCall, allowed: &HashSet<String>) -> Verdict {
+        if is_memory_tool(&call.name) && self.memory.is_some() {
+            return self.memory_verdict(call, allowed);
+        }
         if call.name == generate::TOOL
             && let Some(slot) = &self.generator
         {
@@ -386,6 +507,11 @@ impl ToolBox {
     }
 
     pub async fn call(&self, call: &ToolCall) -> ToolOutput {
+        if is_memory_tool(&call.name)
+            && let Some(memory) = &self.memory
+        {
+            return self.memory_call(memory, call);
+        }
         if call.name == generate::TOOL
             && let Some(slot) = &self.generator
         {
@@ -558,4 +684,69 @@ fn exposed_name(server: &str, tool: &str) -> String {
         })
         .collect();
     name.chars().take(MAX_NAME).collect()
+}
+
+const MEMORY_REMEMBER: &str = "remember";
+const MEMORY_FORGET: &str = "forget";
+const MEMORY_RECALL: &str = "recall";
+
+fn is_memory_tool(name: &str) -> bool {
+    matches!(name, MEMORY_REMEMBER | MEMORY_FORGET | MEMORY_RECALL)
+}
+
+/// `remember`, `forget` and `recall`, as offered to the model.
+fn memory_tools() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: MEMORY_REMEMBER.into(),
+            description: "Save a fact about the user for future chats. Use it on your own, \
+                          without being asked, whenever they tell you something worth \
+                          keeping: who they are, preferences, people in their life, projects, \
+                          ongoing plans. Say in a few words that you'll remember it. Set \
+                          `sensitive` for health, money, relationships, home address or ID \
+                          numbers: the user is asked first. Never save secrets (passwords, \
+                          keys, card numbers). To change a fact, pass the old one as \
+                          `replaces`."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string", "description": "One short fact, e.g. \"Has a dog called Biscuit\"."},
+                    "heading": {
+                        "type": "string",
+                        "description": "Where it goes: \"About you\", \"Preferences\", \"People\" or \"Projects\" (or another short heading).",
+                    },
+                    "sensitive": {"type": "boolean", "description": "Health, money, relationships, home address or ID numbers."},
+                    "replaces": {"type": "string", "description": "The fact this one updates, as saved."},
+                },
+                "required": ["fact", "heading"],
+            }),
+        },
+        ToolSpec {
+            name: MEMORY_FORGET.into(),
+            description: "Remove a saved fact about the user, when it's wrong, out of date, or \
+                          they ask you to forget it."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string", "description": "The fact as saved (or a unique part of it)."},
+                },
+                "required": ["fact"],
+            }),
+        },
+        ToolSpec {
+            name: MEMORY_RECALL.into(),
+            description: "Search what you remember about the user, by keyword, when they mention \
+                          something you might have saved that isn't in your prompt."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Words to look for, e.g. \"sister birthday\"."},
+                },
+                "required": ["query"],
+            }),
+        },
+    ]
 }

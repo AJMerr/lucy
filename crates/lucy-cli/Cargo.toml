@@ -15,6 +15,7 @@ name = "lucy"
 path = "src/main.rs"
 
 [dependencies]
+tempfile.workspace = true
 lucy-core.workspace = true
 dirs.workspace = true
 getrandom.workspace = true

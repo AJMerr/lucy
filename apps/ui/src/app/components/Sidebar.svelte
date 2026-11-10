@@ -9,6 +9,7 @@
     unread,
     onSelect,
     onNew,
+    onNewIncognito,
     onRename,
     onDelete,
     onSettings,
@@ -18,6 +19,8 @@
     unread: Set<string>;
     onSelect: (id: string) => void;
     onNew: () => void;
+    /** Start an incognito chat (shown when given). */
+    onNewIncognito?: () => void;
     onRename: (id: string, title: string) => void;
     onDelete: (id: string) => void;
     /** Open settings (shown when given). */
@@ -52,6 +55,11 @@
 
 <nav>
   <button class="new primary" onclick={onNew}>New chat</button>
+  {#if onNewIncognito}
+    <button class="new link" title="No memory; deleted when you leave it" onclick={onNewIncognito}
+      >New incognito chat</button
+    >
+  {/if}
   <ul>
     {#each sessions as session (session.id)}
       <li aria-current={session.id === selected ? "true" : undefined}>
@@ -73,6 +81,7 @@
         {:else}
           <button class="open" onclick={() => onSelect(session.id)}>
             <span class="title">{title(session)}</span>
+            {#if session.incognito}<span class="incognito">incognito</span>{/if}
             {#if unread.has(session.id)}<span class="dot" aria-label="new messages"></span>{/if}
           </button>
           <div class="actions">
@@ -102,6 +111,14 @@
 </nav>
 
 <style>
+  .incognito {
+    font-size: 11px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0 4px;
+    margin-left: 6px;
+  }
   nav {
     display: flex;
     flex-direction: column;

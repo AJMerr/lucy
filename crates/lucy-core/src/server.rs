@@ -15,11 +15,11 @@ use lucy_protocol::rpc::{
     self, ApproveParams, BusyChat, CancelResult, ChatSendParams, ChatSendResult,
     ConfigUpdateParams, ConfigUpdateResult, ConfigView, CoreStatus, Decision, Event, HelloParams,
     HelloResult, ImageGenerateParams, ImageParams, KeyParams, KeySetParams, KeyStatus,
-    Notification, PROTOCOL_VERSION, PersonaSetParams, PersonaView, ProfileInfo, RenameParams,
-    Request, ResolveParams, Response, RpcError, ServerProblem, SessionParams, SessionSettings,
-    SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams, ShutdownParams,
-    ShutdownResult, ToolsList, ToolsListParams, TurnOutcome, TurnUsage, UndoFile, UndoParams,
-    UndoResult, code, method,
+    MemorySetParams, Notification, PROTOCOL_VERSION, PersonaSetParams, PersonaView, ProfileInfo,
+    RenameParams, Request, ResolveParams, Response, RpcError, ServerProblem, SessionParams,
+    SessionSettings, SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams,
+    ShutdownParams, ShutdownResult, ToolsList, ToolsListParams, TurnOutcome, TurnUsage, UndoFile,
+    UndoParams, UndoResult, code, method,
 };
 use lucy_protocol::{AgentLevel, Message, Mode, Role, ToolCall};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, Usage};
@@ -122,6 +122,8 @@ struct Core {
     mcp: McpHost,
     /// Cancelled by `core.shutdown`.
     shutdown: CancellationToken,
+    /// Her long-term memory (memory.md).
+    memory: Arc<crate::memory::Memory>,
 }
 
 #[derive(Default, Clone)]
@@ -136,6 +138,8 @@ struct ConnState {
     hello: bool,
     subscribed: bool,
     own_sessions: HashSet<String>,
+    /// Incognito chats this client started: deleted when it leaves.
+    incognito: HashSet<String>,
     /// Came in over WebSocket: its chats work in the core's folder, at a capped level.
     remote: bool,
 }
@@ -147,6 +151,18 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
     let listener = bind(&options.endpoint).await?;
     let store = SessionStore::open(&options.db_path)?;
+    // Incognito chats left by a core that stopped while one was open.
+    for id in store.incognito_sessions()? {
+        if let Ok(pictures) = store.delete_with_pictures(&id) {
+            remove_pictures(&images_dir(&options.db_path), &pictures);
+        }
+    }
+    let memory = Arc::new(crate::memory::Memory::new(
+        options
+            .db_path
+            .parent()
+            .map_or_else(|| PathBuf::from("memory.md"), |dir| dir.join("memory.md")),
+    ));
     let (events, _) = broadcast::channel(1024);
     let idle_timeout = options.idle_timeout;
     let mcp = match &options.token_store {
@@ -166,6 +182,7 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         approvals: Mutex::default(),
         mcp,
         shutdown: CancellationToken::new(),
+        memory,
     });
 
     // Accept in a task of its own: cancelling a pending accept would close the waiting pipe
@@ -352,6 +369,11 @@ async fn serve_client(
         }
     }
 
+    // Incognito chats end with the client that started them.
+    let incognito = std::mem::take(&mut state.lock().unwrap().incognito);
+    for key in incognito {
+        core.forget_incognito(&key);
+    }
     // Dropping the last sender lets the transport's writer flush and finish.
     forwarder.abort();
 }
@@ -418,6 +440,7 @@ async fn handle(
             | method::KEYS_REMOVE
             | method::PERSONA_SET
             | method::PERSONA_RESET
+            | method::MEMORY_SET
     );
     if changes_settings
         && state.lock().unwrap().remote
@@ -668,6 +691,12 @@ async fn handle(
             result(Value::Null)
         }
         method::SETUP_PRESETS => result(crate::setup::presets()),
+        method::MEMORY_GET => result(core.memory.view()),
+        method::MEMORY_SET => {
+            let p: MemorySetParams = params(request.params)?;
+            core.memory.set_text(&p.text).map_err(RpcError::app)?;
+            result(core.memory.view())
+        }
         method::IMAGES_GET => {
             let p: ImageParams = params(request.params)?;
             result(crate::pictures::load(&core.images_dir(), &p.id).map_err(RpcError::app)?)
@@ -797,10 +826,21 @@ impl Core {
 
     /// Where pictures you attach are kept: `images/` next to the chats database.
     fn images_dir(&self) -> PathBuf {
-        self.options
-            .db_path
-            .parent()
-            .map_or_else(|| PathBuf::from("images"), |dir| dir.join("images"))
+        images_dir(&self.options.db_path)
+    }
+
+    /// Delete an incognito chat, its pictures with it (unless another chat has them too).
+    fn forget_incognito(&self, key: &str) {
+        if let Some(token) = self.turns.lock().unwrap().get(key) {
+            token.cancel();
+        }
+        let Ok(id) = key.parse::<SessionId>() else {
+            return;
+        };
+        let deleted = self.store.lock().unwrap().delete_with_pictures(&id);
+        if let Ok(pictures) = deleted {
+            remove_pictures(&self.images_dir(), &pictures);
+        }
     }
 
     /// The picture maker `config` sets up, for `generate_image`: ready, or why not.
@@ -944,15 +984,23 @@ fn chat_send(
     p: ChatSendParams,
 ) -> Result<Value, RpcError> {
     let config = core.config()?;
-    let session_id = {
+    let (session_id, incognito) = {
         let store = core.store.lock().unwrap();
-        match &p.session_id {
+        let id = match &p.session_id {
             Some(prefix) => store.resolve(prefix),
+            None if p.incognito => store.create_incognito(),
             None => store.create(),
         }
-        .map_err(app)?
+        .map_err(app)?;
+        let incognito = store.is_incognito(&id).map_err(app)?;
+        (id, incognito)
     };
     let key = session_id.to_string();
+    if incognito && p.session_id.is_none() {
+        state.lock().unwrap().incognito.insert(key.clone());
+    }
+    // Memory: on unless switched off, never in an incognito chat.
+    let memory = (config.memory.enabled && !incognito).then(|| Arc::clone(&core.memory));
     let mut settings = core.settings(&key, &config)?;
     let remote = state.lock().unwrap().remote;
     cap_remote_level(&mut settings, &config, remote);
@@ -1008,6 +1056,26 @@ fn chat_send(
             return Err(app(err));
         }
     };
+    // What the chat is about, for picking memories: your last few messages.
+    let memory_plan = memory.clone().map(|memory| {
+        let recent: Vec<&str> = history
+            .iter()
+            .rev()
+            .filter(|m| m.message.role == Role::User)
+            .take(3)
+            .map(|m| m.message.content.as_str())
+            .collect();
+        let embedder = config.memory.embedding_profile.as_ref().and_then(|name| {
+            crate::provider::build_embedder(name, &config.profiles[name], &core.options.secrets)
+                .map_err(|err| eprintln!("memory: no embeddings: {err}"))
+                .ok()
+        });
+        MemoryPlan {
+            memory,
+            query: recent.join("\n"),
+            embedder,
+        }
+    });
     let _ = core.events.send(Event::UserMessage {
         session_id: key.clone(),
         text: p.text,
@@ -1098,9 +1166,11 @@ fn chat_send(
             cwd,
             access,
             generator: core.generator(&config),
+            memory,
         }),
         budget,
         cancel,
+        memory: memory_plan,
         pictures: Pictures {
             dir: images_dir,
             sight,
@@ -1287,6 +1357,16 @@ struct Plan {
     budget: Budget,
     cancel: CancellationToken,
     pictures: Pictures,
+    /// Her memory, to add to the system prompt before the first step.
+    memory: Option<MemoryPlan>,
+}
+
+/// Which memories go into this reply's prompt.
+struct MemoryPlan {
+    memory: Arc<crate::memory::Memory>,
+    /// Recent messages, to pick relevant facts by.
+    query: String,
+    embedder: Option<lucy_providers::embed::Embedder>,
 }
 
 /// How this reply handles pictures, from you or from tools.
@@ -1306,6 +1386,7 @@ struct ToolPlan {
     cwd: PathBuf,
     access: Access,
     generator: Option<GeneratorSlot>,
+    memory: Option<Arc<crate::memory::Memory>>,
 }
 
 /// How far one reply may go.
@@ -1390,7 +1471,8 @@ impl Turn {
                 Ok(toolbox) => Some(
                     toolbox
                         .with_access(tools.access)
-                        .with_generator(tools.generator),
+                        .with_generator(tools.generator)
+                        .with_memory(tools.memory),
                 ),
                 Err(err) => {
                     eprintln!("tools unavailable for this reply: {err}");
@@ -1401,6 +1483,16 @@ impl Turn {
         };
 
         let mut messages = plan.messages;
+        if let Some(memory) = &plan.memory
+            && let Some(section) = memory
+                .memory
+                .for_prompt(&memory.query, memory.embedder.as_ref())
+                .await
+            && let Some(system) = messages.first_mut()
+            && system.role == Role::System
+        {
+            system.content = format!("{}\n\n{section}", system.content);
+        }
         let pictures = &plan.pictures;
         if let Some(helper) = &pictures.helper {
             crate::pictures::describe_pending(
@@ -1858,6 +1950,7 @@ fn summary_dto(summary: crate::sessions::SessionSummary) -> rpc::SessionSummary 
         created_at_ms: millis(summary.created_at),
         updated_at_ms: millis(summary.updated_at),
         message_count: summary.message_count,
+        incognito: summary.incognito,
     }
 }
 
@@ -1913,5 +2006,21 @@ mod windows_acl {
             LocalFree(text.cast());
             Ok(sid)
         }
+    }
+}
+
+/// `<data dir>/images`, next to the chats database.
+fn images_dir(db_path: &Path) -> PathBuf {
+    db_path
+        .parent()
+        .map_or_else(|| PathBuf::from("images"), |dir| dir.join("images"))
+}
+
+/// Delete picture files (and their cached descriptions).
+fn remove_pictures(dir: &Path, ids: &[String]) {
+    for id in ids {
+        let path = dir.join(id);
+        let _ = std::fs::remove_file(path.with_extension("description.txt"));
+        let _ = std::fs::remove_file(path);
     }
 }

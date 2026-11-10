@@ -63,6 +63,10 @@ pub mod method {
     /// Make a picture straight away (`/image`), as a turn: returns at once, then the picture
     /// arrives as a `generate_image` tool call's result.
     pub const IMAGES_GENERATE: &str = "images.generate";
+    /// Lucy's long-term memory: memory.md's text and its facts.
+    pub const MEMORY_GET: &str = "memory.get";
+    /// Replace memory.md's text.
+    pub const MEMORY_SET: &str = "memory.set";
     /// Notification carrying an [`Event`](super::Event).
     pub const EVENT: &str = "event";
 }
@@ -305,6 +309,9 @@ pub struct ChatSendParams {
     /// Pictures to go with the message.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ImageData>,
+    /// Start a new chat as incognito (ignored when continuing one).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incognito: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -396,6 +403,9 @@ pub struct SessionSummary {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub message_count: u32,
+    /// An incognito chat: no memory, deleted when the client that started it leaves.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incognito: bool,
 }
 
 /// A picture kept with a chat (`StoredMessage::images`), in the core's data folder.
@@ -624,4 +634,27 @@ pub struct TurnUsage {
     /// When the profile's prices are known (local models are free).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_usd: Option<f64>,
+}
+
+/// `memory.get`: Lucy's long-term memory.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryView {
+    /// Where memory.md lives on the core's machine.
+    pub path: String,
+    /// The whole file.
+    pub text: String,
+    /// Its facts, in order.
+    pub facts: Vec<MemoryFact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryFact {
+    pub heading: String,
+    pub text: String,
+}
+
+/// `memory.set`: replace memory.md's text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemorySetParams {
+    pub text: String,
 }

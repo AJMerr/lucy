@@ -18,6 +18,12 @@ export function describeCall(name: string, args: Record<string, unknown>): strin
       return `search for "${arg("pattern")}"`;
     case "fetch_url":
       return `open ${arg("url")}`;
+    case "remember":
+      return `remember "${arg("fact")}"`;
+    case "forget":
+      return `forget "${arg("fact")}"`;
+    case "recall":
+      return `search her memory for "${arg("query")}"`;
     case "generate_image": {
       const prompt = arg("prompt");
       return `draw "${prompt.length > 80 ? `${prompt.slice(0, 79)}…` : prompt}"`;

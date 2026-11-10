@@ -42,6 +42,8 @@ pub enum Start {
     Continue,
     /// Resume the session matching this ID prefix.
     Resume(String),
+    /// A new incognito chat: no memory, deleted when you leave it.
+    Incognito,
 }
 
 pub struct ChatOptions {
@@ -74,12 +76,14 @@ pub async fn run_chat<S: LineSource, W: Write>(
         width: options.width.max(20),
         pictures: options.pictures,
         session: None,
+        incognito: false,
         last_tool: None,
     };
 
     chat.banner().await?;
     let start = match options.start {
         Start::New => Ok(()),
+        Start::Incognito => chat.start_incognito(),
         Start::Continue => chat.continue_latest().await,
         Start::Resume(prefix) => chat.resume(&prefix).await,
     };
@@ -119,6 +123,8 @@ struct Chat<'a, W: Write> {
     pictures: bool,
     /// `None` until the first message (or a command that needs a session).
     session: Option<String>,
+    /// This chat (or the next one started) is incognito.
+    incognito: bool,
     /// The most recent tool call, its output and whether it failed, for `/last`.
     last_tool: Option<(ToolCall, String, bool)>,
 }
@@ -216,7 +222,30 @@ impl<W: Write> Chat<'_, W> {
         }
     }
 
+    /// The next chat is incognito.
+    fn start_incognito(&mut self) -> Result<()> {
+        self.incognito = true;
+        self.note(
+            "Incognito chat: she won't read or save memories, and the chat is deleted when you \
+             leave it.",
+        )?;
+        Ok(())
+    }
+
+    /// Delete the incognito chat being left (the core also does when this client goes).
+    async fn leave_incognito(&mut self) {
+        if !std::mem::take(&mut self.incognito) {
+            return;
+        }
+        if let Some(id) = self.session.take() {
+            let _: Result<Value> = self
+                .call(method::SESSIONS_DELETE, SessionParams { session_id: id })
+                .await;
+        }
+    }
+
     async fn resume(&mut self, prefix: &str) -> Result<()> {
+        self.leave_incognito().await;
         let id: String = self
             .call(
                 method::SESSIONS_RESOLVE,
@@ -287,6 +316,7 @@ impl<W: Write> Chat<'_, W> {
             .call(
                 method::CHAT_SEND,
                 ChatSendParams {
+                    incognito: self.incognito && self.session.is_none(),
                     images: Vec::new(),
                     session_id: self.session.clone(),
                     text,
@@ -563,8 +593,14 @@ impl<W: Write> Chat<'_, W> {
             }
             Command::Quit => {}
             Command::New => {
+                self.leave_incognito().await;
                 self.session = None;
                 self.note("New chat.")?;
+            }
+            Command::NewIncognito => {
+                self.leave_incognito().await;
+                self.session = None;
+                self.start_incognito()?;
             }
             Command::Sessions => {
                 let sessions: Vec<SessionSummary> =
@@ -578,7 +614,8 @@ impl<W: Write> Chat<'_, W> {
                     let id = self.styled("36", &s.id[..10]);
                     let title = s.title.as_deref().unwrap_or("(untitled)");
                     let count = self.styled("2", &format!("({} messages)", s.message_count));
-                    self.say(&format!("{marker} {id}  {title}  {count}"))?;
+                    let incognito = if s.incognito { "  (incognito)" } else { "" };
+                    self.say(&format!("{marker} {id}  {title}  {count}{incognito}"))?;
                 }
             }
             Command::Resume(prefix) => self.resume(&prefix).await?,

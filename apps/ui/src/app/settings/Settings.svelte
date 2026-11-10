@@ -7,6 +7,7 @@
   import AgentSection from "./AgentSection.svelte";
   import ImagesSection from "./ImagesSection.svelte";
   import McpSection from "./McpSection.svelte";
+  import MemorySection from "./MemorySection.svelte";
   import ModelsSection from "./ModelsSection.svelte";
   import PersonaSection from "./PersonaSection.svelte";
   import RemoteSection from "./RemoteSection.svelte";
@@ -24,11 +25,21 @@
     onClose: () => void;
   } = $props();
 
-  type Page = "models" | "agent" | "persona" | "mcp" | "images" | "sprite" | "remote" | "service";
+  type Page =
+    | "models"
+    | "agent"
+    | "persona"
+    | "memory"
+    | "mcp"
+    | "images"
+    | "sprite"
+    | "remote"
+    | "service";
   const pages: { id: Page; label: string }[] = $derived([
     { id: "models", label: "Models & keys" },
     { id: "agent", label: "Chat & agent" },
     { id: "persona", label: "Persona" },
+    { id: "memory", label: "Memory" },
     { id: "mcp", label: "MCP servers" },
     { id: "images", label: "Pictures" },
     { id: "sprite", label: "Sprite" },
@@ -89,6 +100,7 @@
       {#if page === "models"}<ModelsSection {store} />
       {:else if page === "agent"}<AgentSection {store} />
       {:else if page === "persona"}<PersonaSection {store} />
+      {:else if page === "memory"}<MemorySection {store} />
       {:else if page === "mcp"}<McpSection {store} />
       {:else if page === "images"}<ImagesSection {store} />
       {:else if page === "sprite"}<SpriteSection {store} />

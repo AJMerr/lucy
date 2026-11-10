@@ -345,3 +345,31 @@ test("a picture is fetched from the core once, as something an <img> can show", 
   assert.equal(again, first);
   assert.deepEqual(fake.sent("images.get"), [{ id: "aa11.png" }]);
 });
+
+// --- Incognito ---------------------------------------------------------------------------------
+
+test("an incognito chat starts with your first message and is deleted when you leave it", async () => {
+  const fake = core();
+  fake.answers["chat.send"] = { session_id: "01SECRET", turn_id: 1 };
+  fake.answers["sessions.delete"] = null;
+  fake.answers["sessions.load"] = (params: Record<string, unknown>) =>
+    params.session_id === "01SECRET"
+      ? { summary: { ...summary("01SECRET", "shh", 300), incognito: true }, messages: [] }
+      : { summary: summary("01OLD", "Old chat", 100), messages: [] };
+  const store = new ChatsStore(fake);
+  const state = watch(store);
+  await store.load();
+
+  await store.newChat(true);
+  assert.equal(state().incognito, true);
+  await store.send("shh");
+  assert.deepEqual(fake.sent("chat.send"), [{ text: "shh", incognito: true }]);
+  assert.equal(state().selected, "01SECRET");
+
+  await store.open("01OLD");
+
+  assert.deepEqual(fake.sent("sessions.delete"), [{ session_id: "01SECRET" }]);
+  assert.ok(!state().sessions.some((s) => s.id === "01SECRET"));
+  assert.equal(state().chats["01SECRET"], undefined);
+  assert.equal(state().incognito, false);
+});

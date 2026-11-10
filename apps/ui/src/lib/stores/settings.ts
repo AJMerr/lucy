@@ -14,6 +14,7 @@ export const SECTIONS = {
   agent: ["agent", "tools", "user"],
   mcp: ["mcp"],
   images: ["images"],
+  memory: ["memory"],
   sprite: ["sprite", "app"],
   remote: ["remote"],
 } as const;
@@ -38,6 +39,13 @@ export interface KeyStatus {
   error?: string;
 }
 
+/** Lucy's memory (`memory.get`). */
+export interface MemoryView {
+  path: string;
+  text: string;
+  facts: { heading: string; text: string }[];
+}
+
 export interface PersonaView {
   name: string;
   text: string;
@@ -56,6 +64,7 @@ export interface SettingsState {
   sections: Record<SectionId, Section>;
   keys: KeyStatus[];
   persona: PersonaView | null;
+  memory: MemoryView | null;
   /** A saved change only applies once the core restarts. */
   restartNeeded: boolean;
 }
@@ -73,6 +82,7 @@ export class SettingsStore {
     sections: emptySections(),
     keys: [],
     persona: null,
+    memory: null,
     restartNeeded: false,
   };
   private readonly subscribers = new Set<(state: SettingsState) => void>();
@@ -104,7 +114,7 @@ export class SettingsStore {
       sections,
     });
     if (view.config !== null) {
-      await Promise.all([this.refreshKeys(), this.refreshPersona()]);
+      await Promise.all([this.refreshKeys(), this.refreshPersona(), this.refreshMemory()]);
     }
   }
 
@@ -165,6 +175,11 @@ export class SettingsStore {
     await this.refreshPersona();
   }
 
+  /** Replace what she remembers (memory.md's text). */
+  async saveMemory(text: string): Promise<void> {
+    this.update({ memory: await this.core.call<MemoryView>("memory.set", { text }) });
+  }
+
   /** Sign in to a remote MCP server (the browser opens on the core's machine). */
   async signIn(server: string): Promise<void> {
     await this.core.call("mcp.login", { name: server });
@@ -175,6 +190,14 @@ export class SettingsStore {
       this.update({ keys: await this.core.call<KeyStatus[]>("keys.status") });
     } catch {
       this.update({ keys: [] });
+    }
+  }
+
+  private async refreshMemory(): Promise<void> {
+    try {
+      this.update({ memory: await this.core.call<MemoryView>("memory.get") });
+    } catch {
+      this.update({ memory: null });
     }
   }
 

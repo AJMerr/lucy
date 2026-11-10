@@ -16,6 +16,8 @@ pub enum Command {
     Help,
     Quit,
     New,
+    /// A new chat with no memory, deleted when you leave it.
+    NewIncognito,
     Sessions,
     Resume(String),
     Rename(String),
@@ -59,7 +61,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     ("/tools", "list Lucy's tools and which ones ask first"),
     ("/last", "show the last tool call's full input and output"),
-    ("/new", "start a new chat"),
+    (
+        "/new",
+        "[incognito]  start a new chat (incognito: no memory, not kept)",
+    ),
     ("/sessions", "list saved chats"),
     (
         "/resume",
@@ -96,7 +101,9 @@ pub fn parse(line: &str) -> Result<Input, String> {
     let command = match (name.to_ascii_lowercase().as_str(), arg) {
         ("help", _) => Command::Help,
         ("quit" | "exit", _) => Command::Quit,
-        ("new", _) => Command::New,
+        ("new", Some(kind)) if kind.eq_ignore_ascii_case("incognito") => Command::NewIncognito,
+        ("new", None) => Command::New,
+        ("new", Some(_)) => return usage("/new [incognito]"),
         ("sessions", _) => Command::Sessions,
         ("tools", _) => Command::Tools,
         ("last", _) => Command::Last,

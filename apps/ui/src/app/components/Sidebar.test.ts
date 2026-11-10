@@ -71,3 +71,20 @@ test("deleting asks first", async () => {
 
   assert.deepEqual(deleted, ["01AAA"]);
 });
+
+test("New incognito chat starts one, and an incognito chat is marked", async () => {
+  let incognito = 0;
+  render(
+    Sidebar,
+    props({
+      sessions: [...sessions, { ...sessions[0], id: "01CCC", title: "Secret", incognito: true }],
+      onNewIncognito: () => incognito++,
+    }),
+  );
+
+  await fireEvent.click(screen.getByRole("button", { name: "New incognito chat" }));
+
+  assert.equal(incognito, 1);
+  const secret = screen.getAllByRole("listitem")[2];
+  assert.ok(secret?.textContent?.includes("incognito"), secret?.textContent ?? "");
+});
