@@ -13,6 +13,7 @@
 
   let {
     title,
+    incognito = false,
     settings,
     profiles,
     busy,
@@ -23,6 +24,8 @@
     onUndo,
   }: {
     title: string;
+    /** No memory; deleted when you leave it. */
+    incognito?: boolean;
     settings: SessionSettings | null;
     profiles: ProfileInfo[];
     busy: boolean;
@@ -42,7 +45,7 @@
 </script>
 
 <header>
-  <h1>{title}</h1>
+  <h1>{title}{#if incognito}<span class="incognito" title="No memory; deleted when you leave it">incognito</span>{/if}</h1>
   {#if settings !== null}
     <div class="controls">
       <label>
@@ -100,6 +103,16 @@
 </header>
 
 <style>
+  .incognito {
+    font-size: 12px;
+    font-weight: normal;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0 6px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
   header {
     display: flex;
     flex-wrap: wrap;

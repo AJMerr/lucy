@@ -183,8 +183,12 @@
       {selected}
       {unread}
       onSelect={open}
+      onNewIncognito={() => {
+        chats.newChat(true).catch((err) => (problem = message(err)));
+        menuOpen = false;
+      }}
       onNew={() => {
-        chats.newChat();
+        chats.newChat().catch((err) => (problem = message(err)));
         menuOpen = false;
       }}
       onRename={(id, title) => chats.rename(id, title).catch((err) => (problem = message(err)))}
@@ -218,6 +222,7 @@
     {#if chat !== undefined && session !== undefined}
       <ChatHeader
         title={session.title ?? "Untitled chat"}
+        incognito={session.incognito === true}
         settings={chat.settings}
         {profiles}
         busy={chat.busy}
@@ -265,7 +270,11 @@
     {:else}
       <section class="welcome">
         <h1>Lucy</h1>
-        <p>Pick a chat, or start a new one below.</p>
+        {#if $chats.incognito}
+          <p>Incognito chat: she won't read or save memories, and it's deleted when you leave it.</p>
+        {:else}
+          <p>Pick a chat, or start a new one below.</p>
+        {/if}
       </section>
       <Composer
         bind:this={composer}
