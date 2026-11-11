@@ -108,6 +108,8 @@
                   pkg-config
                   nodejs_24
                   cargo-tauri
+                  mdbook
+                  lychee
                 ]
                 ++ pkgs.lib.optionals isLinux tauriLinuxDeps;
 

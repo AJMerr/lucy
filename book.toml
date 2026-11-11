@@ -1,0 +1,23 @@
+# The docs site (https://ajmerr.github.io/lucy/), built from docs/ by .github/workflows/docs.yml.
+# Preview it with `mdbook serve` (it's in `nix develop`).
+
+[book]
+title = "Lucy"
+description = "A model-agnostic personal AI assistant: terminal, desktop sprite and app"
+authors = ["AJMerr and the Lucy contributors"]
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "target/book"
+create-missing = false
+
+[output.html]
+site-url = "/lucy/"
+git-repository-url = "https://github.com/AJMerr/lucy"
+edit-url-template = "https://github.com/AJMerr/lucy/edit/main/docs/{path}"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+
+[output.html.search]
+enable = true
