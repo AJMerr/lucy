@@ -106,9 +106,9 @@ jobs:
     env:
       PUBLISH: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
     steps:
+      # The templates come from the workflow's own ref (the tag, for a release); the files
+      # they describe come from the release.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
       - name: Fill in the packages
         run: packaging/render.sh "${TAG#v}" packages
       - uses: actions/upload-artifact@v4
