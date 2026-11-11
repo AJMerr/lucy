@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: voice
+## v0.9.0: voice (2026-11-11)
 
 Talk to Lucy and hear her, in her desktop app. See [docs/voice.md](docs/voice.md).
 
