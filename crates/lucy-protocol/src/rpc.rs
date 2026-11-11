@@ -21,6 +21,14 @@ pub mod method {
     pub const SUBSCRIBE: &str = "subscribe";
     pub const CHAT_SEND: &str = "chat.send";
     pub const CHAT_CANCEL: &str = "chat.cancel";
+    /// `/clear`: she starts afresh from here; the chat stays as it was.
+    pub const CHAT_CLEAR: &str = "chat.clear";
+    /// `/compress`: summarise the chat so far now (`{summary}`).
+    pub const CHAT_COMPRESS: &str = "chat.compress";
+    /// A provider's models (for adding one), before any profile uses them.
+    pub const MODELS_LIST: &str = "models.list";
+    /// Send a model a test message (`{reply}`), before saving a profile for it.
+    pub const MODELS_TRY: &str = "models.try";
     pub const SESSIONS_CREATE: &str = "sessions.create";
     pub const SESSIONS_LIST: &str = "sessions.list";
     pub const SESSIONS_LOAD: &str = "sessions.load";
@@ -352,6 +360,9 @@ pub struct ResolveParams {
 pub struct SetProfileParams {
     pub session_id: String,
     pub profile: String,
+    /// Also make it the default for new chats (and the sprite).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub make_default: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -464,6 +475,10 @@ pub struct StoredMessage {
     /// Pictures you attached (fetch one with `images.get`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ImageRef>,
+    /// Not a message but a marker: `cleared` (/clear) or `summary` (older turns summarised;
+    /// `content` is the summary).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -733,4 +748,31 @@ pub struct ScheduleUpdate {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScheduleId {
     pub id: String,
+}
+
+/// `models.list`: a provider's models, with a key from the keyring (`key_name`) or given.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelsListParams {
+    /// `openai_compat` or `anthropic`.
+    pub provider: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub key_name: Option<String>,
+    /// A key not saved yet (it isn't kept).
+    #[serde(default)]
+    pub key: Option<String>,
+}
+
+/// `models.try`: like `models.list`, for one model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelsTryParams {
+    pub provider: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    pub model: String,
+    #[serde(default)]
+    pub key_name: Option<String>,
+    #[serde(default)]
+    pub key: Option<String>,
 }

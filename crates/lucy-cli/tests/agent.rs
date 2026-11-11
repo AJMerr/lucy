@@ -439,6 +439,7 @@ async fn chat_settings_survive_a_core_restart() {
             .call(
                 method::SESSION_SET_PROFILE,
                 SetProfileParams {
+                    make_default: false,
                     session_id: id.clone(),
                     profile: "other".into(),
                 },

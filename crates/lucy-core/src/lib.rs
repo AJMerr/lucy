@@ -4,6 +4,7 @@
 //! servers, mode/permission enforcement, and the IPC listeners front ends connect to.
 
 pub mod config;
+pub mod context;
 pub mod generate;
 pub mod mcp;
 pub mod memory;

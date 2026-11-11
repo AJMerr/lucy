@@ -15,17 +15,18 @@ use lucy_protocol::rpc::{
     self, ApproveParams, BusyChat, CancelResult, ChatSendParams, ChatSendResult,
     ConfigUpdateParams, ConfigUpdateResult, ConfigView, CoreStatus, Decision, Event, HelloParams,
     HelloResult, ImageGenerateParams, ImageParams, KeyParams, KeySetParams, KeyStatus,
-    MemorySetParams, Notification, PROTOCOL_VERSION, PersonaSetParams, PersonaView, ProfileInfo,
-    RenameParams, Request, ResolveParams, Response, RpcError, ScheduleId, ServerProblem,
-    SessionParams, SessionSettings, SetLevelParams, SetModeParams, SetPlainParams,
-    SetProfileParams, ShutdownParams, ShutdownResult, SubscribeParams, ToolsList, ToolsListParams,
-    TurnOutcome, TurnUsage, UndoFile, UndoParams, UndoResult, code, method,
+    MemorySetParams, ModelsListParams, ModelsTryParams, Notification, PROTOCOL_VERSION,
+    PersonaSetParams, PersonaView, ProfileInfo, RenameParams, Request, ResolveParams, Response,
+    RpcError, ScheduleId, ServerProblem, SessionParams, SessionSettings, SetLevelParams,
+    SetModeParams, SetPlainParams, SetProfileParams, ShutdownParams, ShutdownResult,
+    SubscribeParams, ToolsList, ToolsListParams, TurnOutcome, TurnUsage, UndoFile, UndoParams,
+    UndoResult, code, method,
 };
 use lucy_protocol::{AgentLevel, Message, Mode, Role, ToolCall};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, Usage};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -33,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{Config, McpServer, ProviderKind, ToolSettings};
 use crate::mcp::McpHost;
 use crate::persona::{Personas, PromptContext, build_system_prompt, detect_machine};
-use crate::provider::build_provider;
+use crate::provider::{build_provider, build_provider_with_key};
 
 use crate::generate::Generator;
 use crate::secrets::{KeySource, SecretStore, Secrets};
@@ -145,6 +146,8 @@ struct Core {
     schedules_changed: Notify,
     /// Clients that show notifications themselves (the desktop app).
     notifying: AtomicUsize,
+    /// Context sizes learned from providers, by provider, address and model.
+    context_limits: Mutex<HashMap<String, Option<u32>>>,
 }
 
 #[derive(Default, Clone)]
@@ -218,6 +221,7 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         notifier,
         schedules_changed: Notify::new(),
         notifying: AtomicUsize::new(0),
+        context_limits: Mutex::default(),
     });
 
     // Reminders and scheduled tasks.
@@ -526,6 +530,67 @@ async fn handle(
     match request.method.as_str() {
         method::CHAT_SEND => chat_send(core, state, params(request.params)?),
         method::IMAGES_GENERATE => images_generate(core, state, params(request.params)?),
+        method::CHAT_CLEAR => {
+            let p: SessionParams = params(request.params)?;
+            let key = core.resolve_key(&p.session_id)?;
+            core.not_busy(&key)?;
+            let id: SessionId = key.parse().map_err(app)?;
+            core.store
+                .lock()
+                .unwrap()
+                .append(&id, NewMessage::cleared())
+                .map_err(app)?;
+            result(Value::Null)
+        }
+        method::CHAT_COMPRESS => {
+            let p: SessionParams = params(request.params)?;
+            let key = core.resolve_key(&p.session_id)?;
+            core.not_busy(&key)?;
+            result(json!({"summary": compress_now(core, &key).await?}))
+        }
+        method::MODELS_LIST => {
+            let p: ModelsListParams = params(request.params)?;
+            let (kind, base_url, key) =
+                provider_access(core, &p.provider, p.base_url, p.key_name, p.key)?;
+            result(
+                lucy_providers::models::list_models(kind, &base_url, key.as_deref())
+                    .await
+                    .map_err(app)?,
+            )
+        }
+        method::MODELS_TRY => {
+            let p: ModelsTryParams = params(request.params)?;
+            let (_, base_url, key) =
+                provider_access(core, &p.provider, p.base_url, p.key_name, p.key)?;
+            let profile = crate::config::Profile {
+                provider: if p.provider == "anthropic" {
+                    crate::config::ProviderKind::Anthropic
+                } else {
+                    crate::config::ProviderKind::OpenAiCompat
+                },
+                base_url: (!base_url.is_empty()).then_some(base_url),
+                model: p.model,
+                key_name: None,
+                price_in: None,
+                price_out: None,
+                tools: false,
+                vision: false,
+                context_tokens: None,
+            };
+            let provider = build_provider_with_key("try", &profile, key).map_err(app)?;
+            let request = lucy_providers::ChatRequest {
+                messages: vec![Message::new(Role::User, "Reply with just the word OK.")],
+                tools: Vec::new(),
+            };
+            let mut stream = provider.stream(request).await.map_err(app)?;
+            let mut reply = String::new();
+            while let Some(event) = stream.next().await {
+                if let StreamEvent::TextDelta(delta) = event.map_err(app)? {
+                    reply.push_str(&delta);
+                }
+            }
+            result(json!({"reply": reply.trim()}))
+        }
         method::CHAT_CANCEL => {
             let p: SessionParams = params(request.params)?;
             let key = core.resolve_key(&p.session_id)?;
@@ -619,6 +684,13 @@ async fn handle(
                         .collect::<Vec<_>>()
                         .join(", ")
                 )));
+            }
+            if p.make_default {
+                crate::config::update_file(
+                    &core.options.config_path,
+                    &json!({"defaults": {"profile": p.profile}}),
+                )
+                .map_err(app)?;
             }
             core.update_settings(&p.session_id, &config, |s| s.profile = Some(p.profile))
         }
@@ -885,6 +957,16 @@ impl Core {
     /// Where pictures you attach are kept: `images/` next to the chats database.
     fn images_dir(&self) -> PathBuf {
         images_dir(&self.options.db_path)
+    }
+
+    /// Refuse while she's replying in this chat.
+    fn not_busy(&self, key: &str) -> Result<(), RpcError> {
+        if self.turns.lock().unwrap().contains_key(key) {
+            return Err(RpcError::app(
+                "Lucy is still replying in this chat; wait or stop her first",
+            ));
+        }
+        Ok(())
     }
 
     /// Delete an incognito chat, its pictures with it (unless another chat has them too).
@@ -1254,14 +1336,36 @@ fn start_turn(core: &Arc<Core>, request: TurnRequest) -> Result<u64, RpcError> {
         (false, true) => crate::pictures::Sight::Helped,
         (false, false) => crate::pictures::Sight::Blind,
     };
+    // What the model gets: after the last /clear, with a summary for what it covers.
+    let visible = crate::context::visible(history);
     let mut pending = Vec::new();
-    let history = history
+    let history = visible
+        .messages
         .into_iter()
         .map(|m| crate::pictures::attach(&images_dir, m.message, &m.images, &sight, &mut pending))
         .collect();
-    let messages = std::iter::once(Message::new(Role::System, system))
+    let summary = visible
+        .summary
+        .as_deref()
+        .map(crate::context::summary_message);
+    let messages: Vec<Message> = std::iter::once(Message::new(Role::System, system))
+        .chain(summary.clone())
         .chain(close_dangling_calls(history))
         .collect();
+    let context = ContextPlan {
+        limit: profile.context_tokens,
+        model: (
+            profile.provider,
+            profile.base_url.clone().unwrap_or_default(),
+            crate::provider::profile_key(&settings.profile, profile, &core.options.secrets)
+                .ok()
+                .flatten(),
+            profile.model.clone(),
+        ),
+        first: visible.first,
+        history_at: 1 + usize::from(summary.is_some()),
+        summary: visible.summary,
+    };
 
     let turn_id = core.next_turn.fetch_add(1, Ordering::Relaxed);
     core.activity.add(&core.activity.turns, 1);
@@ -1297,6 +1401,7 @@ fn start_turn(core: &Arc<Core>, request: TurnRequest) -> Result<u64, RpcError> {
         budget,
         cancel,
         memory: memory_plan,
+        context,
         pictures: Pictures {
             dir: images_dir,
             sight,
@@ -1485,6 +1590,21 @@ struct Plan {
     pictures: Pictures,
     /// Her memory, to add to the system prompt before the first step.
     memory: Option<MemoryPlan>,
+    /// Keeping the chat within the model's context window.
+    context: ContextPlan,
+}
+
+/// How big a reply's prompt may get, and what to summarise if it's too big.
+struct ContextPlan {
+    /// `context_tokens`, or `None` to learn it from the provider.
+    limit: Option<u32>,
+    /// Where to ask: provider, base URL, key and model.
+    model: (crate::config::ProviderKind, String, Option<String>, String),
+    /// The chat's index of the first message after the system prompt (and summary).
+    first: usize,
+    /// Where the chat's messages start in the prompt.
+    history_at: usize,
+    summary: Option<String>,
 }
 
 /// Which memories go into this reply's prompt.
@@ -1620,6 +1740,18 @@ impl Turn {
             && system.role == Role::System
         {
             system.content = format!("{}\n\n{section}", system.content);
+        }
+        // Too big for the model: summarise older turns first. Small prompts fit any model, so
+        // there's no need to learn its context size for them.
+        let size = crate::context::estimate(&messages);
+        let worth_checking = plan.context.limit.is_some() || size > crate::context::FITS_ANY;
+        if worth_checking
+            && let Some(limit) = self.context_limit(&plan.context).await
+            && size > (limit as f32 * crate::context::SUMMARISE_AT) as usize
+        {
+            messages = self
+                .compress(&*plan.provider, messages, &plan.context, limit)
+                .await;
         }
         let pictures = &plan.pictures;
         if let Some(helper) = &pictures.helper {
@@ -2012,6 +2144,72 @@ impl Turn {
         decision.ok().and_then(Result::ok)
     }
 
+    /// The model's context size: configured, learned before, or asked of the provider now.
+    async fn context_limit(&self, context: &ContextPlan) -> Option<u32> {
+        if let Some(limit) = context.limit {
+            return Some(limit);
+        }
+        let (kind, base_url, key, model) = &context.model;
+        let cache_key = format!("{kind:?} {base_url} {model}");
+        if let Some(known) = self.core.context_limits.lock().unwrap().get(&cache_key) {
+            return *known;
+        }
+        let kind = match kind {
+            crate::config::ProviderKind::Anthropic => lucy_providers::models::Kind::Anthropic,
+            crate::config::ProviderKind::OpenAiCompat => lucy_providers::models::Kind::OpenAiCompat,
+        };
+        let asked = tokio::time::timeout(
+            Duration::from_secs(5),
+            lucy_providers::models::describe_model(kind, base_url, key.as_deref(), model),
+        )
+        .await;
+        let limit = match asked {
+            Ok(Ok(info)) => info.context_tokens,
+            _ => None,
+        };
+        self.core
+            .context_limits
+            .lock()
+            .unwrap()
+            .insert(cache_key, limit);
+        limit
+    }
+
+    /// Replace older turns with a summary (saved with the chat), keeping recent ones word for
+    /// word. Returns the prompt unchanged if there's nothing older to summarise.
+    async fn compress(
+        &self,
+        provider: &dyn Provider,
+        messages: Vec<Message>,
+        context: &ContextPlan,
+        limit: u32,
+    ) -> Vec<Message> {
+        let at = context.history_at.min(messages.len());
+        let history = &messages[at..];
+        let keep = (limit as f32 * crate::context::KEEP) as usize;
+        let cut = crate::context::cut(history, keep);
+        if cut == 0 {
+            return messages;
+        }
+        match crate::context::summarise(provider, context.summary.as_deref(), &history[..cut]).await
+        {
+            Ok(summary) => {
+                self.save(NewMessage::summary(
+                    summary.clone(),
+                    (context.first + cut) as u32,
+                ));
+                std::iter::once(messages[0].clone())
+                    .chain(std::iter::once(crate::context::summary_message(&summary)))
+                    .chain(history[cut..].iter().cloned())
+                    .collect()
+            }
+            Err(err) => {
+                eprintln!("couldn't summarise the chat: {err}");
+                messages
+            }
+        }
+    }
+
     /// Report a call that didn't run, as if it ran and failed with `reason` (its result is
     /// announced with the others').
     fn announce(&self, call: &ToolCall, reason: String) -> ToolOutput {
@@ -2098,6 +2296,7 @@ fn session_dto(session: crate::sessions::Session) -> rpc::Session {
                 incomplete: m.incomplete,
                 created_at_ms: millis(m.created_at),
                 images: m.images,
+                marker: m.marker,
             })
             .collect(),
     }
@@ -2183,4 +2382,62 @@ fn remove_pictures(dir: &Path, ids: &[String]) {
         let _ = std::fs::remove_file(path.with_extension("description.txt"));
         let _ = std::fs::remove_file(path);
     }
+}
+
+/// `/compress`: summarise everything the model would get of the chat, now.
+async fn compress_now(core: &Arc<Core>, key: &str) -> Result<String, RpcError> {
+    let config = core.config()?;
+    let settings = core.settings(key, &config)?;
+    let profile = &config.profiles[&settings.profile];
+    let provider =
+        build_provider(&settings.profile, profile, &core.options.secrets).map_err(app)?;
+    let id: SessionId = key.parse().map_err(app)?;
+    let history = core.store.lock().unwrap().load(&id).map_err(app)?.messages;
+    let total = history.len();
+    let visible = crate::context::visible(history);
+    let messages: Vec<Message> = visible.messages.into_iter().map(|m| m.message).collect();
+    if messages.is_empty() {
+        return Err(RpcError::app("there's nothing new to compress"));
+    }
+    let summary = crate::context::summarise(&*provider, visible.summary.as_deref(), &messages)
+        .await
+        .map_err(RpcError::app)?;
+    core.store
+        .lock()
+        .unwrap()
+        .append(&id, NewMessage::summary(summary.clone(), total as u32))
+        .map_err(app)?;
+    Ok(summary)
+}
+
+/// Where to reach a provider, for `models.*`: its kind, address and key.
+fn provider_access(
+    core: &Core,
+    provider: &str,
+    base_url: Option<String>,
+    key_name: Option<String>,
+    key: Option<String>,
+) -> Result<(lucy_providers::models::Kind, String, Option<String>), RpcError> {
+    let kind = match provider {
+        "anthropic" => lucy_providers::models::Kind::Anthropic,
+        "openai_compat" => lucy_providers::models::Kind::OpenAiCompat,
+        other => return Err(RpcError::app(format!("no provider `{other}`"))),
+    };
+    let base_url = base_url.unwrap_or_default();
+    if kind == lucy_providers::models::Kind::OpenAiCompat && base_url.is_empty() {
+        return Err(RpcError::app(
+            "an OpenAI-compatible provider needs its address",
+        ));
+    }
+    let key = match (key.filter(|k| !k.is_empty()), key_name) {
+        (Some(key), _) => Some(key),
+        (None, Some(name)) => core
+            .options
+            .secrets
+            .resolve(&name)
+            .map_err(app)?
+            .map(|resolved| resolved.value),
+        (None, None) => None,
+    };
+    Ok((kind, base_url, key))
 }

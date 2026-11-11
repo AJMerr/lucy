@@ -672,6 +672,7 @@ impl<W: Write> Chat<'_, W> {
                     .call(
                         method::SESSION_SET_PROFILE,
                         SetProfileParams {
+                            make_default: false,
                             session_id,
                             profile,
                         },

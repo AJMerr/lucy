@@ -36,8 +36,15 @@ where
     S: SecretStore,
     E: Fn(&str) -> Option<String>,
 {
-    let api_key = api_key(name, profile, secrets)?;
+    build_provider_with_key(name, profile, api_key(name, profile, secrets)?)
+}
 
+/// Create the provider for `profile` with this API key (e.g. one being tried, not saved yet).
+pub fn build_provider_with_key(
+    name: &str,
+    profile: &Profile,
+    api_key: Option<String>,
+) -> Result<Box<dyn Provider>, BuildError> {
     Ok(match profile.provider {
         ProviderKind::OpenAiCompat => Box::new(OpenAiCompat::new(OpenAiCompatConfig {
             name: name.to_owned(),
@@ -126,4 +133,17 @@ where
         model: profile.model.clone(),
         api_key: api_key(name, profile, secrets)?,
     }))
+}
+
+/// Profile `name`'s API key, if it names one (`None` if it doesn't).
+pub fn profile_key<S, E>(
+    name: &str,
+    profile: &Profile,
+    secrets: &Secrets<S, E>,
+) -> Result<Option<String>, BuildError>
+where
+    S: SecretStore,
+    E: Fn(&str) -> Option<String>,
+{
+    api_key(name, profile, secrets)
 }

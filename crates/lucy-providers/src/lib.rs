@@ -16,6 +16,7 @@ pub mod embed;
 pub mod generate;
 mod http;
 pub mod mock;
+pub mod models;
 pub mod openai_compat;
 mod sse;
 #[cfg(feature = "testing")]
