@@ -344,3 +344,37 @@ async fn new_incognito_starts_one_and_leaving_it_deletes_it() {
     assert!(listing.contains("a normal chat"), "{transcript}");
     assert!(!listing.contains("a secret"), "{transcript}");
 }
+
+// --- /clear and /compress -----------------------------------------------------------------------
+
+#[tokio::test]
+async fn clear_starts_her_afresh_and_compress_summarises() {
+    let h = Harness::start(
+        vec![
+            reply("Noted."),
+            reply("SUMMARY: nothing much."),
+            reply("Fresh."),
+        ],
+        vec![],
+    )
+    .await;
+
+    let transcript = h
+        .chat(
+            Start::New,
+            &["remember heron", "/compress", "/clear", "what did I say?"],
+        )
+        .await;
+
+    assert!(transcript.contains("Summarised"), "{transcript}");
+    assert!(
+        transcript.contains("SUMMARY: nothing much."),
+        "{transcript}"
+    );
+    assert!(transcript.contains("Cleared"), "{transcript}");
+    let sent = messages_sent(&h.main, 2);
+    assert!(
+        !sent.iter().any(|(_, text)| text.contains("heron")),
+        "{sent:?}"
+    );
+}

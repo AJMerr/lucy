@@ -4,9 +4,10 @@ A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her 
 or let her live on your desktop as an animated sprite with speech bubbles that you can toggle on
 and off.
 
-> **Status:** v0.9.0: terminal chat with any OpenAI-compatible or Anthropic model, able to
-> read, search, run and edit with your approval, use any MCP server you add, and work through
-> tasks on her own within limits you set. She remembers you across chats, reminds you of things
+> **Status:** v0.10.0: terminal chat with any OpenAI-compatible or Anthropic model (added in a
+> few clicks, from the models the provider offers), able to read, search, run and edit with your
+> approval, use any MCP server you add, and work through tasks on her own within limits you set.
+> Long chats are summarised to fit. She remembers you across chats, reminds you of things
 > and runs scheduled tasks, talks and listens in her app, looks at pictures you show her and
 > makes pictures with OpenRouter image models or ComfyUI. The core can run from login and serve
 > your other machines. Lucy's app puts her on the desktop as an animated sprite, with a main
@@ -16,7 +17,13 @@ and off.
 ## What works today
 
 - **Any model.** OpenAI-compatible APIs (Ollama, OpenAI, Qwen/DashScope, OpenRouter, LM Studio,
-  llama.cpp, vLLM…) and Anthropic, set up as named profiles. Switch per chat with `/model`.
+  llama.cpp, vLLM…) and Anthropic, set up as named profiles. Add one without knowing its ID:
+  pick the provider, paste its key, choose from the models it offers and try it (Settings →
+  Models & keys, or `lucy config add-model`). Switch per chat with `/model`. See
+  [docs/models.md](docs/models.md).
+- **Long chats fit.** Near a model's context size, older turns are summarised and recent ones
+  kept word for word; the chat itself keeps everything. `/clear` starts her afresh and
+  `/compress` summarises now, in the terminal, the window and the sprite.
 - **Lucy's voice, facts intact.** She stays in character, but accuracy, clean code and plain safety
   warnings come first. `/plain` drops the character entirely. The persona is a Markdown file you
   can override.
@@ -26,9 +33,10 @@ and off.
   commands, and write or edit files. Reads in your home folder just happen; anything that
   changes files, runs a command or goes online asks first (`y`, `a` for always this chat, `n`).
   Private paths like `~/.ssh` and `.env` files always ask.
-- **Any MCP server.** Add tool servers with `lucy mcp add` (GitHub, databases, browsers…).
-  Lucy starts them when needed, fills their tokens from your keyring, and applies the same
-  approval rules.
+- **Any MCP server.** Add tool servers in Settings → MCP servers (ready-made Google Workspace,
+  GitHub and web browser entries, or paste a server's command) or with `lucy mcp add`. Lucy
+  starts them when needed, fills their tokens from your keyring, and applies the same approval
+  rules. See [docs/mcp.md](docs/mcp.md).
 - **She remembers you.** Lucy saves facts about you as you chat (your preferences, the people
   in your life, your projects) and every chat starts with them. She notes when she saves
   something, asks first for anything sensitive, and never keeps secrets. See and change it all
@@ -137,7 +145,9 @@ In the chat:
 
 | Command | What it does |
 | --- | --- |
-| `/model [profile]` | list profiles, or switch this chat to one |
+| `/model [profile] [--default]` | list profiles, switch this chat to one, or also make it the default |
+| `/clear` | she starts afresh from here (the chat above stays; also in the window and the sprite) |
+| `/compress` | summarise the chat so far, to free up her context (also in the window and the sprite) |
 | `/image <description>` | make a picture straight away (also in the window and the sprite) |
 | `/plain [on\|off]` | drop Lucy's voice (toggles without an argument) |
 | `/new [incognito]`, `/sessions` | start a new chat (incognito: no memory, not kept), list saved chats |
@@ -152,7 +162,7 @@ In the chat:
 Keys: Tab completes commands and profile names, Alt+Enter (or a trailing `\`) starts a new line,
 Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a literal `/`.
 
-Other commands: `lucy config path`, `lucy auth set|remove|status`, `lucy memory [edit]`,
+Other commands: `lucy config path|add-model`, `lucy auth set|remove|status`, `lucy memory [edit]`,
 `lucy tasks`, `lucy mcp add|list|remove|login|logout`,
 `lucy service install|uninstall|status|restart`, `lucy core stop`,
 `lucy remote connect|disconnect|token`, `lucy sprite [ask|talk|chat|toggle|quit]`, `lucy app`.
@@ -205,6 +215,10 @@ set a tool to `auto`, `ask` or `deny`. Add `tools = false` to a profile whose mo
 call tools. See [ADR 0008](docs/adr/0008-tools-over-mcp.md).
 
 ### MCP servers
+
+The app's Settings → MCP servers has ready-made Google Workspace, GitHub and web browser
+entries, and takes a pasted command. [docs/mcp.md](docs/mcp.md) covers those, including making
+the Google OAuth client. In a terminal:
 
 ```sh
 lucy auth set github                     # store the token in the keyring
@@ -327,9 +341,10 @@ plain mode.
 ### Troubleshooting
 
 - **Something's wrong with the core:** check `~/.local/share/lucy/core.log`.
-- **You rebuilt Lucy but the old behaviour sticks:** the previous core is still running. Run
-  `lucy service restart` (or `lucy core stop` if you don't use the service), and the next
-  `lucy` starts a fresh one. Cores from before this release don't know `core stop`: use
+- **You upgraded or rebuilt Lucy but the old behaviour sticks:** the previous core is still
+  running. `lucy` and the app say so when it's older than them (the app's banner has a Restart
+  button). Run `lucy service restart` (or `lucy core stop` if you don't use the service), and
+  the next `lucy` starts a fresh one. Cores from before this release don't know `core stop`: use
   `pkill -f "lucy core run"` once.
 - **The service won't start:** `lucy service status`, then the log above. On Linux,
   `systemctl --user status lucy-core` and `journalctl --user -u lucy-core` show what systemd

@@ -2,6 +2,7 @@
      the API keys they use, which go straight to the keyring and are never shown. -->
 <script lang="ts">
   import type { SettingsStore } from "../../lib/stores/settings.ts";
+  import AddModel from "./AddModel.svelte";
   import SectionBar from "./SectionBar.svelte";
 
   let { store }: { store: SettingsStore } = $props();
@@ -11,6 +12,8 @@
   const names = $derived(Object.keys(draft.profiles ?? {}).sort());
 
   let newName = $state("");
+  let adding = $state(false);
+  let added: string | null = $state(null);
   /** Keys being typed, by key name. Cleared once sent. */
   let typed: Record<string, string> = $state({});
   let keyProblem: string | null = $state(null);
@@ -184,10 +187,26 @@
   </fieldset>
 {/each}
 
-<div class="row add">
-  <input aria-label="New profile name" placeholder="New profile name" bind:value={newName} />
-  <button onclick={add}>Add profile</button>
-</div>
+{#if adding}
+  <AddModel
+    {store}
+    onDone={(name) => {
+      adding = false;
+      added = name;
+    }}
+  />
+  <button class="link" onclick={() => (adding = false)}>Cancel</button>
+{:else}
+  <div class="row add">
+    <button class="primary" onclick={() => ((adding = true), (added = null))}>Add a model…</button>
+    <span class="muted">or by hand:</span>
+    <input aria-label="New profile name" placeholder="New profile name" bind:value={newName} />
+    <button onclick={add}>Add profile</button>
+  </div>
+  {#if added !== null}
+    <p class="muted" role="status">Saved as {added}. Switch a chat to it from the chat's header.</p>
+  {/if}
+{/if}
 
 <SectionBar
   {section}

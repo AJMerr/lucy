@@ -65,7 +65,7 @@ impl Harness {
         }
         let config = format!(
             "[defaults]\nprofile = \"chat\"\n\n\
-             [profiles.chat]\nprovider = \"openai_compat\"\nbase_url = \"{}/v1\"\nmodel = \"m\"\n\n{extra}",
+             [profiles.chat]\nprovider = \"openai_compat\"\nbase_url = \"{}/v1\"\nmodel = \"m\"\ncontext_tokens = 100000\n\n{extra}",
             chat_model.url(),
         );
         std::fs::write(&config_path, config).unwrap();

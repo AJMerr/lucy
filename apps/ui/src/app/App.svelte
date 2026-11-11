@@ -16,6 +16,7 @@
   import Tasks from "./tasks/Tasks.svelte";
   import { DesktopVoice, type VoiceStatus } from "../lib/voice/app.ts";
   import { VoiceController } from "../lib/voice/controller.ts";
+  import { VERSION, olderCore } from "../lib/version.ts";
 
   let { core }: { core: Transport } = $props();
 
@@ -60,6 +61,9 @@
   let profiles: ProfileInfo[] = $state([]);
   let connection: ConnectionState = $state("connecting");
   let problem: string | null = $state(null);
+  /** The core is older than this app: `{version, service}` from core.status. */
+  let staleCore: { version: string; service: boolean } | null = $state(null);
+  let restarting = $state(false);
   let menuOpen = $state(false);
   let undoing: UndoResult | null = $state(null);
   let log: HTMLElement | undefined = $state();
@@ -141,6 +145,28 @@
       (list) => (profiles = list),
       () => {},
     );
+    core.call<{ core_version: string; service: boolean }>("core.status").then(
+      (status) =>
+        (staleCore = olderCore(status.core_version, VERSION)
+          ? { version: status.core_version, service: status.service }
+          : null),
+      () => {},
+    );
+  }
+
+  /** Restart the core so it runs this version (the window reconnects by itself). */
+  async function restartCore(): Promise<void> {
+    if (staleCore === null) {
+      return;
+    }
+    restarting = true;
+    try {
+      await runLucy(staleCore.service ? ["service", "restart"] : ["core", "stop"]);
+      staleCore = null;
+    } catch (err) {
+      problem = message(err);
+    }
+    restarting = false;
   }
 
   async function open(id: string): Promise<void> {
@@ -263,6 +289,18 @@
     {#if connection === "lost"}
       <div class="banner">Lost the connection to Lucy's core. Trying again…</div>
     {/if}
+    {#if staleCore !== null}
+      <div class="banner" role="status">
+        Lucy's core is still v{staleCore.version} (this app is v{VERSION}): it keeps running the old
+        version until it restarts.
+        {#if desktop}
+          <button class="link" disabled={restarting} onclick={restartCore}>Restart it</button>
+        {:else}
+          Run <code>lucy service restart</code> (or <code>lucy core stop</code>) where it runs.
+        {/if}
+        <button class="link" onclick={() => (staleCore = null)}>Dismiss</button>
+      </div>
+    {/if}
     {#if problem !== null}
       <div class="banner">
         {problem}
@@ -282,6 +320,13 @@
         onLevel={(level) => chats.setLevel(level)}
         onPlain={(plain) => chats.setPlain(plain)}
         onUndo={startUndo}
+        onMakeDefault={() =>
+          chats.makeDefault().then(() =>
+            core.call<ProfileInfo[]>("profiles.list").then(
+              (list) => (profiles = list),
+              () => {},
+            ),
+          )}
       />
       {#if undoing !== null}
         <div class="undo">

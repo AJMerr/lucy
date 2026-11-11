@@ -73,6 +73,10 @@ pub struct Profile {
     /// The model can see pictures; others get `[images] vision_profile`'s description.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub vision: bool,
+    /// How many tokens fit in the model's context window; learned from Ollama and OpenRouter
+    /// when unset. Older turns are summarised as a chat nears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u32>,
 }
 
 /// Talking to Lucy and hearing her, in her desktop app (which runs the speech models).

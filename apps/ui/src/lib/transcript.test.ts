@@ -256,3 +256,27 @@ test("a picture she made shows with the tool call that made it, live and from hi
   assert.deepEqual(shown?.kind === "tool" && shown.images, [drawing]);
   assert.deepEqual(tool(saved), tool(live));
 });
+
+test("a /clear and a summary show where they happened, with the summary's text", () => {
+  const transcript = run([
+    {
+      type: "history",
+      messages: [
+        message("user", "hi"),
+        message("system", "", { marker: "cleared" }),
+        message("user", "again"),
+        message("assistant", "Sure."),
+        message("system", "You said hi, then again.", { marker: "summary" }),
+      ],
+      live: null,
+    },
+  ]);
+
+  assert.deepEqual(transcript.entries, [
+    { kind: "you", text: "hi" },
+    { kind: "marker", marker: "cleared" },
+    { kind: "you", text: "again" },
+    { kind: "lucy", text: "Sure.", streaming: false },
+    { kind: "marker", marker: "summary", text: "You said hi, then again." },
+  ]);
+});

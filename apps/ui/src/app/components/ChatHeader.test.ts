@@ -29,6 +29,7 @@ function props(overrides: Record<string, unknown> = {}) {
     onLevel: () => {},
     onPlain: () => {},
     onUndo: () => {},
+    onMakeDefault: () => {},
     ...overrides,
   };
 }
@@ -88,4 +89,15 @@ test("nothing can be switched while she's replying", () => {
 
   assert.ok((screen.getByLabelText("Model") as HTMLSelectElement).disabled);
   assert.ok((screen.getByRole("button", { name: "Undo changes" }) as HTMLButtonElement).disabled);
+});
+
+test("a chat on another model offers to make it the default", async () => {
+  let made = 0;
+  const { rerender } = render(ChatHeader, props({ onMakeDefault: () => made++ }));
+  assert.equal(screen.queryByRole("button", { name: "Make default" }), null);
+
+  await rerender(props({ settings: { ...assist, profile: "claude" }, onMakeDefault: () => made++ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Make default" }));
+
+  assert.equal(made, 1);
 });

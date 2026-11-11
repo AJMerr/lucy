@@ -121,3 +121,17 @@ test("a picture she made shows under the call that made it", async () => {
   assert.equal(shown.src, "data:image/png;base64,bb22");
   assert.ok(shown.closest(".made"), "shown large, as her work");
 });
+
+test("a /clear marker says she starts fresh, and a summary can be opened", async () => {
+  render(Entry, { entry: { kind: "marker", marker: "cleared" }, onDecide: () => {} });
+  assert.ok(screen.getByText(/starts fresh/));
+  cleanup();
+
+  render(Entry, {
+    entry: { kind: "marker", marker: "summary", text: "You asked about tides." },
+    onDecide: () => {},
+  });
+  assert.ok(screen.getByText(/summarised/));
+  await fireEvent.click(screen.getByRole("button", { name: "Show summary" }));
+  assert.ok(screen.getByText("You asked about tides."));
+});

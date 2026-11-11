@@ -30,6 +30,7 @@ pub fn run(prompter: &mut impl Prompter) -> Result<Config> {
             price_in: None,
             price_out: None,
             vision: false,
+            context_tokens: None,
         },
         // A custom endpoint: ask for everything.
         None => {
@@ -45,6 +46,7 @@ pub fn run(prompter: &mut impl Prompter) -> Result<Config> {
                 price_in: None,
                 price_out: None,
                 vision: false,
+                context_tokens: None,
             }
         }
     };
@@ -127,6 +129,7 @@ mod tests {
                     price_in: None,
                     price_out: None,
                     vision: false,
+                    context_tokens: None,
                 },
             )
         );
@@ -181,6 +184,7 @@ mod tests {
                         price_in: None,
                         price_out: None,
                         vision: false,
+                        context_tokens: None,
                     },
                 ),
                 "preset {preset}"
@@ -225,6 +229,7 @@ mod tests {
                     price_in: None,
                     price_out: None,
                     vision: false,
+                    context_tokens: None,
                 },
             )
         );

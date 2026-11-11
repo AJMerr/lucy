@@ -130,10 +130,18 @@ export class ChatsStore {
 
   /**
    * Send a message (with any pictures) in the open chat, or start a new chat with it.
-   * `/image <description>` makes a picture straight away instead.
+   * `/image <description>` makes a picture straight away instead; `/clear` and `/compress`
+   * start the model afresh or summarise the chat so far (the chat itself keeps everything).
    */
   async send(text: string, images: ImageData[] = []): Promise<void> {
     const selected = this.state.selected;
+    const command = images.length === 0 ? /^\/(clear|compress)$/.exec(text.trim())?.[1] : undefined;
+    if (command !== undefined) {
+      if (selected !== null) {
+        await this.chatCommand(selected, `chat.${command}`);
+      }
+      return;
+    }
     const chat = selected === null ? {} : { session_id: selected };
     const prompt = images.length === 0 ? /^\/image\s+(.+)$/s.exec(text)?.[1]?.trim() : undefined;
     try {
@@ -157,6 +165,16 @@ export class ChatsStore {
       if (selected !== null) {
         this.apply(selected, { type: "problem", message: messageOf(err) });
       }
+    }
+  }
+
+  /** `chat.clear` or `chat.compress`, then show the chat with its new marker. */
+  private async chatCommand(id: string, method: string): Promise<void> {
+    try {
+      await this.core.call(method, { session_id: id });
+      await this.reload(id);
+    } catch (err) {
+      this.apply(id, { type: "problem", message: messageOf(err) });
     }
   }
 
@@ -204,6 +222,16 @@ export class ChatsStore {
   }
   setProfile(profile: string): Promise<void> {
     return this.changeSettings("session.set_profile", { profile });
+  }
+
+  /** Make the open chat's model the default for new chats (and the sprite), like `/model --default`. */
+  makeDefault(): Promise<void> {
+    const id = this.state.selected;
+    const profile = id === null ? undefined : this.state.chats[id]?.settings?.profile;
+    if (profile === undefined) {
+      return Promise.resolve();
+    }
+    return this.changeSettings("session.set_profile", { profile, make_default: true });
   }
   setPlain(plain: boolean): Promise<void> {
     return this.changeSettings("session.set_plain", { plain });

@@ -85,3 +85,31 @@ fn image_takes_a_description() {
     );
     assert!(error("/image").contains("usage: /image <description>"));
 }
+
+#[test]
+fn clear_compress_and_model_default() {
+    assert_eq!(command("/clear"), Command::Clear);
+    assert_eq!(command("/compress"), Command::Compress);
+    assert_eq!(
+        command("/model claude --default"),
+        Command::ModelDefault("claude".into())
+    );
+    assert_eq!(
+        command("/model claude"),
+        Command::Model(Some("claude".into()))
+    );
+}
+
+#[test]
+fn an_older_core_is_pointed_out() {
+    use lucy_cli::commands::older_core;
+
+    let warning = older_core("0.8.0", "0.9.0").expect("older");
+    assert!(
+        warning.contains("0.8.0") && warning.contains("lucy service restart"),
+        "{warning}"
+    );
+    assert_eq!(older_core("0.9.0", "0.9.0"), None);
+    assert_eq!(older_core("0.10.0", "0.9.0"), None, "newer is fine");
+    assert_eq!(older_core("", "0.9.0"), None, "unknown says nothing");
+}

@@ -74,7 +74,8 @@ const MANAGED =
   "config.toml is managed by home-manager (programs.lucy.settings); change it in your Nix config";
 
 export class SettingsStore {
-  private readonly core: Transport;
+  /** The core this store talks to (also for panels that ask it things the store doesn't keep). */
+  readonly core: Transport;
   private state: SettingsState = {
     loaded: false,
     path: "",
@@ -153,6 +154,24 @@ export class SettingsStore {
     } catch (err) {
       this.setSection(id, { ...this.state.sections[id], saving: false, error: messageOf(err) });
     }
+  }
+
+  /**
+   * Save a new profile straight away (from the add-a-model panel), keeping whatever else the
+   * Models form has unsaved.
+   */
+  async addProfile(name: string, profile: ConfigJson): Promise<void> {
+    if (this.state.managed) {
+      throw new Error(MANAGED);
+    }
+    await this.core.call("config.update", { patch: { profiles: { [name]: profile } } });
+    const view = await this.core.call<{ config: ConfigJson | null }>("config.get");
+    this.update({ config: view.config });
+    this.edit("models", (d) => {
+      d.profiles ??= {};
+      d.profiles[name] = structuredClone(profile);
+    });
+    await this.refreshKeys();
   }
 
   /** Store an API key in the keyring of the core's machine. The value isn't kept here. */

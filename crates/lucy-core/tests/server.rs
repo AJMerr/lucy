@@ -406,6 +406,7 @@ async fn set_profile_switches_the_model_for_that_session_only() {
         .call(
             "session.set_profile",
             SetProfileParams {
+                make_default: false,
                 session_id: first.session_id.clone(),
                 profile: "other".into(),
             },
@@ -436,6 +437,7 @@ async fn set_profile_switches_the_model_for_that_session_only() {
         .call::<_, SessionSettings>(
             "session.set_profile",
             SetProfileParams {
+                make_default: false,
                 session_id: first.session_id,
                 profile: "nope".into(),
             },
@@ -617,6 +619,7 @@ async fn missing_api_key_is_reported_before_anything_is_saved() {
         .call(
             "session.set_profile",
             SetProfileParams {
+                make_default: false,
                 session_id: first.session_id.clone(),
                 profile: "keyed".into(),
             },

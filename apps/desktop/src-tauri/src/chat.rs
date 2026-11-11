@@ -10,7 +10,7 @@ use lucy_client::{Client, ClientError};
 use lucy_core::schedule::{DesktopNotifier, Notifier};
 use lucy_protocol::rpc::{
     ApproveParams, ChatSendParams, ChatSendResult, Decision, Event, ImageData, ImageGenerateParams,
-    ImageParams, RenameParams, ResolveParams, method,
+    ImageParams, ProfileInfo, RenameParams, ResolveParams, SessionParams, SessionSettings, method,
 };
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
@@ -151,14 +151,23 @@ async fn relay(
 }
 
 /// Send a message (with any pictures) in her chat; `/image <description>` makes a picture
-/// straight away instead. The reply arrives as `core-event`s.
+/// straight away instead. The reply arrives as `core-event`s. `/clear` and `/compress` start
+/// the model afresh or summarise the chat so far, and answer with a note to show instead.
 #[tauri::command]
 pub async fn send(
     app: AppHandle,
     chat: tauri::State<'_, Chat>,
     text: String,
     images: Vec<ImageData>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
+    let command = match text.trim() {
+        "/clear" if images.is_empty() => Some((method::CHAT_CLEAR, "Cleared. I'm starting fresh.")),
+        "/compress" if images.is_empty() => Some((
+            method::CHAT_COMPRESS,
+            "Summarised. I'll keep the gist of what came before.",
+        )),
+        _ => None,
+    };
     let prompt = text
         .strip_prefix("/image ")
         .map(str::trim)
@@ -169,6 +178,25 @@ pub async fn send(
             *conn = Some(open(&app).await?);
         }
         let current = conn.as_ref().expect("just opened");
+        if let Some((method, note)) = command {
+            let done = current
+                .client
+                .call::<_, Value>(
+                    method,
+                    SessionParams {
+                        session_id: current.session.clone(),
+                    },
+                )
+                .await;
+            match done {
+                Ok(_) => return Ok(Some(note.to_owned())),
+                Err(ClientError::Disconnected) if attempt == 0 => {
+                    *conn = None;
+                    continue;
+                }
+                Err(err) => return Err(err.to_string()),
+            }
+        }
         let session_id = Some(current.session.clone());
         let sent = match prompt {
             Some(prompt) => {
@@ -201,13 +229,42 @@ pub async fn send(
             }
         };
         match sent {
-            Ok(_) => return Ok(()),
+            Ok(_) => return Ok(None),
             // The core went away (e.g. it was restarted): reconnect once and try again.
             Err(ClientError::Disconnected) if attempt == 0 => *conn = None,
             Err(err) => return Err(err.to_string()),
         }
     }
     Err("lost the connection to Lucy's core".into())
+}
+
+/// The model her chat uses (its profile's), to show in her input box.
+#[tauri::command]
+pub async fn model(app: AppHandle, chat: tauri::State<'_, Chat>) -> Result<String, String> {
+    let mut conn = chat.conn.lock().await;
+    if conn.is_none() {
+        *conn = Some(open(&app).await?);
+    }
+    let conn = conn.as_ref().expect("just opened");
+    let settings: SessionSettings = conn
+        .client
+        .call(
+            method::SESSION_SETTINGS,
+            SessionParams {
+                session_id: conn.session.clone(),
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    let profiles: Vec<ProfileInfo> = conn
+        .client
+        .call(method::PROFILES_LIST, json!({}))
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(profiles
+        .into_iter()
+        .find(|p| p.name == settings.profile)
+        .map_or(settings.profile, |p| p.model))
 }
 
 /// A picture kept with her chat, as a `data:` URL for the bubble.

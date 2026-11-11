@@ -64,6 +64,10 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE sessions ADD COLUMN incognito INTEGER NOT NULL DEFAULT 0;
 "#,
     r#"
+    -- Markers in a chat: 'cleared' (/clear) or 'summary' (content: a summary of the
+    -- first `covers` messages, which are no longer sent to the model).
+    ALTER TABLE messages ADD COLUMN marker TEXT;
+    ALTER TABLE messages ADD COLUMN covers INTEGER;
     -- Reminders and scheduled tasks.
     CREATE TABLE schedules (
         id          TEXT PRIMARY KEY,   -- ULID
@@ -135,9 +139,30 @@ pub struct NewMessage {
     pub usage: Option<Usage>,
     /// Pictures you attached (kept in the core's image store).
     pub images: Vec<ImageRef>,
+    /// A marker rather than a message: `cleared` or `summary`.
+    pub marker: Option<String>,
+    /// A summary's reach: the first this many messages.
+    pub covers: Option<u32>,
 }
 
 impl NewMessage {
+    /// /clear: she starts afresh after this.
+    pub fn cleared() -> Self {
+        Self {
+            marker: Some("cleared".into()),
+            ..Self::new(Message::new(Role::System, ""), None)
+        }
+    }
+
+    /// A summary of the chat's first `covers` messages, sent in their place.
+    pub fn summary(text: impl Into<String>, covers: u32) -> Self {
+        Self {
+            marker: Some("summary".into()),
+            covers: Some(covers),
+            ..Self::new(Message::new(Role::System, text), None)
+        }
+    }
+
     pub fn user(content: impl Into<String>) -> Self {
         Self::new(Message::new(Role::User, content), None)
     }
@@ -183,6 +208,8 @@ impl NewMessage {
             incomplete: false,
             usage: None,
             images: Vec::new(),
+            marker: None,
+            covers: None,
         }
     }
 
@@ -206,6 +233,8 @@ pub struct StoredMessage {
     pub created_at: SystemTime,
     /// Pictures you attached (kept in the core's image store).
     pub images: Vec<ImageRef>,
+    pub marker: Option<String>,
+    pub covers: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -366,9 +395,9 @@ impl SessionStore {
         self.conn.execute(
             "INSERT INTO messages (session_id, seq, role, content, profile, model, incomplete,
                                    input_tokens, output_tokens, created_at, tool_calls,
-                                   tool_call_id, is_error, images)
+                                   tool_call_id, is_error, images, marker, covers)
              VALUES (?1, (SELECT COUNT(*) FROM messages WHERE session_id = ?1),
-                     ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                     ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 id_text,
                 role_name(new.message.role),
@@ -383,6 +412,8 @@ impl SessionStore {
                 new.message.tool_call_id,
                 new.message.is_error,
                 images,
+                new.marker,
+                new.covers,
             ],
         )?;
 
@@ -545,7 +576,7 @@ impl SessionStore {
 
         let mut stmt = self.conn.prepare(
             "SELECT role, content, profile, model, incomplete, input_tokens, output_tokens,
-                    created_at, tool_calls, tool_call_id, is_error, images
+                    created_at, tool_calls, tool_call_id, is_error, images, marker, covers
              FROM messages WHERE session_id = ?1 ORDER BY seq",
         )?;
         let messages = stmt
@@ -594,6 +625,8 @@ impl SessionStore {
                     }),
                     created_at: from_ms(row.get(7)?),
                     images,
+                    marker: row.get(12)?,
+                    covers: row.get(13)?,
                 })
             })?
             .collect::<Result<_, _>>()?;

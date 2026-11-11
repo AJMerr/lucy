@@ -22,6 +22,7 @@
     onLevel,
     onPlain,
     onUndo,
+    onMakeDefault,
   }: {
     title: string;
     /** No memory; deleted when you leave it. */
@@ -34,7 +35,13 @@
     onLevel: (level: number) => void;
     onPlain: (plain: boolean) => void;
     onUndo: () => void;
+    /** Make this chat's model the default for new chats. */
+    onMakeDefault: () => void;
   } = $props();
+
+  const notDefault = $derived(
+    settings !== null && profiles.some((p) => p.name === settings.profile && !p.is_default),
+  );
 
   const levels = [
     { value: 0, label: "0 · ask for everything" },
@@ -61,6 +68,9 @@
           {/each}
         </select>
       </label>
+      {#if notDefault}
+        <button class="link" title="New chats and the sprite use this model" onclick={onMakeDefault}>Make default</button>
+      {/if}
       <div class="segmented" role="group" aria-label="Mode">
         <button
           aria-pressed={settings.mode === "assist"}
