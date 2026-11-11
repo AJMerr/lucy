@@ -94,3 +94,64 @@ jobs:
         with:
           name: bundles-${{ matrix.os }}
           path: apps/desktop/src-tauri/target/release/bundle/*/*.*
+
+  # The Homebrew tap (formula and cask) and the AUR's lucy-bin, filled in from the files just
+  # attached. A pre-release, or a run by hand, only renders them and keeps them with the run (a
+  # dry run); a release pushes them, once the repo has the HOMEBREW_TAP_TOKEN (a token that can
+  # push to AJMerr/homebrew-lucy) and AUR_SSH_KEY (the AUR account's private key) secrets.
+  packages:
+    needs: bundle
+    if: github.event.release.tag_name || inputs.tag
+    runs-on: ubuntu-latest
+    env:
+      PUBLISH: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Fill in the packages
+        run: packaging/render.sh "${TAG#v}" packages
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: packages
+          include-hidden-files: true
+
+      - name: Update the Homebrew tap
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ "$PUBLISH" != true ] || [ -z "$TOKEN" ]; then
+            echo "Not publishing (dry run, or no HOMEBREW_TAP_TOKEN secret)."; exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:$TOKEN@github.com/AJMerr/homebrew-lucy.git" tap
+          mkdir -p tap/Formula tap/Casks
+          cp packages/homebrew/Formula/lucy.rb tap/Formula/
+          cp packages/homebrew/Casks/lucy.rb tap/Casks/
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "lucy ${TAG#v}"
+          git push
+
+      - name: Update the AUR package
+        env:
+          KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          if [ "$PUBLISH" != true ] || [ -z "$KEY" ]; then
+            echo "Not publishing (dry run, or no AUR_SSH_KEY secret)."; exit 0
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes"
+          git clone ssh://aur@aur.archlinux.org/lucy-bin.git aur
+          cp packages/aur/PKGBUILD packages/aur/.SRCINFO aur/
+          cd aur
+          git config user.name "AJMerr"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet || git commit -m "lucy-bin ${TAG#v}"
+          git push
