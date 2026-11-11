@@ -9,8 +9,8 @@
     "shortDescription": "Lucy, your AI assistant, on the desktop",
     "longDescription": "Lucy is a model-agnostic personal AI assistant. This installs her desktop sprite (lucy-sprite) and the lucy command-line program and core it talks to.",
     "linux": {
-      "deb": { "depends": ["libgtk-layer-shell0", "libayatana-appindicator3-1"] },
-      "rpm": { "depends": ["gtk-layer-shell", "libayatana-appindicator-gtk3"] }
+      "deb": { "depends": ["libgtk-layer-shell0", "libayatana-appindicator3-1", "libasound2"] },
+      "rpm": { "depends": ["gtk-layer-shell", "libayatana-appindicator-gtk3", "alsa-lib"] }
     },
     "macOS": { "minimumSystemVersion": "11.0" }
   }

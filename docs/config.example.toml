@@ -105,6 +105,17 @@ enabled = true                  # false: she neither reads nor saves memories
 # embedding_profile = "embed"   # an embedding model's profile (e.g. Ollama's nomic-embed-text)
                                 # to find relevant memories by meaning instead of keyword
 
+# --- Voice (docs/voice.md), in Lucy's desktop app -----------------------------------------
+
+[voice]
+enabled = false                 # push-to-talk, and replies to what you say read aloud
+hearing = "small"               # Whisper: tiny | base | small | turbo (downloaded when turned on)
+voice = "kokoro"                # kokoro | piper (on this computer) | openai | elevenlabs (hosted,
+                                # key in the keyring under that name)
+# speaker = "af_sarah"          # a Kokoro speaker, Piper voice, OpenAI voice or ElevenLabs voice ID
+read_typed = false              # also read replies to typed messages
+wake_word = false               # listen for "Hey Lucy" while the app runs
+
 # --- Pictures (docs/images.md) ------------------------------------------------------------
 
 [images]

@@ -190,6 +190,8 @@ enum McpAction {
 enum SpriteAction {
     /// Open (or close) her input box, starting her if needed. Bind this to a key.
     Ask,
+    /// Talk to her: she listens until you go quiet (with voice on). Bind this to a key.
+    Talk,
     /// Open her chat in Lucy's window, starting her if needed.
     Chat,
     /// Hide her, or show her again.
@@ -358,6 +360,7 @@ fn main() -> Result<()> {
         Some(Command::Sprite { action }) => sprite::run(match action {
             None => "sprite",
             Some(SpriteAction::Ask) => "ask",
+            Some(SpriteAction::Talk) => "talk",
             Some(SpriteAction::Toggle) => "toggle",
             Some(SpriteAction::Chat) => "chat",
             Some(SpriteAction::Quit) => "quit",

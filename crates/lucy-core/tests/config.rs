@@ -201,3 +201,36 @@ fn the_vision_helper_must_be_able_to_see() {
 
     assert!(err.contains("vision = true"), "{err}");
 }
+
+// --- Voice -------------------------------------------------------------------------------------
+
+#[test]
+fn voice_is_off_until_turned_on_with_sensible_choices() {
+    let config = Config::from_toml_str(MINIMAL).unwrap();
+
+    assert!(!config.voice.enabled);
+    assert_eq!(config.voice.hearing, "small");
+    assert_eq!(config.voice.voice, "kokoro");
+    assert_eq!(config.voice.speaker, None);
+    assert!(!config.voice.read_typed);
+    assert!(!config.voice.wake_word);
+}
+
+#[test]
+fn voice_choices_are_checked() {
+    let hearing = error_for(&format!("{MINIMAL}\n[voice]\nhearing = \"huge\"\n"));
+    let voice = error_for(&format!("{MINIMAL}\n[voice]\nvoice = \"siri\"\n"));
+
+    assert!(hearing.contains("tiny, base, small or turbo"), "{hearing}");
+    assert!(
+        voice.contains("kokoro, piper, openai or elevenlabs"),
+        "{voice}"
+    );
+    assert!(
+        Config::from_toml_str(&format!(
+            "{MINIMAL}\n[voice]\nenabled = true\nhearing = \"turbo\"\nvoice = \"piper\"\n\
+             speaker = \"en_GB-jenny_dioco-medium\"\nread_typed = true\nwake_word = true\n"
+        ))
+        .is_ok()
+    );
+}

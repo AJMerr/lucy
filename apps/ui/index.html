@@ -137,6 +137,20 @@
         color: var(--muted);
         font-size: 14px;
       }
+      #ask {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+      #talk {
+        border: 1px solid var(--accent);
+        border-radius: 10px;
+        background: var(--panel);
+        color: var(--text);
+        padding: 0 10px;
+        cursor: pointer;
+      }
       #ask input {
         box-sizing: border-box;
         width: 280px;
@@ -196,6 +210,7 @@
       <form id="ask" hidden>
         <div id="attached" hidden></div>
         <input autocomplete="off" placeholder="Ask Lucy…" />
+        <button id="talk" type="button" title="Hold to talk, or click and talk until you pause">🎙</button>
       </form>
       <canvas id="sprite"></canvas>
     </div>

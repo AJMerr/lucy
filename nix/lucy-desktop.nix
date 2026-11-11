@@ -10,7 +10,9 @@
   wrapGAppsHook3,
   makeDesktopItem,
   copyDesktopItems,
+  alsa-lib,
   dbus,
+  stdenv,
   glib-networking,
   gtk3,
   gtk-layer-shell,
@@ -68,6 +70,7 @@ rustPlatform.buildRustPackage {
     copyDesktopItems
   ];
   buildInputs = [
+    alsa-lib
     dbus
     glib-networking
     gtk3
@@ -87,10 +90,11 @@ rustPlatform.buildRustPackage {
   doCheck = false;
 
   # She starts the core with `lucy`, found next to her or on PATH. The tray icon loads
-  # AppIndicator at runtime, by name, so it goes on the library path.
+  # AppIndicator at runtime, by name, so it goes on the library path; so does the C++ runtime
+  # for her voice engine, which she downloads and loads at runtime too.
   preFixup = ''
     gappsWrapperArgs+=(--prefix PATH : ${lib.makeBinPath [ lucy ]})
-    gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ libayatana-appindicator ]})
+    gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ libayatana-appindicator stdenv.cc.cc.lib ]})
   '';
 
   desktopItems = [

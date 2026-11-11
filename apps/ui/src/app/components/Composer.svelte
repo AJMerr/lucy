@@ -9,12 +9,32 @@
     onSend,
     onStop,
     placeholder = "Message Lucy… (Enter sends, Shift+Enter for a new line)",
+    talk,
   }: {
     busy: boolean;
     onSend: (text: string, images: ImageData[]) => void;
     onStop: () => void;
     placeholder?: string;
+    /** Voice is on: the mic button starts (`hold`: until `stop`) and stops listening. */
+    talk?: { start: (hold: boolean) => void; stop: () => void };
   } = $props();
+
+  /** A press shorter than this is a click: listen until you go quiet instead. */
+  const CLICK_MS = 300;
+  let pressedAt = 0;
+
+  function micDown(): void {
+    pressedAt = Date.now();
+    talk?.start(true);
+  }
+
+  function micUp(): void {
+    if (Date.now() - pressedAt < CLICK_MS) {
+      talk?.start(false);
+    } else {
+      talk?.stop();
+    }
+  }
 
   let text = $state("");
   let attached: Attached[] = $state([]);
@@ -121,6 +141,16 @@
       title="Attach a picture (or paste or drop one)"
       onclick={() => chooser?.click()}>+</button
     >
+    {#if talk}
+      <button
+        type="button"
+        class="attach"
+        aria-label="Talk (hold, or click)"
+        title="Hold to talk, or click and talk until you pause"
+        onpointerdown={micDown}
+        onpointerup={micUp}>🎙</button
+      >
+    {/if}
     <input
       bind:this={chooser}
       type="file"
