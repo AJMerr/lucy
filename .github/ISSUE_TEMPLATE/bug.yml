@@ -1,0 +1,53 @@
+name: Something's wrong
+description: Lucy did something she shouldn't, or didn't do something she should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security problems go through [private reporting](https://github.com/AJMerr/lucy/security/advisories/new), not here.**
+        Please don't paste API keys, tokens or anything private.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      placeholder: |
+        1. Start `lucy` with the `local` profile
+        2. Ask "…"
+        3. …
+  - type: input
+    id: version
+    attributes:
+      label: Lucy's version
+      description: "`lucy --version`"
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      multiple: true
+      options: [Terminal (lucy), The app's window, The sprite, Voice, Scheduled tasks, MCP servers, Installing]
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: e.g. NixOS 25.11 on Hyprland, macOS 26, Windows 11
+  - type: input
+    id: model
+    attributes:
+      label: Provider and model
+      placeholder: e.g. Ollama qwen3:14b, OpenRouter z-ai/glm-5
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The end of `~/.local/share/lucy/core.log` (macOS `~/Library/Application Support/lucy/`, Windows `%APPDATA%\lucy\`), if it says anything useful.
+      render: text

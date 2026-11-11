@@ -427,5 +427,9 @@ No character art is committed. Lucy loads sprite packs from your data directory
 
 ## Licence
 
-All rights reserved for now. A licence will be chosen before the repo goes public.
+Lucy is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option. Unless you say otherwise, any contribution you submit
+for inclusion in Lucy, as defined in the Apache-2.0 licence, is dual licensed as above, without
+any additional terms or conditions.
+
 Lucy is a fan-inspired name; this project is not affiliated with CD Projekt or Studio Trigger.

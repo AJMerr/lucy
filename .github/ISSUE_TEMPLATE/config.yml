@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/AJMerr/lucy/security/advisories/new
+    about: Privately, so it can be fixed before anyone else knows.
+  - name: Read the docs
+    url: https://ajmerr.github.io/lucy/
+    about: Setting up models, tools, voice, tasks and more.
