@@ -39,6 +39,10 @@ and off.
   the task on her own at the level you chose and reports back in a Tasks chat, with a desktop
   notification. Manage them in the window's Tasks list or with `lucy tasks`. See
   [docs/tasks.md](docs/tasks.md).
+- **Talk to her.** In Lucy's app, hold the mic (or bind `lucy sprite talk`, or say "Hey Lucy")
+  and talk: Whisper hears you on your computer, and she answers aloud as her reply streams in,
+  in a local voice (Kokoro, Piper) or a hosted one (OpenAI, ElevenLabs). See
+  [docs/voice.md](docs/voice.md).
 - **Pictures.** Show her a picture (paste, drop or attach it in the window, drop it on the
   sprite, or have her open a picture file) and models that can see look at it; for those that
   can't, a vision helper describes it. Ask her to draw something, or type `/image <description>`,
@@ -151,7 +155,7 @@ Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a lite
 Other commands: `lucy config path`, `lucy auth set|remove|status`, `lucy memory [edit]`,
 `lucy tasks`, `lucy mcp add|list|remove|login|logout`,
 `lucy service install|uninstall|status|restart`, `lucy core stop`,
-`lucy remote connect|disconnect|token`, `lucy sprite [ask|chat|toggle|quit]`, `lucy app`.
+`lucy remote connect|disconnect|token`, `lucy sprite [ask|talk|chat|toggle|quit]`, `lucy app`.
 
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
@@ -381,10 +385,11 @@ tray icon in one. Install it from a release or the Nix flake (above), or build i
 The sprite puts Lucy on your desktop: a small animated figure in the bottom-right corner,
 above your windows (on Wayland compositors with layer shell, like Hyprland, Sway or KDE, no
 window rules needed). Click her, or bind `lucy sprite ask` to a key, and type: she answers in
-speech bubbles, and asks there before running tools. `lucy sprite toggle` hides her and
-`lucy sprite quit` closes the app. Don't want her on screen? Turn her off in Settings → Sprite
-(`[sprite] enabled = false`): the app is then just its window and tray, and `lucy sprite`
-still shows her when you want her.
+speech bubbles, and asks there before running tools. With voice on, talk to her instead (the 🎙
+by her input box, `lucy sprite talk`, or "Hey Lucy") and she answers aloud. `lucy sprite toggle`
+hides her and `lucy sprite quit` closes the app. Don't want her on screen? Turn her off in
+Settings → Sprite (`[sprite] enabled = false`): the app is then just its window and tray, and
+`lucy sprite` still shows her when you want her.
 
 `lucy app` (or the tray icon, or "more…" on a long reply) opens Lucy's main window: your chats
 on the left, the open chat on the right, with streaming replies, tool approvals, Stop, Undo,
@@ -394,11 +399,12 @@ AppIndicator extension); without it, `lucy app` still opens the window.
 
 **Settings** (bottom of the chat list) cover everything in `config.toml` and more, without a
 terminal: models and their API keys (sent to the keyring, never shown again), how new chats
-start, agent caps and tool rules, your persona, what she remembers, MCP servers (and signing in
-to remote ones), pictures (what makes them, where they're saved, which model describes them),
-the sprite, remote access and its token, and the login service. Each section saves on its own,
-and the core refuses anything that would break the config, saying why. With no config yet, the
-window starts with first-run setup instead (the same providers as `lucy config init`).
+start, agent caps and tool rules, your persona, what she remembers, her voice, MCP servers (and
+signing in to remote ones), pictures (what makes them, where they're saved, which model
+describes them), the sprite, remote access and its token, and the login service. Each section
+saves on its own, and the core refuses anything that would break the config, saying why. With no
+config yet, the window starts with first-run setup instead (the same providers as
+`lucy config init`).
 
 No character art is committed. Lucy loads sprite packs from your data directory
 (`~/.local/share/lucy/packs/` on Linux). Copy `packs/placeholder`, swap the frames, and point

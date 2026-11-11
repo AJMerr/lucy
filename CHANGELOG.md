@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased: voice
+
+Talk to Lucy and hear her, in her desktop app. See [docs/voice.md](docs/voice.md).
+
+- **Push-to-talk:** hold the 🎙 in the main window's message box or by the sprite's input box
+  (or click it and talk until you pause), or bind `lucy sprite talk` on Wayland. What you say
+  goes to that chat as a message.
+- **She answers aloud,** a sentence at a time as the reply streams in, leaving code blocks,
+  tables and link addresses in the chat. Talking again or Stop cuts her off. **Read typed
+  replies aloud** does the same for what you type.
+- **Her voice:** Kokoro or Piper on your computer, or OpenAI or ElevenLabs (with a key in the
+  keyring). **Hearing:** Whisper tiny, base, small or turbo, on your computer.
+- **"Hey Lucy":** an optional wake word that starts the sprite listening.
+- **Settings → Voice** sets all of this, previews her voice, and gets voice ready: the speech
+  engine (sherpa-onnx) and models download into the data folder the first time, with progress.
+  Nothing is bundled, and the engine is loaded at run time, so building Lucy needs none of it.
+- `[voice]` in config.toml; `lucy sprite talk`.
+
 ## v0.8.0: scheduled tasks (2026-11-10)
 
 Lucy can remind you of things and do things on a schedule. See [docs/tasks.md](docs/tasks.md).
