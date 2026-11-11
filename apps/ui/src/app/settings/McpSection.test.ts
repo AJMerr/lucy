@@ -83,3 +83,63 @@ test("a remote server offers to sign in", async () => {
   assert.deepEqual(core.sent("mcp.login"), [{ name: "linear" }]);
   assert.ok(screen.getByText(/Signed in/));
 });
+
+// --- Presets and pasting a command -------------------------------------------------------------
+
+test("a pasted command line is split into the command, its arguments and variables", async () => {
+  const core = await setUp();
+
+  await fireEvent.input(screen.getByLabelText("New server name"), { target: { value: "files" } });
+  await fireEvent.input(screen.getByLabelText("Or paste its command"), {
+    target: { value: `ROOT="/home/me/My Notes" npx -y @modelcontextprotocol/server-filesystem '/home/me/My Notes'` },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Add pasted command" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  assert.deepEqual(core.sent("config.update"), [
+    {
+      patch: {
+        mcp: {
+          servers: {
+            files: {
+              command: "npx",
+              args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/me/My Notes"],
+              env: { ROOT: "/home/me/My Notes" },
+            },
+          },
+        },
+      },
+    },
+  ]);
+});
+
+test("presets fill in a known server", async () => {
+  const core = await setUp();
+
+  await fireEvent.click(screen.getByRole("button", { name: "Web browser" }));
+  await fireEvent.click(screen.getByRole("button", { name: "GitHub" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  assert.deepEqual(core.sent("config.update"), [
+    {
+      patch: {
+        mcp: {
+          servers: {
+            browser: { command: "npx", args: ["@playwright/mcp@latest"] },
+            github: { url: "https://api.githubcopilot.com/mcp/", bearer_key: "github" },
+          },
+        },
+      },
+    },
+  ]);
+});
+
+test("the Google Workspace preset says what it still needs", async () => {
+  await setUp();
+
+  await fireEvent.click(screen.getByRole("button", { name: "Google Workspace" }));
+
+  const google = screen.getByRole("group", { name: "google" });
+  assert.equal((within(google).getByLabelText("Command") as HTMLInputElement).value, "uvx");
+  assert.ok(screen.getByText(/OAuth client/));
+});

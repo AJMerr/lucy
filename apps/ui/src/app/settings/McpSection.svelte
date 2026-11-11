@@ -1,6 +1,7 @@
 <!-- MCP servers: tool servers Lucy starts as programs or reaches by URL, with their settings,
      variables and headers (some filled from the keyring), and sign-in for remote ones. -->
 <script lang="ts">
+  import { splitCommand } from "../../lib/shellwords.ts";
   import type { SettingsStore } from "../../lib/stores/settings.ts";
   import SectionBar from "./SectionBar.svelte";
 
@@ -11,7 +12,47 @@
   const names = $derived(Object.keys(servers).sort());
 
   let newName = $state("");
+  let pasted = $state("");
+  let pasteError = $state("");
   let signIn: Record<string, string> = $state({});
+  /** What a server added from a preset still needs, by server name. */
+  let needs: Record<string, string> = $state({});
+
+  interface Preset {
+    label: string;
+    name: string;
+    server: Record<string, unknown>;
+    needs: string;
+  }
+
+  const PRESETS: Preset[] = [
+    {
+      label: "Google Workspace",
+      name: "google",
+      server: {
+        command: "uvx",
+        args: ["workspace-mcp"],
+        env: { OAUTHLIB_INSECURE_TRANSPORT: "1" },
+        env_keys: { GOOGLE_OAUTH_CLIENT_ID: "google-client-id", GOOGLE_OAUTH_CLIENT_SECRET: "google-client-secret" },
+      },
+      needs:
+        "Needs uv installed and a Google OAuth client of your own: save its ID and secret as the keys " +
+        "google-client-id and google-client-secret under Models & keys (the MCP guide shows how to make one). " +
+        "The first time Lucy uses it, Google asks you to sign in.",
+    },
+    {
+      label: "GitHub",
+      name: "github",
+      server: { url: "https://api.githubcopilot.com/mcp/", bearer_key: "github" },
+      needs: "Needs a GitHub personal access token, saved as the key github under Models & keys.",
+    },
+    {
+      label: "Web browser",
+      name: "browser",
+      server: { command: "npx", args: ["@playwright/mcp@latest"] },
+      needs: "Needs Node.js. The first run downloads a browser.",
+    },
+  ];
 
   function set(server: string, field: string, value: unknown): void {
     store.edit("mcp", (d) => {
@@ -37,6 +78,53 @@
       d.mcp.servers[name] = { [kind]: "" };
     });
     newName = "";
+  }
+
+  function addPreset(preset: Preset): void {
+    if (servers[preset.name] !== undefined) {
+      return;
+    }
+    store.edit("mcp", (d) => {
+      d.mcp.servers[preset.name] = structuredClone(preset.server);
+    });
+    needs[preset.name] = preset.needs;
+  }
+
+  function addPasted(): void {
+    const name = newName.trim();
+    pasteError = "";
+    if (name === "") {
+      pasteError = "Give it a name first.";
+      return;
+    }
+    if (servers[name] !== undefined) {
+      pasteError = `There's already a server called ${name}.`;
+      return;
+    }
+    let split;
+    try {
+      split = splitCommand(pasted.trim());
+    } catch (err) {
+      pasteError = `That command has ${err instanceof Error ? err.message : String(err)}.`;
+      return;
+    }
+    const [command, ...args] = split.words;
+    if (command === undefined) {
+      pasteError = "Paste the command that starts the server.";
+      return;
+    }
+    const server: Record<string, unknown> = { command };
+    if (args.length > 0) {
+      server.args = args;
+    }
+    if (Object.keys(split.env).length > 0) {
+      server.env = split.env;
+    }
+    store.edit("mcp", (d) => {
+      d.mcp.servers[name] = server;
+    });
+    newName = "";
+    pasted = "";
   }
 
   function remove(server: string): void {
@@ -83,6 +171,7 @@
   {@const remote = server.url !== undefined}
   <fieldset aria-label={name}>
     <legend>{name}</legend>
+    {#if needs[name]}<p class="hint">{needs[name]}</p>{/if}
     <label class="check">
       <input
         type="checkbox"
@@ -174,10 +263,27 @@
 {/each}
 
 <div class="row add">
+  <span class="muted">Add a ready-made one:</span>
+  {#each PRESETS as preset (preset.name)}
+    <button disabled={servers[preset.name] !== undefined} onclick={() => addPreset(preset)}>{preset.label}</button>
+  {/each}
+</div>
+
+<div class="row add">
   <input aria-label="New server name" placeholder="New server name" bind:value={newName} />
   <button onclick={() => add("command")}>Add a program</button>
   <button onclick={() => add("url")}>Add a URL</button>
 </div>
+<div class="row add">
+  <input
+    class="grow"
+    aria-label="Or paste its command"
+    placeholder="Or paste its command, e.g. npx -y @modelcontextprotocol/server-filesystem ~/Notes"
+    bind:value={pasted}
+  />
+  <button aria-label="Add pasted command" onclick={addPasted}>Add</button>
+</div>
+{#if pasteError}<p class="error" role="alert">{pasteError}</p>{/if}
 
 <SectionBar
   {section}
@@ -189,6 +295,10 @@
 <style>
   .add {
     margin: 8px 0;
+    flex-wrap: wrap;
+  }
+  .grow {
+    flex: 1;
   }
   textarea {
     resize: vertical;
