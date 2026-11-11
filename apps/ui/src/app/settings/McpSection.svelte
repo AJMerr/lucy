@@ -31,13 +31,13 @@
       name: "google",
       server: {
         command: "uvx",
-        args: ["workspace-mcp"],
+        args: ["workspace-mcp", "--tool-tier", "core"],
         env: { OAUTHLIB_INSECURE_TRANSPORT: "1" },
         env_keys: { GOOGLE_OAUTH_CLIENT_ID: "google-client-id", GOOGLE_OAUTH_CLIENT_SECRET: "google-client-secret" },
       },
       needs:
         "Needs uv installed and a Google OAuth client of your own: save its ID and secret as the keys " +
-        "google-client-id and google-client-secret under Models & keys (the MCP guide shows how to make one). " +
+        "google-client-id and google-client-secret under Models & keys (Lucy's MCP guide, docs/mcp.md, shows how to make one). " +
         "The first time Lucy uses it, Google asks you to sign in.",
     },
     {

@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.10.0: polish (2026-11-11)
+
+The rough edges a newcomer hits first. See [docs/models.md](docs/models.md) and
+[docs/mcp.md](docs/mcp.md).
+
+- **Add a model without knowing its ID:** Settings → Models & keys → Add a model…, or
+  `lucy config add-model`. Pick a provider, paste its key, choose from the models it actually
+  offers (searchable), try it with a test message, and save it with its context size and
+  whether it can see pictures filled in. OpenAI is now one of the providers on offer.
+- **Long chats fit:** Lucy learns each model's context size (or takes `context_tokens` from the
+  profile). Near it, older turns are replaced by a summary she writes once and keeps with the
+  chat; recent turns stay word for word, and the chat still shows everything.
+- **`/clear` and `/compress`** in the terminal, the window and the sprite: start her afresh,
+  or summarise the chat so far now. The window marks both in the chat.
+- **`/model <name> --default`** and **Make default** in a chat's header also make that model
+  the default for new chats and the sprite. The sprite shows her model in her input box.
+- **MCP made easy:** ready-made Google Workspace, GitHub and web browser servers in Settings →
+  MCP servers, and pasting a server's command line (split into the program, its arguments and
+  variables). docs/mcp.md walks through making a Google OAuth client.
+- **An old core is spotted:** `lucy` and the app say when the running core is older than them,
+  and the app can restart it.
+- Protocol: `chat.clear`, `chat.compress`, `models.list` and `models.try`; saved messages
+  can be markers (`marker`); `session.set_profile` takes `make_default`. Still protocol v5.
+
 ## v0.9.0: voice (2026-11-11)
 
 Talk to Lucy and hear her, in her desktop app. See [docs/voice.md](docs/voice.md).
