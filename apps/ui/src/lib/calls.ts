@@ -24,6 +24,12 @@ export function describeCall(name: string, args: Record<string, unknown>): strin
       return `forget "${arg("fact")}"`;
     case "recall":
       return `search her memory for "${arg("query")}"`;
+    case "schedule":
+      return `schedule "${arg("title") || arg("what")}"`;
+    case "list_schedules":
+      return "look at what's scheduled";
+    case "cancel_schedule":
+      return `cancel "${arg("which")}"`;
     case "generate_image": {
       const prompt = arg("prompt");
       return `draw "${prompt.length > 80 ? `${prompt.slice(0, 79)}…` : prompt}"`;

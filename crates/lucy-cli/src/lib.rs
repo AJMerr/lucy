@@ -11,6 +11,7 @@ pub mod memory_command;
 pub mod remote;
 pub mod service;
 pub mod sprite;
+pub mod tasks_command;
 pub mod terminal;
 pub mod tool_display;
 pub mod wizard;

@@ -16,10 +16,10 @@ use lucy_protocol::rpc::{
     ConfigUpdateParams, ConfigUpdateResult, ConfigView, CoreStatus, Decision, Event, HelloParams,
     HelloResult, ImageGenerateParams, ImageParams, KeyParams, KeySetParams, KeyStatus,
     MemorySetParams, Notification, PROTOCOL_VERSION, PersonaSetParams, PersonaView, ProfileInfo,
-    RenameParams, Request, ResolveParams, Response, RpcError, ServerProblem, SessionParams,
-    SessionSettings, SetLevelParams, SetModeParams, SetPlainParams, SetProfileParams,
-    ShutdownParams, ShutdownResult, ToolsList, ToolsListParams, TurnOutcome, TurnUsage, UndoFile,
-    UndoParams, UndoResult, code, method,
+    RenameParams, Request, ResolveParams, Response, RpcError, ScheduleId, ServerProblem,
+    SessionParams, SessionSettings, SetLevelParams, SetModeParams, SetPlainParams,
+    SetProfileParams, ShutdownParams, ShutdownResult, SubscribeParams, ToolsList, ToolsListParams,
+    TurnOutcome, TurnUsage, UndoFile, UndoParams, UndoResult, code, method,
 };
 use lucy_protocol::{AgentLevel, Message, Mode, Role, ToolCall};
 use lucy_providers::{ChatRequest, Provider, ProviderError, StreamEvent, Usage};
@@ -43,6 +43,7 @@ use crate::sessions::{
 use crate::tools::{Access, GeneratorSlot, ToolBox, ToolOutput, Verdict, close_dangling_calls};
 
 mod remote;
+mod schedules;
 
 /// The keyring entry holding the token remote clients must present (`lucy remote token`).
 pub const REMOTE_TOKEN_KEY: &str = "remote-token";
@@ -65,6 +66,11 @@ pub struct CoreOptions {
     pub idle_timeout: Option<Duration>,
     /// Where remote MCP servers' OAuth tokens live; `None` keeps them in memory (tests).
     pub token_store: Option<crate::oauth::TokenStore>,
+    /// The clock reminders and tasks run by; `None` is the real one (tests use a fake).
+    pub clock: Option<Arc<dyn crate::schedule::Clock>>,
+    /// How the core tells you something when no app shows notifications; `None` sends a
+    /// desktop notification.
+    pub notifier: Option<Arc<dyn crate::schedule::Notifier>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -86,12 +92,21 @@ pub enum CoreError {
 struct Activity {
     connections: AtomicUsize,
     turns: AtomicUsize,
+    /// Reminders and tasks waiting to run: an on-demand core stays up for them.
+    schedules: AtomicUsize,
     changed: Notify,
 }
 
 impl Activity {
     fn is_idle(&self) -> bool {
-        self.connections.load(Ordering::SeqCst) == 0 && self.turns.load(Ordering::SeqCst) == 0
+        self.connections.load(Ordering::SeqCst) == 0
+            && self.turns.load(Ordering::SeqCst) == 0
+            && self.schedules.load(Ordering::SeqCst) == 0
+    }
+
+    fn set(&self, counter: &AtomicUsize, value: usize) {
+        counter.store(value, Ordering::SeqCst);
+        self.changed.notify_waiters();
     }
 
     fn add(&self, counter: &AtomicUsize, delta: isize) {
@@ -124,6 +139,12 @@ struct Core {
     shutdown: CancellationToken,
     /// Her long-term memory (memory.md).
     memory: Arc<crate::memory::Memory>,
+    clock: Arc<dyn crate::schedule::Clock>,
+    notifier: Arc<dyn crate::schedule::Notifier>,
+    /// Reminders or tasks were added, changed or removed.
+    schedules_changed: Notify,
+    /// Clients that show notifications themselves (the desktop app).
+    notifying: AtomicUsize,
 }
 
 #[derive(Default, Clone)]
@@ -140,6 +161,8 @@ struct ConnState {
     own_sessions: HashSet<String>,
     /// Incognito chats this client started: deleted when it leaves.
     incognito: HashSet<String>,
+    /// It shows notifications itself (counted in `Core::notifying`).
+    notifications: bool,
     /// Came in over WebSocket: its chats work in the core's folder, at a capped level.
     remote: bool,
 }
@@ -169,6 +192,14 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         Some(store) => McpHost::with_token_store(Arc::clone(store)),
         None => McpHost::new(),
     };
+    let clock: Arc<dyn crate::schedule::Clock> = options
+        .clock
+        .clone()
+        .unwrap_or_else(|| Arc::new(crate::schedule::SystemClock));
+    let notifier: Arc<dyn crate::schedule::Notifier> = options
+        .notifier
+        .clone()
+        .unwrap_or_else(|| Arc::new(crate::schedule::DesktopNotifier));
     let core = Arc::new(Core {
         personas: Personas::new(options.personas_dir.clone()),
         options,
@@ -183,7 +214,14 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         mcp,
         shutdown: CancellationToken::new(),
         memory,
+        clock,
+        notifier,
+        schedules_changed: Notify::new(),
+        notifying: AtomicUsize::new(0),
     });
+
+    // Reminders and scheduled tasks.
+    tokio::spawn(schedules::run(Arc::clone(&core)));
 
     // Accept in a task of its own: cancelling a pending accept would close the waiting pipe
     // instance on Windows, briefly leaving nothing to connect to.
@@ -369,6 +407,9 @@ async fn serve_client(
         }
     }
 
+    if std::mem::take(&mut state.lock().unwrap().notifications) {
+        core.notifying.fetch_sub(1, Ordering::SeqCst);
+    }
     // Incognito chats end with the client that started them.
     let incognito = std::mem::take(&mut state.lock().unwrap().incognito);
     for key in incognito {
@@ -497,7 +538,24 @@ async fn handle(
             })
         }
         method::SUBSCRIBE => {
-            state.lock().unwrap().subscribed = true;
+            let p: SubscribeParams = if request.params.is_null() {
+                SubscribeParams::default()
+            } else {
+                params(request.params)?
+            };
+            let mut state = state.lock().unwrap();
+            state.subscribed = true;
+            if p.notifications && !state.notifications {
+                state.notifications = true;
+                core.notifying.fetch_add(1, Ordering::SeqCst);
+            }
+            result(Value::Null)
+        }
+        method::SCHEDULES_LIST => result(schedules::list(core)?),
+        method::SCHEDULES_UPDATE => result(schedules::update(core, params(request.params)?)?),
+        method::SCHEDULES_DELETE => {
+            let p: ScheduleId = params(request.params)?;
+            schedules::delete(core, &p.id)?;
             result(Value::Null)
         }
         method::SESSIONS_LOAD => {
@@ -999,11 +1057,81 @@ fn chat_send(
     if incognito && p.session_id.is_none() {
         state.lock().unwrap().incognito.insert(key.clone());
     }
+    let remote = state.lock().unwrap().remote;
+    // A remote client's folder is on another machine; its chats work in the core's.
+    let cwd = match remote {
+        true => remote_folder(&config),
+        false => working_folder(p.cwd.as_deref()),
+    };
+    let turn_id = start_turn(
+        core,
+        TurnRequest {
+            session_id,
+            text: p.text,
+            images: p.images,
+            cwd,
+            remote,
+            incognito,
+            task: None,
+        },
+    )?;
+    state.lock().unwrap().own_sessions.insert(key.clone());
+    result(ChatSendResult {
+        session_id: key,
+        turn_id,
+    })
+}
+
+/// What starts a reply: a message in a chat, from a client or a scheduled task.
+struct TurnRequest {
+    session_id: SessionId,
+    text: String,
+    images: Vec<rpc::ImageData>,
+    /// The working folder its tools start in.
+    cwd: PathBuf,
+    /// From another machine: the agent level is capped.
+    remote: bool,
+    incognito: bool,
+    /// A scheduled task, running at its own level and model with nobody there to ask.
+    task: Option<TaskRun>,
+}
+
+/// A scheduled task's turn.
+#[derive(Clone)]
+struct TaskRun {
+    title: String,
+    profile: String,
+    level: AgentLevel,
+}
+
+/// Save the message, then reply to it in the background. Returns the turn's ID.
+fn start_turn(core: &Arc<Core>, request: TurnRequest) -> Result<u64, RpcError> {
+    let TurnRequest {
+        session_id,
+        text,
+        images,
+        cwd,
+        remote,
+        incognito,
+        task,
+    } = request;
+    let config = core.config()?;
+    let key = session_id.to_string();
     // Memory: on unless switched off, never in an incognito chat.
     let memory = (config.memory.enabled && !incognito).then(|| Arc::clone(&core.memory));
     let mut settings = core.settings(&key, &config)?;
-    let remote = state.lock().unwrap().remote;
     cap_remote_level(&mut settings, &config, remote);
+    if let Some(task) = &task {
+        if !config.profiles.contains_key(&task.profile) {
+            return Err(RpcError::app(format!(
+                "the task's profile `{}` no longer exists",
+                task.profile
+            )));
+        }
+        settings.profile = task.profile.clone();
+        settings.mode = Mode::Agent;
+        settings.level = task.level;
+    }
     let profile = &config.profiles[&settings.profile];
     let provider =
         build_provider(&settings.profile, profile, &core.options.secrets).map_err(app)?;
@@ -1028,8 +1156,7 @@ fn chat_send(
     }
 
     let images_dir = core.images_dir();
-    let pictures: Result<Vec<_>, _> = p
-        .images
+    let pictures: Result<Vec<_>, _> = images
         .iter()
         .map(|picture| crate::pictures::save(&images_dir, picture))
         .collect();
@@ -1045,7 +1172,7 @@ fn chat_send(
         store
             .append(
                 &session_id,
-                NewMessage::user_with_images(p.text.clone(), pictures.clone()),
+                NewMessage::user_with_images(text.clone(), pictures.clone()),
             )
             .and_then(|()| store.load(&session_id))
     };
@@ -1078,15 +1205,10 @@ fn chat_send(
     });
     let _ = core.events.send(Event::UserMessage {
         session_id: key.clone(),
-        text: p.text,
+        text,
         images: pictures,
     });
 
-    // A remote client's folder is on another machine; its chats work in the core's.
-    let cwd = match remote {
-        true => remote_folder(&config),
-        false => working_folder(p.cwd.as_deref()),
-    };
     let agent = settings.mode == Mode::Agent;
     let budget = if agent {
         Budget {
@@ -1142,7 +1264,6 @@ fn chat_send(
         .collect();
 
     let turn_id = core.next_turn.fetch_add(1, Ordering::Relaxed);
-    state.lock().unwrap().own_sessions.insert(key.clone());
     core.activity.add(&core.activity.turns, 1);
     let turn = Turn {
         core: Arc::clone(core),
@@ -1151,6 +1272,7 @@ fn chat_send(
         id: turn_id,
         origin,
         reply: new_reply_id(),
+        task,
     };
     let access = Access {
         mode: settings.mode,
@@ -1167,6 +1289,10 @@ fn chat_send(
             access,
             generator: core.generator(&config),
             memory,
+            schedules: Some(Arc::new(schedules::Book {
+                core: Arc::clone(core),
+                profile: settings.profile.clone(),
+            }) as Arc<dyn crate::tools::ScheduleBook>),
         }),
         budget,
         cancel,
@@ -1178,10 +1304,7 @@ fn chat_send(
             pending,
         },
     }));
-    result(ChatSendResult {
-        session_id: key,
-        turn_id,
-    })
+    Ok(turn_id)
 }
 
 /// `/image`: make a picture straight away, without asking (you typed it) and without a model
@@ -1260,6 +1383,7 @@ fn images_generate(
         id: turn_id,
         origin,
         reply: new_reply_id(),
+        task: None,
     };
     tokio::spawn(turn.image(generator, prompt, cancel));
     result(ChatSendResult {
@@ -1347,6 +1471,8 @@ struct Turn {
     origin: Origin,
     /// Groups this reply's file backups for `/undo`.
     reply: String,
+    /// A scheduled task: nobody is there to approve calls, and its result is announced.
+    task: Option<TaskRun>,
 }
 
 struct Plan {
@@ -1387,6 +1513,7 @@ struct ToolPlan {
     access: Access,
     generator: Option<GeneratorSlot>,
     memory: Option<Arc<crate::memory::Memory>>,
+    schedules: Option<Arc<dyn crate::tools::ScheduleBook>>,
 }
 
 /// How far one reply may go.
@@ -1472,7 +1599,8 @@ impl Turn {
                     toolbox
                         .with_access(tools.access)
                         .with_generator(tools.generator)
-                        .with_memory(tools.memory),
+                        .with_memory(tools.memory)
+                        .with_schedules(tools.schedules),
                 ),
                 Err(err) => {
                     eprintln!("tools unavailable for this reply: {err}");
@@ -1545,6 +1673,32 @@ impl Turn {
         };
         // Free the session before announcing, so a client can send its next message right away.
         self.core.turns.lock().unwrap().remove(&self.key);
+        // A scheduled task tells you how it went: its last words, or why it stopped.
+        if let Some(task) = &self.task {
+            let said = self
+                .core
+                .store
+                .lock()
+                .unwrap()
+                .load(&self.session_id)
+                .ok()
+                .and_then(|session| {
+                    session
+                        .messages
+                        .into_iter()
+                        .rev()
+                        .find(|m| {
+                            m.message.role == Role::Assistant && !m.message.content.is_empty()
+                        })
+                        .map(|m| m.message.content)
+                });
+            let body = match (&error, said) {
+                (Some(error), _) => format!("Stopped: {error}"),
+                (None, Some(said)) => schedules::task_summary(&said),
+                (None, None) => "Done.".into(),
+            };
+            self.core.notify(&self.key, &task.title, &body);
+        }
         self.emit(Event::TurnFinished {
             session_id: self.key.clone(),
             turn_id: self.id,
@@ -1766,6 +1920,12 @@ impl Turn {
         let go_ahead = match toolbox.verdict(call, &allowed) {
             Verdict::Run => Ok(()),
             Verdict::Refuse(reason) => Err(reason),
+            // A scheduled task runs with nobody there: anything that would ask is refused.
+            Verdict::Ask { reason, .. } if self.task.is_some() => Err(format!(
+                "Not run: this needs the user's approval ({reason}), and this task ran while \
+                 they were away. Carry on without it, and say what you couldn't do; they can \
+                 raise the task's level to allow it."
+            )),
             Verdict::Ask { reason, preview } => match self.approval(call, reason, preview).await {
                 Some(Decision::Once) => Ok(()),
                 Some(Decision::Always) => {

@@ -4,13 +4,14 @@ A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her 
 or let her live on your desktop as an animated sprite with speech bubbles that you can toggle on
 and off.
 
-> **Status:** v0.7.0: terminal chat with any OpenAI-compatible or Anthropic model, able to
+> **Status:** v0.8.0: terminal chat with any OpenAI-compatible or Anthropic model, able to
 > read, search, run and edit with your approval, use any MCP server you add, and work through
-> tasks on her own within limits you set. She remembers you across chats, looks at pictures you
-> show her and makes pictures with OpenRouter image models or ComfyUI. The core can run from
-> login and serve your other machines. Lucy's app puts her on the desktop as an animated sprite,
-> with a main window for your chats and every setting, and a tray icon; no terminal needed.
-> Installers, a Nix flake and a home-manager module. See the [release notes](CHANGELOG.md).
+> tasks on her own within limits you set. She remembers you across chats, reminds you of things
+> and runs scheduled tasks, looks at pictures you show her and makes pictures with OpenRouter
+> image models or ComfyUI. The core can run from login and serve your other machines. Lucy's app
+> puts her on the desktop as an animated sprite, with a main window for your chats and every
+> setting, and a tray icon; no terminal needed. Installers, a Nix flake and a home-manager module.
+> See the [release notes](CHANGELOG.md).
 
 ## What works today
 
@@ -33,6 +34,11 @@ and off.
   something, asks first for anything sensitive, and never keeps secrets. See and change it all
   in Settings → Memory or with `lucy memory`; incognito chats (`lucy --incognito`) remember
   nothing and aren't kept. See [docs/memory.md](docs/memory.md).
+- **Reminders and scheduled tasks.** "Remind me at 5 to call Mom", or "every weekday at 8,
+  summarise my email and calendar": she shows you what and when first, then reminds you, or does
+  the task on her own at the level you chose and reports back in a Tasks chat, with a desktop
+  notification. Manage them in the window's Tasks list or with `lucy tasks`. See
+  [docs/tasks.md](docs/tasks.md).
 - **Pictures.** Show her a picture (paste, drop or attach it in the window, drop it on the
   sprite, or have her open a picture file) and models that can see look at it; for those that
   can't, a vision helper describes it. Ask her to draw something, or type `/image <description>`,
@@ -115,6 +121,7 @@ lucy -c                    # continue your most recent chat
 lucy -r 01m6ne             # resume a chat by any unique ID prefix
 lucy --incognito           # a chat with no memory, deleted when you leave it
 lucy memory                # what Lucy remembers about you (`lucy memory edit` to change it)
+lucy tasks                 # reminders and scheduled tasks (`lucy tasks pause|resume|delete <name>`)
 lucy ask "what's a flake?" # one answer, plain text, then exit
 lucy ask -y "tidy todo.md" # approve every tool call (only for scripts you trust)
 git diff | lucy ask        # the prompt can come from stdin
@@ -142,9 +149,9 @@ Keys: Tab completes commands and profile names, Alt+Enter (or a trailing `\`) st
 Ctrl+C stops a reply, and Ctrl+D quits. Start a message with `//` to send a literal `/`.
 
 Other commands: `lucy config path`, `lucy auth set|remove|status`, `lucy memory [edit]`,
-`lucy mcp add|list|remove|login|logout`, `lucy service install|uninstall|status|restart`,
-`lucy core stop`, `lucy remote connect|disconnect|token`, `lucy sprite [ask|chat|toggle|quit]`,
-`lucy app`.
+`lucy tasks`, `lucy mcp add|list|remove|login|logout`,
+`lucy service install|uninstall|status|restart`, `lucy core stop`,
+`lucy remote connect|disconnect|token`, `lucy sprite [ask|chat|toggle|quit]`, `lucy app`.
 
 `lucy ask` prints the answer on stdout and tool activity on stderr. When a tool needs approval
 it asks on your terminal, even if the question was piped in. With no terminal (cron, CI) it
@@ -230,8 +237,8 @@ over stdio, working in the current folder.
 ### Running the core at login
 
 The `lucy` command starts Lucy's core in the background when it's needed, and the core exits
-after 30 idle minutes. To keep it running from login instead (the desktop sprite will want
-this), install it as a service:
+after 30 idle minutes (it stays up while reminders or tasks are scheduled). To keep it running
+from login instead, so scheduled tasks run after a reboot too, install it as a service:
 
 ```sh
 lucy service install      # start now and at every login

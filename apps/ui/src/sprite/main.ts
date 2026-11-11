@@ -329,6 +329,15 @@ async function start(): Promise<void> {
   await listen<CoreEvent>("core-event", (event) =>
     dispatch({ type: "event", event: event.payload, now: Date.now() }),
   );
+  // Reminders and finished scheduled tasks (the app also shows a desktop notification).
+  await listen<{ title: string; body: string }>("core-notification", (event) =>
+    dispatch({
+      type: "notification",
+      title: event.payload.title,
+      body: event.payload.body,
+      now: Date.now(),
+    }),
+  );
   await listen("core-disconnected", () => {
     if (view.turnId !== null) {
       dispatch({ type: "problem", message: "lost the connection to Lucy's core", now: Date.now() });

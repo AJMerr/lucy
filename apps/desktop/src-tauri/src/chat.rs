@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use lucy_client::{Client, ClientError};
+use lucy_core::schedule::{DesktopNotifier, Notifier};
 use lucy_protocol::rpc::{
     ApproveParams, ChatSendParams, ChatSendResult, Decision, Event, ImageData, ImageGenerateParams,
     ImageParams, RenameParams, ResolveParams, method,
@@ -54,8 +55,9 @@ async fn open(app: &AppHandle) -> Result<Conn, String> {
     let session = her_session(&client).await.map_err(|err| err.to_string())?;
     // Every chat's events, filtered to hers below, so a reply in her chat shows up even when
     // it was sent from elsewhere (e.g. `lucy -r` in a terminal).
+    // The app shows notifications (reminders, finished tasks), so the core doesn't.
     let _: Value = client
-        .call(method::SUBSCRIBE, json!({}))
+        .call(method::SUBSCRIBE, json!({"notifications": true}))
         .await
         .map_err(|err| err.to_string())?;
     let events = client
@@ -130,6 +132,12 @@ async fn relay(
     id: u64,
 ) {
     while let Some(event) = events.recv().await {
+        if let Event::Notification { title, body, .. } = &event {
+            // A reminder, or a scheduled task finishing.
+            DesktopNotifier.notify(title, body);
+            let _ = app.emit("core-notification", json!({"title": title, "body": body}));
+            continue;
+        }
         if event.session_id() == session {
             let _ = app.emit("core-event", &event);
         }

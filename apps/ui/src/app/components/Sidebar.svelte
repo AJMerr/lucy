@@ -13,6 +13,7 @@
     onRename,
     onDelete,
     onSettings,
+    onTasks,
   }: {
     sessions: SessionSummary[];
     selected: string | null;
@@ -25,6 +26,8 @@
     onDelete: (id: string) => void;
     /** Open settings (shown when given). */
     onSettings?: () => void;
+    /** Open reminders and scheduled tasks (shown when given). */
+    onTasks?: () => void;
   } = $props();
 
   let renaming: string | null = $state(null);
@@ -105,6 +108,9 @@
       </li>
     {/each}
   </ul>
+  {#if onTasks}
+    <button class="settings" onclick={onTasks}>◷ Tasks</button>
+  {/if}
   {#if onSettings}
     <button class="settings" onclick={onSettings}>⚙ Settings</button>
   {/if}

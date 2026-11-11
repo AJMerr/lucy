@@ -30,6 +30,8 @@ pub const BUILTIN: &str = "builtin";
 pub const GENERATOR_SERVER: &str = "images";
 /// What the memory tools are listed under, and the rule name that covers them all.
 pub const MEMORY_SERVER: &str = "memory";
+/// What the scheduling tools are listed under, and the rule name that covers them all.
+pub const SCHEDULES_SERVER: &str = "schedules";
 
 /// The picture maker for `generate_image`, or why there isn't one.
 pub type GeneratorSlot = Result<Arc<Generator>, String>;
@@ -74,6 +76,8 @@ pub struct ToolBox {
     generator: Option<GeneratorSlot>,
     /// `remember`, `forget` and `recall`, unless memory is off or the chat is incognito.
     memory: Option<Arc<Memory>>,
+    /// `schedule`, `list_schedules` and `cancel_schedule`.
+    schedules: Option<Arc<dyn ScheduleBook>>,
 }
 
 /// The chat's mode and agent level, which decide how much runs without asking.
@@ -137,6 +141,7 @@ impl ToolBox {
             access: Access::default(),
             generator: None,
             memory: None,
+            schedules: None,
         })
     }
 
@@ -156,6 +161,92 @@ impl ToolBox {
     pub fn with_memory(mut self, memory: Option<Arc<Memory>>) -> Self {
         self.memory = memory;
         self
+    }
+
+    /// Offer `schedule`, `list_schedules` and `cancel_schedule`, kept in `book`.
+    pub fn with_schedules(mut self, book: Option<Arc<dyn ScheduleBook>>) -> Self {
+        self.schedules = book;
+        self
+    }
+
+    fn schedule_rule(&self, name: &str) -> Option<ToolRule> {
+        let rules = &self.settings.rules;
+        rules
+            .get(name)
+            .or_else(|| rules.get(SCHEDULES_SERVER))
+            .copied()
+    }
+
+    fn schedule_specs(&self) -> Vec<ToolSpec> {
+        if self.schedules.is_none() {
+            return Vec::new();
+        }
+        schedule_tools()
+            .into_iter()
+            .filter(|spec| self.schedule_rule(&spec.name) != Some(ToolRule::Deny))
+            .collect()
+    }
+
+    fn schedule_infos(&self) -> Vec<ToolInfo> {
+        if self.schedules.is_none() {
+            return Vec::new();
+        }
+        schedule_tools()
+            .into_iter()
+            .map(|spec| ToolInfo {
+                rule: match (self.schedule_rule(&spec.name), spec.name.as_str()) {
+                    (Some(ToolRule::Deny), _) => ToolRuleInfo::Deny,
+                    (_, SCHEDULE) => ToolRuleInfo::Ask,
+                    (Some(ToolRule::Ask), _) => ToolRuleInfo::Ask,
+                    _ => ToolRuleInfo::Auto,
+                },
+                description: first_sentence(&spec.description),
+                server: SCHEDULES_SERVER.into(),
+                name: spec.name,
+            })
+            .collect()
+    }
+
+    /// Scheduling always shows you what and when first ("always" doesn't skip it); listing
+    /// and cancelling just run.
+    fn schedule_verdict(&self, book: &dyn ScheduleBook, call: &ToolCall) -> Verdict {
+        match self.schedule_rule(&call.name) {
+            Some(ToolRule::Deny) => {
+                return Verdict::Refuse("The user's settings don't allow this tool.".into());
+            }
+            Some(ToolRule::Ask) if call.name != SCHEDULE => {
+                return Verdict::Ask {
+                    reason: "your settings say to ask".into(),
+                    preview: None,
+                };
+            }
+            _ => {}
+        }
+        if call.name != SCHEDULE {
+            return Verdict::Run;
+        }
+        match book.describe(&call.arguments) {
+            Ok((reason, preview)) => Verdict::Ask {
+                reason,
+                preview: Some(preview),
+            },
+            Err(err) => Verdict::Refuse(format!("Not scheduled: {err}. Call it again, fixed.")),
+        }
+    }
+
+    fn schedule_call(&self, book: &dyn ScheduleBook, call: &ToolCall) -> ToolOutput {
+        let done = match call.name.as_str() {
+            SCHEDULE => book.create(&call.arguments),
+            LIST_SCHEDULES => Ok(book.list()),
+            _ => book.cancel(call.arguments["which"].as_str().unwrap_or_default()),
+        };
+        match done {
+            Ok(text) => ToolOutput {
+                text,
+                ..ToolOutput::default()
+            },
+            Err(err) => ToolOutput::failed(err),
+        }
     }
 
     /// The config rule for a memory tool: by its name, then by `memory`.
@@ -339,7 +430,10 @@ impl ToolBox {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.tools.is_empty() && self.generator.is_none() && self.memory.is_none()
+        self.tools.is_empty()
+            && self.generator.is_none()
+            && self.memory.is_none()
+            && self.schedules.is_none()
     }
 
     /// The tools to offer the model (minus any the config denies outright).
@@ -354,6 +448,7 @@ impl ToolBox {
             })
             .chain(self.generator_spec())
             .chain(self.memory_specs())
+            .chain(self.schedule_specs())
             .collect()
     }
 
@@ -368,6 +463,7 @@ impl ToolBox {
             })
             .chain(self.generator_info(allowed))
             .chain(self.memory_infos(allowed))
+            .chain(self.schedule_infos())
             .collect()
     }
 
@@ -414,6 +510,11 @@ impl ToolBox {
     pub fn verdict(&self, call: &ToolCall, allowed: &HashSet<String>) -> Verdict {
         if is_memory_tool(&call.name) && self.memory.is_some() {
             return self.memory_verdict(call, allowed);
+        }
+        if is_schedule_tool(&call.name)
+            && let Some(book) = &self.schedules
+        {
+            return self.schedule_verdict(book.as_ref(), call);
         }
         if call.name == generate::TOOL
             && let Some(slot) = &self.generator
@@ -511,6 +612,11 @@ impl ToolBox {
             && let Some(memory) = &self.memory
         {
             return self.memory_call(memory, call);
+        }
+        if is_schedule_tool(&call.name)
+            && let Some(book) = &self.schedules
+        {
+            return self.schedule_call(book.as_ref(), call);
         }
         if call.name == generate::TOOL
             && let Some(slot) = &self.generator
@@ -746,6 +852,72 @@ fn memory_tools() -> Vec<ToolSpec> {
                     "query": {"type": "string", "description": "Words to look for, e.g. \"sister birthday\"."},
                 },
                 "required": ["query"],
+            }),
+        },
+    ]
+}
+
+/// Where `schedule` keeps reminders and tasks (the core's schedules).
+pub trait ScheduleBook: Send + Sync {
+    /// Why it asks and what the card shows, or what's wrong with the arguments.
+    fn describe(&self, arguments: &Value) -> Result<(String, String), String>;
+    /// Save it; returns what to tell her.
+    fn create(&self, arguments: &Value) -> Result<String, String>;
+    fn list(&self) -> String;
+    /// Delete the one `which` names (its ID or title).
+    fn cancel(&self, which: &str) -> Result<String, String>;
+}
+
+const SCHEDULE: &str = "schedule";
+const LIST_SCHEDULES: &str = "list_schedules";
+const CANCEL_SCHEDULE: &str = "cancel_schedule";
+
+fn is_schedule_tool(name: &str) -> bool {
+    matches!(name, SCHEDULE | LIST_SCHEDULES | CANCEL_SCHEDULE)
+}
+
+/// `schedule`, `list_schedules` and `cancel_schedule`, as offered to the model.
+fn schedule_tools() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: SCHEDULE.into(),
+            description: "Set a reminder or a scheduled task. A reminder just shows the user its \
+                          text at the time (\"remind me at 5 to call Mom\"). A task is a prompt \
+                          you run on your own at the time, as an agent at `level` (0-3), and \
+                          report on (\"every weekday at 8, summarise my email and calendar\"). \
+                          Times are the user's local time (see the current date and time above). \
+                          The user always sees what you're scheduling and approves it."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["reminder", "task"]},
+                    "what": {"type": "string", "description": "A reminder's message, or a task's prompt (written as the instruction you'll follow then)."},
+                    "title": {"type": "string", "description": "A short name, e.g. \"Morning summary\"."},
+                    "when": {
+                        "type": "object",
+                        "description": "Exactly one of: {\"at\": \"2026-11-12T17:00\"} (once), {\"daily\": \"08:00\"}, {\"weekdays\": \"08:00\"}, {\"weekly\": {\"days\": [\"mon\", \"fri\"], \"time\": \"09:30\"}}, {\"monthly\": {\"day\": 1, \"time\": \"09:00\"}}, {\"every_minutes\": 30}.",
+                    },
+                    "level": {"type": "integer", "minimum": 0, "maximum": 3, "description": "Tasks: how freely you may act (0 supervised: nothing runs, 1 guarded, 2 workspace, 3 unrestricted). Default 1."},
+                },
+                "required": ["kind", "what", "when"],
+            }),
+        },
+        ToolSpec {
+            name: LIST_SCHEDULES.into(),
+            description: "List the user's reminders and scheduled tasks, with when they run next."
+                .into(),
+            input_schema: json!({"type": "object", "properties": {}}),
+        },
+        ToolSpec {
+            name: CANCEL_SCHEDULE.into(),
+            description: "Delete a reminder or scheduled task the user no longer wants.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "which": {"type": "string", "description": "Its title (or ID) from list_schedules."},
+                },
+                "required": ["which"],
             }),
         },
     ]
