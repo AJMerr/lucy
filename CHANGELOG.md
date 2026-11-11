@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased (1.0)
+
+Lucy goes public.
+
+- **Open source** under MIT OR Apache-2.0, with CONTRIBUTING, SECURITY (private vulnerability
+  reporting), a code of conduct, and issue and pull request templates.
+- **A docs site** at [ajmerr.github.io/lucy](https://ajmerr.github.io/lucy/): new guides for
+  installing (including getting past the unsigned-installer prompts on macOS and Windows), the
+  first five minutes, the app and sprite, the terminal and config, tools and agent mode, the
+  login service, remote access, Nix and troubleshooting. CI checks every link.
+- **A README for newcomers**, pointing into the guides.
+- **Install from Homebrew** (`brew install --cask ajmerr/lucy/lucy`, or the `lucy` formula) and
+  **the AUR** (`lucy-bin`), updated by each release.
+- **What stays stable:** from 1.0, config.toml and the `lucy` command follow semver; see
+  [docs/stability.md](docs/stability.md).
+
 ## v0.10.0: polish (2026-11-11)
 
 The rough edges a newcomer hits first. See [docs/models.md](docs/models.md) and
