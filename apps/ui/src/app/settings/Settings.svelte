@@ -8,6 +8,8 @@
   import ImagesSection from "./ImagesSection.svelte";
   import McpSection from "./McpSection.svelte";
   import MemorySection from "./MemorySection.svelte";
+  import VoiceSection from "./VoiceSection.svelte";
+  import type { VoiceApp } from "../../lib/voice/app.ts";
   import ModelsSection from "./ModelsSection.svelte";
   import PersonaSection from "./PersonaSection.svelte";
   import RemoteSection from "./RemoteSection.svelte";
@@ -17,9 +19,12 @@
   let {
     store,
     runLucy,
+    voice,
     onClose,
   }: {
     store: SettingsStore;
+    /** Voice in the desktop app (absent elsewhere). */
+    voice?: VoiceApp;
     /** Run `lucy <args>` on this machine (desktop app only). */
     runLucy?: (args: string[]) => Promise<string>;
     onClose: () => void;
@@ -30,6 +35,7 @@
     | "agent"
     | "persona"
     | "memory"
+    | "voice"
     | "mcp"
     | "images"
     | "sprite"
@@ -40,6 +46,7 @@
     { id: "agent", label: "Chat & agent" },
     { id: "persona", label: "Persona" },
     { id: "memory", label: "Memory" },
+    { id: "voice", label: "Voice" },
     { id: "mcp", label: "MCP servers" },
     { id: "images", label: "Pictures" },
     { id: "sprite", label: "Sprite" },
@@ -101,6 +108,7 @@
       {:else if page === "agent"}<AgentSection {store} />
       {:else if page === "persona"}<PersonaSection {store} />
       {:else if page === "memory"}<MemorySection {store} />
+      {:else if page === "voice"}<VoiceSection {store} {voice} />
       {:else if page === "mcp"}<McpSection {store} />
       {:else if page === "images"}<ImagesSection {store} />
       {:else if page === "sprite"}<SpriteSection {store} />

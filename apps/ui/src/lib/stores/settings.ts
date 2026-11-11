@@ -15,6 +15,7 @@ export const SECTIONS = {
   mcp: ["mcp"],
   images: ["images"],
   memory: ["memory"],
+  voice: ["voice"],
   sprite: ["sprite", "app"],
   remote: ["remote"],
 } as const;

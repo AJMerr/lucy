@@ -14,6 +14,8 @@
   import Sidebar from "./components/Sidebar.svelte";
   import Settings from "./settings/Settings.svelte";
   import Tasks from "./tasks/Tasks.svelte";
+  import { DesktopVoice, type VoiceStatus } from "../lib/voice/app.ts";
+  import { VoiceController } from "../lib/voice/controller.ts";
 
   let { core }: { core: Transport } = $props();
 
@@ -26,6 +28,29 @@
   /** What the window shows: chats, settings, or first-run setup (no config yet). */
   let view: "chat" | "settings" | "tasks" | "setup" = $state("chat");
   const desktop = "__TAURI_INTERNALS__" in window;
+  // Voice: in the desktop app, which has the microphone and speakers.
+  const voiceApp = desktop ? new DesktopVoice("window") : undefined;
+  let voiceStatus: VoiceStatus | null = $state(null);
+  const voice = voiceApp
+    ? new VoiceController(voiceApp, {
+        send: (text) => chats.send(text),
+        readTyped: () => (voiceStatus as VoiceStatus | null)?.read_typed === true,
+      })
+    : undefined;
+  const talk = $derived(
+    voice !== undefined && (voiceStatus as VoiceStatus | null)?.ready === true
+      ? { start: (hold: boolean) => void voice.talk(hold), stop: () => void voice.stopTalking() }
+      : undefined,
+  );
+
+  function refreshVoice(): void {
+    voiceApp?.status().then((status) => (voiceStatus = status), () => {});
+  }
+
+  function sendTyped(text: string, images: Parameters<ChatsStore["send"]>[1]): void {
+    voice?.typed();
+    void chats.send(text, images);
+  }
 
   /** Run `lucy <args>` on this machine; only the desktop app can. */
   async function runLucy(args: string[]): Promise<string> {
@@ -60,6 +85,11 @@
 
   onMount(() => {
     connection = core.state;
+    // Speak replies to what you said here; hear what you say.
+    const stopVoiceEvents = core.onEvent((event) => voice?.onEvent(event));
+    const stopHeard = voiceApp?.onHeard((text) => void voice?.heard(text));
+    const stopStatus = voiceApp?.onStatus((status) => (voiceStatus = status));
+    refreshVoice();
     const stop = core.onState((state) => {
       connection = state;
       if (state === "ready") {
@@ -84,6 +114,9 @@
     }
     return () => {
       stop();
+      stopVoiceEvents();
+      stopHeard?.();
+      stopStatus?.();
       unlisten?.();
     };
   });
@@ -180,10 +213,12 @@
   <div class="page">
     <Settings
       store={settings}
+      voice={voiceApp}
       runLucy={desktop ? runLucy : undefined}
       onClose={() => {
         view = "chat";
         refresh();
+        refreshVoice();
       }}
     />
   </div>
@@ -280,8 +315,12 @@
       <Composer
         bind:this={composer}
         busy={chat.busy}
-        onSend={(text, images) => chats.send(text, images)}
-        onStop={() => chats.cancel()}
+        onSend={sendTyped}
+        onStop={() => {
+          void voice?.hush();
+          void chats.cancel();
+        }}
+        {talk}
       />
     {:else}
       <section class="welcome">
@@ -296,7 +335,8 @@
         bind:this={composer}
         busy={false}
         placeholder="Start a new chat… (Enter sends)"
-        onSend={(text, images) => chats.send(text, images)}
+        onSend={sendTyped}
+        {talk}
         onStop={() => {}}
       />
     {/if}

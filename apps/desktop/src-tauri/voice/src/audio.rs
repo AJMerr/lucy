@@ -182,6 +182,29 @@ impl Speaker {
 
     /// Stop now, dropping anything queued.
     pub fn stop(&self) {
+        self.handle().stop();
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.handle().is_playing()
+    }
+
+    /// Stops it or asks if it's playing, from any thread.
+    pub fn handle(&self) -> SpeakerHandle {
+        SpeakerHandle {
+            queue: Arc::clone(&self.queue),
+        }
+    }
+}
+
+/// The speakers' queue, shareable across threads.
+#[derive(Clone)]
+pub struct SpeakerHandle {
+    queue: Arc<Mutex<VecDeque<f32>>>,
+}
+
+impl SpeakerHandle {
+    pub fn stop(&self) {
         self.queue.lock().unwrap().clear();
     }
 

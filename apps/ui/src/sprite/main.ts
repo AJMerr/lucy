@@ -9,6 +9,8 @@ import { Animator, type States } from "./animator.ts";
 import { renderBubble } from "../lib/bubble.ts";
 import { readPicture } from "../lib/pictures.ts";
 import type { ImageRef } from "../lib/protocol.ts";
+import { DesktopVoice } from "../lib/voice/app.ts";
+import { VoiceController } from "../lib/voice/controller.ts";
 import { type CoreEvent, type Input, type View, initialView, reduce } from "./view.ts";
 
 /** The pack as `lucy-sprite` hands it over (see src-tauri/src/pack.rs). */
@@ -122,6 +124,27 @@ async function start(): Promise<void> {
     view = reduce(view, input, settings);
     render();
   };
+
+  // Her voice (Settings → Voice): what you say goes to her, and replies to it are spoken.
+  const voiceApp = new DesktopVoice("sprite");
+  let readTyped = false;
+  const talkButton = element<HTMLButtonElement>("#talk");
+  const voiceReady = (status: { ready: boolean; read_typed: boolean }) => {
+    readTyped = status.read_typed;
+    talkButton.hidden = !status.ready;
+  };
+  talkButton.hidden = true;
+  voiceApp.status().then(voiceReady, () => {});
+  voiceApp.onStatus(voiceReady);
+  const voiceFailed = (err: unknown) =>
+    dispatch({ type: "problem", message: String(err), now: Date.now() });
+  const voice = new VoiceController(voiceApp, {
+    send: async (text) => {
+      dispatch({ type: "sent" });
+      await invoke("send", { text, images: [] });
+    },
+    readTyped: () => readTyped,
+  });
 
   const bubble = element<HTMLDivElement>("#bubble");
   const text = element<HTMLDivElement>("#text");
@@ -272,6 +295,7 @@ async function start(): Promise<void> {
     if (message === "" && images.length === 0) {
       return;
     }
+    voice.typed();
     dispatch({ type: "sent" });
     invoke("send", { text: message, images }).catch((err: unknown) =>
       dispatch({ type: "problem", message: String(err), now: Date.now() }),
@@ -326,9 +350,10 @@ async function start(): Promise<void> {
   }
 
   // --- The core and the CLI -----------------------------------------------------------------
-  await listen<CoreEvent>("core-event", (event) =>
-    dispatch({ type: "event", event: event.payload, now: Date.now() }),
-  );
+  await listen<CoreEvent>("core-event", (event) => {
+    voice.onEvent(event.payload);
+    dispatch({ type: "event", event: event.payload, now: Date.now() });
+  });
   // Reminders and finished scheduled tasks (the app also shows a desktop notification).
   await listen<{ title: string; body: string }>("core-notification", (event) =>
     dispatch({
@@ -349,7 +374,27 @@ async function start(): Promise<void> {
   await listen<string>("sprite-command", (event) => {
     if (event.payload === "ask") {
       dispatch({ type: view.inputOpen ? "close_input" : "open_input" });
+    } else if (event.payload === "talk") {
+      voice.talk(false).catch(voiceFailed);
     }
+  });
+
+  // --- Voice -------------------------------------------------------------------------------
+  voiceApp.onHeard((heard) => void voice.heard(heard));
+  // "Hey Lucy": listen until you go quiet.
+  voiceApp.onWake(() => voice.talk(false).catch(voiceFailed));
+  voiceApp.onState((state) => {
+    animator.play(state === "idle" ? view.animation : state === "listening" ? "listening" : "thinking", performance.now());
+  });
+  voiceApp.onError((message) => dispatch({ type: "problem", message, now: Date.now() }));
+  let pressedAt = 0;
+  talkButton.addEventListener("pointerdown", () => {
+    pressedAt = Date.now();
+    voice.talk(true).catch(voiceFailed);
+  });
+  talkButton.addEventListener("pointerup", () => {
+    // A click: listen until you go quiet; a hold: until you let go.
+    (Date.now() - pressedAt < 300 ? voice.talk(false) : voice.stopTalking()).catch(voiceFailed);
   });
   setInterval(() => dispatch({ type: "tick", now: Date.now() }), 500);
   render();

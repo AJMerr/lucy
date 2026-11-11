@@ -15,6 +15,7 @@ mod chat;
 mod lucy_command;
 mod pack;
 mod placement;
+mod voice;
 
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -31,8 +32,11 @@ fn main() {
     let loaded = pack::load_configured();
     let hotkey = loaded.hotkey.clone();
     // Commands that are about her show her even when she's off at start.
-    let show_sprite =
-        loaded.enabled || matches!(first_command.as_deref(), Some("sprite" | "ask" | "toggle"));
+    let show_sprite = loaded.enabled
+        || matches!(
+            first_command.as_deref(),
+            Some("sprite" | "ask" | "talk" | "toggle")
+        );
 
     tauri::Builder::default()
         // A second `lucy-desktop` hands its command to the running one and exits.
@@ -51,10 +55,17 @@ fn main() {
         .manage(chat::Chat::default())
         .manage(bridge::Bridge::default())
         .manage(app_window::AppWindow::default())
+        .manage(voice::Voice::new())
         .invoke_handler(tauri::generate_handler![
             pack::pack,
             chat::send,
             chat::approve,
+            voice::voice_prepare,
+            voice::voice_status,
+            voice::voice_listen,
+            voice::voice_stop_listening,
+            voice::voice_say,
+            voice::voice_hush,
             chat::picture,
             app_window::open_chat,
             app_window::take_pending_chat,
@@ -79,6 +90,7 @@ fn main() {
             }
             register_hotkey(app.handle(), &hotkey);
             chat::connect_in_background(app.handle().clone());
+            voice::start_in_background(app.handle());
             if tray_supported() {
                 if let Err(err) = tray(app.handle()) {
                     eprintln!("lucy-desktop: no tray icon: {err}");
@@ -122,6 +134,11 @@ fn command(app: &AppHandle, command: Option<&str>) {
         Some("ask") => {
             placement::show(app);
             let _ = app.emit("sprite-command", "ask");
+        }
+        // `lucy sprite talk`: listen until you go quiet (bind it in Wayland compositors).
+        Some("talk") => {
+            placement::show(app);
+            let _ = app.emit("sprite-command", "talk");
         }
         // `lucy sprite`: make sure she's visible.
         Some("sprite") => placement::show(app),
