@@ -180,6 +180,11 @@ impl<W: Write> Chat<'_, W> {
             &format!("{model} · /help for commands · Ctrl+D to quit"),
         );
         self.say(&format!("{title}{rest}"))?;
+        if let Some(warning) =
+            crate::commands::older_core(self.client.core_version(), env!("CARGO_PKG_VERSION"))
+        {
+            self.note(&warning)?;
+        }
         if let Some(folder) = self.client.folder() {
             let remote = self.styled(
                 "2",
@@ -187,6 +192,36 @@ impl<W: Write> Chat<'_, W> {
             );
             self.say(&remote)?;
         }
+        Ok(())
+    }
+
+    /// `/model <profile>`, and with `--default`, for new chats too.
+    async fn switch_model(&mut self, profile: String, make_default: bool) -> Result<()> {
+        let session_id = self.ensure_session().await?;
+        let settings: SessionSettings = self
+            .call(
+                method::SESSION_SET_PROFILE,
+                SetProfileParams {
+                    make_default,
+                    session_id,
+                    profile,
+                },
+            )
+            .await?;
+        let profiles: Vec<ProfileInfo> = self.call(method::PROFILES_LIST, json!({})).await?;
+        let model = profiles
+            .iter()
+            .find(|p| p.name == settings.profile)
+            .map_or("?", |p| p.model.as_str());
+        let also = if make_default {
+            ", and made it the default for new chats"
+        } else {
+            ""
+        };
+        self.note(&format!(
+            "Switched this chat to {} ({model}){also}.",
+            settings.profile
+        ))?;
         Ok(())
     }
 
@@ -666,27 +701,30 @@ impl<W: Write> Chat<'_, W> {
                     self.say(&format!("{marker} {name}  {model}"))?;
                 }
             }
-            Command::Model(Some(profile)) => {
-                let session_id = self.ensure_session().await?;
-                let settings: SessionSettings = self
-                    .call(
-                        method::SESSION_SET_PROFILE,
-                        SetProfileParams {
-                            make_default: false,
-                            session_id,
-                            profile,
-                        },
-                    )
+            Command::Model(Some(profile)) => self.switch_model(profile, false).await?,
+            Command::ModelDefault(profile) => self.switch_model(profile, true).await?,
+            Command::Clear => {
+                let Some(session_id) = self.session.clone() else {
+                    self.note("Nothing to clear yet.")?;
+                    return Ok(());
+                };
+                let _: Value = self
+                    .call(method::CHAT_CLEAR, SessionParams { session_id })
                     .await?;
-                let profiles: Vec<ProfileInfo> =
-                    self.call(method::PROFILES_LIST, json!({})).await?;
-                let model = profiles
-                    .iter()
-                    .find(|p| p.name == settings.profile)
-                    .map_or("?", |p| p.model.as_str());
+                self.note("Cleared: she starts afresh from here (the chat above is kept).")?;
+            }
+            Command::Compress => {
+                let Some(session_id) = self.session.clone() else {
+                    self.note("Nothing to compress yet.")?;
+                    return Ok(());
+                };
+                self.note("Summarising the chat so far…")?;
+                let done: Value = self
+                    .call(method::CHAT_COMPRESS, SessionParams { session_id })
+                    .await?;
+                let summary = done["summary"].as_str().unwrap_or_default();
                 self.note(&format!(
-                    "Switched this chat to {} ({model}).",
-                    settings.profile
+                    "Summarised: she now works from this instead of the chat above.\n{summary}"
                 ))?;
             }
             Command::Plain(choice) => {

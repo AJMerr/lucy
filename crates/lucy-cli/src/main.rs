@@ -123,6 +123,8 @@ enum CoreAction {
 enum ConfigAction {
     /// Run the setup wizard and write a new config.
     Init,
+    /// Add a model: pick a provider and one of its models, try it, and save it as a profile.
+    AddModel,
     /// Print where the config file lives.
     Path,
 }
@@ -342,6 +344,12 @@ fn main() -> Result<()> {
                 println!("{}", config_path()?.display());
                 Ok(())
             }
+            ConfigAction::AddModel => tokio::runtime::Runtime::new()?.block_on(async {
+                let client = core_process::connect().await?;
+                lucy_cli::add_model::run(&client, &mut TerminalPrompter, &mut std::io::stdout())
+                    .await
+                    .map(|_| ())
+            }),
         },
         Some(Command::Auth { action }) => match action {
             AuthAction::Set { key_name } => auth_set(&key_name),

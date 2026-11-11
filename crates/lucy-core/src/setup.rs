@@ -47,6 +47,14 @@ const PRESETS: &[Preset] = &[
         model: Some("claude-sonnet-5-5"),
         key_name: Some("anthropic"),
     },
+    Preset {
+        label: "OpenAI (GPT)",
+        profile_name: "openai",
+        provider: ProviderKind::OpenAiCompat,
+        base_url: Some("https://api.openai.com/v1"),
+        model: Some("gpt-5-mini"),
+        key_name: Some("openai"),
+    },
     // Any other OpenAI-compatible server: you give the URL, model and key name.
     Preset {
         label: "Other OpenAI-compatible endpoint",

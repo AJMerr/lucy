@@ -24,6 +24,12 @@ pub enum Command {
     Delete(String),
     /// List profiles, or switch to one.
     Model(Option<String>),
+    /// Switch to a profile and make it the default for new chats.
+    ModelDefault(String),
+    /// She starts afresh from here; the chat stays.
+    Clear,
+    /// Summarise the chat so far now.
+    Compress,
     /// Toggle, or set explicitly.
     Plain(Option<bool>),
     /// Show, or switch.
@@ -44,7 +50,15 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/image", "<description>  make a picture straight away"),
     (
         "/model",
-        "[profile]  list profiles, or switch this chat to one",
+        "[profile] [--default]  list profiles, switch this chat to one, or make it the default",
+    ),
+    (
+        "/clear",
+        "she starts afresh from here (the chat above stays)",
+    ),
+    (
+        "/compress",
+        "summarise the chat so far, to free up her context",
     ),
     (
         "/plain",
@@ -127,7 +141,12 @@ pub fn parse(line: &str) -> Result<Input, String> {
         ("model", Some(profile)) if !profile.contains(char::is_whitespace) => {
             Command::Model(Some(profile.to_owned()))
         }
-        ("model", Some(_)) => return usage("/model [profile]"),
+        ("model", Some(arg)) => match arg.split_whitespace().collect::<Vec<_>>().as_slice() {
+            [profile, "--default"] => Command::ModelDefault((*profile).to_owned()),
+            _ => return usage("/model [profile] [--default]"),
+        },
+        ("clear", None) => Command::Clear,
+        ("compress", None) => Command::Compress,
         ("plain", None) => Command::Plain(None),
         ("plain", Some(arg)) => match arg.to_ascii_lowercase().as_str() {
             "on" => Command::Plain(Some(true)),
@@ -143,4 +162,22 @@ pub fn parse(line: &str) -> Result<Input, String> {
         (other, _) => return Err(format!("unknown command /{other}; try /help")),
     };
     Ok(Input::Command(command))
+}
+
+/// What to say when the running core is older than this `lucy` (it keeps running the old code
+/// until it restarts), or `None`.
+pub fn older_core(core: &str, mine: &str) -> Option<String> {
+    let parse = |v: &str| -> Option<Vec<u64>> {
+        v.trim_start_matches('v')
+            .split('.')
+            .map(|n| n.parse().ok())
+            .collect()
+    };
+    let (core_v, mine_v) = (parse(core)?, parse(mine)?);
+    (core_v < mine_v).then(|| {
+        format!(
+            "Lucy's core is still v{core} (this is v{mine}): it keeps running the old version \
+             until it restarts. Run `lucy service restart` (or `lucy core stop`)."
+        )
+    })
 }

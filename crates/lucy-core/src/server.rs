@@ -560,7 +560,7 @@ async fn handle(
         }
         method::MODELS_TRY => {
             let p: ModelsTryParams = params(request.params)?;
-            let (_, base_url, key) =
+            let (kind, base_url, key) =
                 provider_access(core, &p.provider, p.base_url, p.key_name, p.key)?;
             let profile = crate::config::Profile {
                 provider: if p.provider == "anthropic" {
@@ -577,7 +577,7 @@ async fn handle(
                 vision: false,
                 context_tokens: None,
             };
-            let provider = build_provider_with_key("try", &profile, key).map_err(app)?;
+            let provider = build_provider_with_key("try", &profile, key.clone()).map_err(app)?;
             let request = lucy_providers::ChatRequest {
                 messages: vec![Message::new(Role::User, "Reply with just the word OK.")],
                 tools: Vec::new(),
@@ -589,7 +589,20 @@ async fn handle(
                     reply.push_str(&delta);
                 }
             }
-            result(json!({"reply": reply.trim()}))
+            // What the provider says about it (context size, sight), for the profile.
+            let info = tokio::time::timeout(
+                Duration::from_secs(10),
+                lucy_providers::models::describe_model(
+                    kind,
+                    profile.base_url.as_deref().unwrap_or_default(),
+                    key.as_deref(),
+                    &profile.model,
+                ),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok);
+            result(json!({"reply": reply.trim(), "info": info}))
         }
         method::CHAT_CANCEL => {
             let p: SessionParams = params(request.params)?;
