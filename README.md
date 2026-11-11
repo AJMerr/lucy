@@ -4,9 +4,10 @@ A model-agnostic personal AI assistant with a netrunner's attitude. Talk to her 
 or let her live on your desktop as an animated sprite with speech bubbles that you can toggle on
 and off.
 
-> **Status:** v0.9.0: terminal chat with any OpenAI-compatible or Anthropic model, able to
-> read, search, run and edit with your approval, use any MCP server you add, and work through
-> tasks on her own within limits you set. She remembers you across chats, reminds you of things
+> **Status:** v0.10.0: terminal chat with any OpenAI-compatible or Anthropic model (added in a
+> few clicks, from the models the provider offers), able to read, search, run and edit with your
+> approval, use any MCP server you add, and work through tasks on her own within limits you set.
+> Long chats are summarised to fit. She remembers you across chats, reminds you of things
 > and runs scheduled tasks, talks and listens in her app, looks at pictures you show her and
 > makes pictures with OpenRouter image models or ComfyUI. The core can run from login and serve
 > your other machines. Lucy's app puts her on the desktop as an animated sprite, with a main

@@ -1,7 +1,7 @@
 // This app's version (bumped with each release), and spotting a core that's older than it:
 // after an upgrade, a core that was already running keeps the old version until it restarts.
 
-export const VERSION = "0.9.0";
+export const VERSION = "0.10.0";
 
 /** `core` is an older version than `mine` (false when either can't be read). */
 export function olderCore(core: string, mine: string): boolean {
