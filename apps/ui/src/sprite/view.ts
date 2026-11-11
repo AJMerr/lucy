@@ -63,6 +63,8 @@ export type Input =
   | { type: "tick"; now: number }
   /** A reminder, or a scheduled task finishing. */
   | { type: "notification"; title: string; body: string; now: number }
+  /** A word in place of a reply, e.g. after /clear. */
+  | { type: "note"; text: string; now: number }
   /** Something went wrong outside a reply, e.g. the message couldn't be sent. */
   | { type: "problem"; message: string; now: number };
 
@@ -144,6 +146,8 @@ export function reduce(view: View, input: Input, settings: Settings): View {
         animation: "error",
         bubble: { text: "", done: true, error: input.message, doneAt: input.now },
       };
+    case "note":
+      return { ...view, animation: "idle", bubble: { text: input.text, done: true, doneAt: input.now } };
     case "notification": {
       const note = { title: input.title, body: input.body };
       // Don't cut her off: it goes under her reply once she's done.

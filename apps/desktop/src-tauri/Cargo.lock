@@ -2961,6 +2961,7 @@ dependencies = [
  "lucy-client",
  "lucy-core",
  "lucy-protocol",
+ "lucy-providers",
  "lucy-tools",
  "rustyline",
  "serde",

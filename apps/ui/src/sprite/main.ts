@@ -136,12 +136,18 @@ async function start(): Promise<void> {
   talkButton.hidden = true;
   voiceApp.status().then(voiceReady, () => {});
   voiceApp.onStatus(voiceReady);
+  /** `send` answers with a note when there's no reply to wait for (/clear, /compress). */
+  const sent = (note: string | null) => {
+    if (note !== null) {
+      dispatch({ type: "note", text: note, now: Date.now() });
+    }
+  };
   const voiceFailed = (err: unknown) =>
     dispatch({ type: "problem", message: String(err), now: Date.now() });
   const voice = new VoiceController(voiceApp, {
     send: async (text) => {
       dispatch({ type: "sent" });
-      await invoke("send", { text, images: [] });
+      sent(await invoke<string | null>("send", { text, images: [] }));
     },
     readTyped: () => readTyped,
   });
@@ -297,7 +303,7 @@ async function start(): Promise<void> {
     }
     voice.typed();
     dispatch({ type: "sent" });
-    invoke("send", { text: message, images }).catch((err: unknown) =>
+    invoke<string | null>("send", { text: message, images }).then(sent, (err: unknown) =>
       dispatch({ type: "problem", message: String(err), now: Date.now() }),
     );
   });

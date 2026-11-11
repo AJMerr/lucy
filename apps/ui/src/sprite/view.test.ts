@@ -275,3 +275,10 @@ test("a notification waits while she's replying, so it doesn't cut her off", () 
   assert.equal(after.bubble?.text, "Thinking about it\n\n**Reminder**\n\nCall Mom");
   assert.deepEqual(after.waiting, []);
 });
+
+test("a note (after /clear or /compress) ends the thinking and shows in her bubble", () => {
+  const view = run([{ type: "sent" }, { type: "note", text: "Cleared.", now: 7 }]);
+
+  assert.equal(view.animation, "idle");
+  assert.deepEqual(view.bubble, { text: "Cleared.", done: true, doneAt: 7 });
+});

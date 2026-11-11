@@ -15,6 +15,8 @@ export interface StoredMessage {
   incomplete: boolean;
   /** Pictures with it; left out when there are none. */
   images?: ImageRef[];
+  /** Not a message but a marker: `cleared` (/clear) or `summary` (its text in `content`). */
+  marker?: string;
 }
 
 export type Entry =
@@ -41,7 +43,9 @@ export type Entry =
       preview?: string;
       /** Pictures it gave back, e.g. one she made. */
       images?: ImageRef[];
-    };
+    }
+  /** Where the chat was cleared, or older messages were summarised (with the summary). */
+  | { kind: "marker"; marker: "cleared" | "summary"; text?: string };
 
 export interface Transcript {
   entries: Entry[];
@@ -197,6 +201,14 @@ function onEvent(transcript: Transcript, event: CoreEvent): Transcript {
 function fromHistory(messages: StoredMessage[]): Entry[] {
   const entries: Entry[] = [];
   for (const message of messages) {
+    if (message.marker === "cleared") {
+      entries.push({ kind: "marker", marker: "cleared" });
+      continue;
+    }
+    if (message.marker === "summary") {
+      entries.push({ kind: "marker", marker: "summary", text: message.content });
+      continue;
+    }
     switch (message.role) {
       case "user":
         entries.push(you(message.content, message.images));

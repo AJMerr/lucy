@@ -373,3 +373,39 @@ test("an incognito chat starts with your first message and is deleted when you l
   assert.equal(state().chats["01SECRET"], undefined);
   assert.equal(state().incognito, false);
 });
+
+test("/clear and /compress go to the core and the chat reloads with the marker", async () => {
+  const fake = core();
+  fake.answers["chat.clear"] = null;
+  fake.answers["chat.compress"] = { summary: "All of it." };
+  const store = new ChatsStore(fake);
+  const state = watch(store);
+  await store.load();
+  await store.open("01OLD");
+  fake.answers["sessions.load"] = {
+    summary: summary("01OLD", "Old chat", 100),
+    messages: [
+      { role: "user", content: "hi", is_error: false, incomplete: false },
+      { role: "system", content: "", is_error: false, incomplete: false, marker: "cleared" },
+    ],
+  };
+
+  await store.send("/clear");
+  await store.send(" /compress ");
+
+  assert.deepEqual(fake.sent("chat.clear"), [{ session_id: "01OLD" }]);
+  assert.deepEqual(fake.sent("chat.compress"), [{ session_id: "01OLD" }]);
+  assert.deepEqual(fake.sent("chat.send"), []);
+  assert.deepEqual(state().chats["01OLD"]?.transcript.entries.at(-1), { kind: "marker", marker: "cleared" });
+});
+
+test("/clear with no chat open does nothing", async () => {
+  const fake = core();
+  const store = new ChatsStore(fake);
+  await store.load();
+
+  await store.send("/clear");
+
+  assert.deepEqual(fake.sent("chat.send"), []);
+  assert.deepEqual(fake.sent("chat.clear"), []);
+});

@@ -1,5 +1,6 @@
-<!-- One entry in a chat: your message, her reply (light Markdown, always escaped), or a tool
-     call, with Allow / Always / Deny while it waits for you. -->
+<!-- One entry in a chat: your message, her reply (light Markdown, always escaped), a tool call
+     (with Allow / Always / Deny while it waits for you), or where the chat was cleared or
+     summarised. -->
 <script lang="ts">
   import { renderBubble } from "../../lib/bubble.ts";
   import type { Entry } from "../../lib/transcript.ts";
@@ -19,6 +20,7 @@
   } = $props();
 
   let showChanges = $state(false);
+  let showSummary = $state(false);
 
   // renderBubble escapes everything and adds only its own tags, so this is safe as HTML.
   const html = $derived(
@@ -52,6 +54,20 @@
       <div class="note">({entry.note})</div>
     {/if}
   </div>
+{:else if entry.kind === "marker"}
+  <div class="marker" role="separator">
+    {#if entry.marker === "cleared"}
+      <span>Cleared: she starts fresh from here</span>
+    {:else}
+      <span>Older messages summarised for her</span>
+      <button class="link" onclick={() => (showSummary = !showSummary)}>
+        {showSummary ? "Hide summary" : "Show summary"}
+      </button>
+    {/if}
+  </div>
+  {#if entry.marker === "summary" && showSummary}
+    <div class="summary">{entry.text}</div>
+  {/if}
 {:else if entry.state === "asking"}
   <div class="tool asking">
     <div>
@@ -146,6 +162,25 @@
     border: 1px solid var(--hot);
     border-radius: 10px;
     max-width: 92%;
+  }
+  .marker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .marker::before,
+  .marker::after {
+    content: "";
+    flex: 1;
+    border-top: 1px solid var(--line);
+  }
+  .summary {
+    color: var(--muted);
+    font-size: 13px;
+    white-space: pre-wrap;
+    padding: 0 12px;
   }
   .made {
     align-self: flex-start;
