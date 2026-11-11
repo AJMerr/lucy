@@ -246,7 +246,7 @@ async fn setup_offers_the_same_providers_as_the_terminal_wizard() {
     let names: Vec<&str> = presets.iter().map(|p| p.profile_name.as_str()).collect();
     assert_eq!(
         names,
-        ["local-qwen", "qwen-cloud", "openrouter", "claude", "custom"]
+        ["local-qwen", "qwen-cloud", "openrouter", "claude", "openai", "custom"]
     );
     let local = &presets[0];
     assert_eq!(local.provider, "openai_compat");
@@ -257,7 +257,7 @@ async fn setup_offers_the_same_providers_as_the_terminal_wizard() {
     assert_eq!(claude.provider, "anthropic");
     assert_eq!(claude.key_name.as_deref(), Some("anthropic"));
     // The last one is for any other endpoint: you fill in the URL and model.
-    let custom = &presets[4];
+    let custom = presets.last().unwrap();
     assert_eq!(
         (custom.base_url.as_deref(), custom.model.as_deref()),
         (None, None)
