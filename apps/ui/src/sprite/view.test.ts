@@ -282,3 +282,14 @@ test("a note (after /clear or /compress) ends the thinking and shows in her bubb
   assert.equal(view.animation, "idle");
   assert.deepEqual(view.bubble, { text: "Cleared.", done: true, doneAt: 7 });
 });
+
+test("she knows which model she's on, from the start and from each reply", () => {
+  const view = run([{ type: "model", model: "qwen3:14b" }]);
+  assert.equal(view.model, "qwen3:14b");
+
+  const later = run(
+    [event({ type: "turn_started", session_id: session, turn_id: 1, profile: "claude", model: "claude-opus-5-5" })],
+    view,
+  );
+  assert.equal(later.model, "claude-opus-5-5");
+});

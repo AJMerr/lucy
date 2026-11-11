@@ -10,7 +10,7 @@ use lucy_client::{Client, ClientError};
 use lucy_core::schedule::{DesktopNotifier, Notifier};
 use lucy_protocol::rpc::{
     ApproveParams, ChatSendParams, ChatSendResult, Decision, Event, ImageData, ImageGenerateParams,
-    ImageParams, RenameParams, ResolveParams, SessionParams, method,
+    ImageParams, ProfileInfo, RenameParams, ResolveParams, SessionParams, SessionSettings, method,
 };
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
@@ -236,6 +236,35 @@ pub async fn send(
         }
     }
     Err("lost the connection to Lucy's core".into())
+}
+
+/// The model her chat uses (its profile's), to show in her input box.
+#[tauri::command]
+pub async fn model(app: AppHandle, chat: tauri::State<'_, Chat>) -> Result<String, String> {
+    let mut conn = chat.conn.lock().await;
+    if conn.is_none() {
+        *conn = Some(open(&app).await?);
+    }
+    let conn = conn.as_ref().expect("just opened");
+    let settings: SessionSettings = conn
+        .client
+        .call(
+            method::SESSION_SETTINGS,
+            SessionParams {
+                session_id: conn.session.clone(),
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    let profiles: Vec<ProfileInfo> = conn
+        .client
+        .call(method::PROFILES_LIST, json!({}))
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(profiles
+        .into_iter()
+        .find(|p| p.name == settings.profile)
+        .map_or(settings.profile, |p| p.model))
 }
 
 /// A picture kept with her chat, as a `data:` URL for the bubble.

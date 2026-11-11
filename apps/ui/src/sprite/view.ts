@@ -46,6 +46,8 @@ export interface View {
   attached: Attached[];
   /** Reminders and finished tasks that came in while she was replying. */
   waiting: { title: string; body: string }[];
+  /** The model her chat uses, once known. */
+  model: string | null;
 }
 
 export type Input =
@@ -63,6 +65,8 @@ export type Input =
   | { type: "tick"; now: number }
   /** A reminder, or a scheduled task finishing. */
   | { type: "notification"; title: string; body: string; now: number }
+  /** The model her chat uses (asked when she starts). */
+  | { type: "model"; model: string }
   /** A word in place of a reply, e.g. after /clear. */
   | { type: "note"; text: string; now: number }
   /** Something went wrong outside a reply, e.g. the message couldn't be sent. */
@@ -82,6 +86,7 @@ export function initialView(): View {
     chatOpen: false,
     attached: [],
     waiting: [],
+    model: null,
   };
 }
 
@@ -146,6 +151,8 @@ export function reduce(view: View, input: Input, settings: Settings): View {
         animation: "error",
         bubble: { text: "", done: true, error: input.message, doneAt: input.now },
       };
+    case "model":
+      return { ...view, model: input.model };
     case "note":
       return { ...view, animation: "idle", bubble: { text: input.text, done: true, doneAt: input.now } };
     case "notification": {
@@ -188,6 +195,7 @@ function onEvent(view: View, event: CoreEvent, now: number): View {
     return {
       ...view,
       turnId: event.turn_id ?? null,
+      model: typeof event.model === "string" ? event.model : view.model,
       animation: "thinking",
       bubble: null,
       approval: null,

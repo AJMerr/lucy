@@ -136,6 +136,13 @@ async function start(): Promise<void> {
   talkButton.hidden = true;
   voiceApp.status().then(voiceReady, () => {});
   voiceApp.onStatus(voiceReady);
+  /** Which model her chat uses, to show in the input box. */
+  const askModel = () =>
+    invoke<string>("model").then(
+      (model) => dispatch({ type: "model", model }),
+      () => {},
+    );
+  askModel();
   /** `send` answers with a note when there's no reply to wait for (/clear, /compress). */
   const sent = (note: string | null) => {
     if (note !== null) {
@@ -254,9 +261,12 @@ async function start(): Promise<void> {
     ask.hidden = !view.inputOpen;
     attached.hidden = view.attached.length === 0;
     attached.textContent = `📎 ${view.attached.map((picture) => picture.name).join(", ")}`;
+    input.placeholder = view.model === null ? "Ask Lucy…" : `Ask Lucy… (${view.model})`;
     if (opening) {
       input.value = "";
       input.focus();
+      // The chat may have been switched to another model elsewhere.
+      askModel();
     }
     layout();
     repaintAll();

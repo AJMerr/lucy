@@ -67,6 +67,7 @@ fn main() {
             voice::voice_say,
             voice::voice_hush,
             chat::picture,
+            chat::model,
             app_window::open_chat,
             app_window::take_pending_chat,
             bridge::rpc_call,

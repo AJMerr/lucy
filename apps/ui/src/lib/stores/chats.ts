@@ -223,6 +223,16 @@ export class ChatsStore {
   setProfile(profile: string): Promise<void> {
     return this.changeSettings("session.set_profile", { profile });
   }
+
+  /** Make the open chat's model the default for new chats (and the sprite), like `/model --default`. */
+  makeDefault(): Promise<void> {
+    const id = this.state.selected;
+    const profile = id === null ? undefined : this.state.chats[id]?.settings?.profile;
+    if (profile === undefined) {
+      return Promise.resolve();
+    }
+    return this.changeSettings("session.set_profile", { profile, make_default: true });
+  }
   setPlain(plain: boolean): Promise<void> {
     return this.changeSettings("session.set_plain", { plain });
   }

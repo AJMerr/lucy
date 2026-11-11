@@ -282,6 +282,13 @@
         onLevel={(level) => chats.setLevel(level)}
         onPlain={(plain) => chats.setPlain(plain)}
         onUndo={startUndo}
+        onMakeDefault={() =>
+          chats.makeDefault().then(() =>
+            core.call<ProfileInfo[]>("profiles.list").then(
+              (list) => (profiles = list),
+              () => {},
+            ),
+          )}
       />
       {#if undoing !== null}
         <div class="undo">

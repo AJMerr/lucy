@@ -409,3 +409,17 @@ test("/clear with no chat open does nothing", async () => {
   assert.deepEqual(fake.sent("chat.send"), []);
   assert.deepEqual(fake.sent("chat.clear"), []);
 });
+
+test("making the chat's model the default asks the core to save it", async () => {
+  const fake = core();
+  fake.answers["session.set_profile"] = { ...settings, profile: "claude" };
+  const store = new ChatsStore(fake);
+  await store.load();
+  await store.open("01OLD");
+
+  await store.makeDefault();
+
+  assert.deepEqual(fake.sent("session.set_profile"), [
+    { session_id: "01OLD", profile: "local", make_default: true },
+  ]);
+});
