@@ -15,6 +15,8 @@ Lucy goes public.
   **the AUR** (`lucy-bin`), updated by each release.
 - **What stays stable:** from 1.0, config.toml and the `lucy` command follow semver; see
   [docs/stability.md](docs/stability.md).
+- **Settings → Voice:** "Read typed replies aloud" and "Hey Lucy" are greyed out until Talk to
+  Lucy is on, since neither works without it.
 
 ## v0.10.0: polish (2026-11-11)
 
