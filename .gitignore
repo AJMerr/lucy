@@ -21,8 +21,9 @@ apps/desktop/src-tauri/binaries/
 .env.*
 
 # Sprite packs are user-supplied and live outside the repo
-# (default: <data dir>/lucy/packs). Only the placeholder pack is tracked.
+# (default: <data dir>/lucy/packs). Only the built-in ones are tracked.
 /packs/*
+!/packs/default/
 !/packs/placeholder/
 
 # Editors / OS

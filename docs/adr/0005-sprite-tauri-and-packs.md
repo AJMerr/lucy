@@ -109,3 +109,11 @@ Electron can but costs ~150 MB+ RAM for an always-on sprite.
   and `programs.lucy.desktop.*` (the old `sprite.*` options are renames).
 - The layer-shell namespace stays `lucy-sprite`, since it names her layer and compositor rules
   may match it.
+
+## Implementation notes (v1.0.0, her own look)
+
+- The repo now ships one character pack, `packs/default`: an original look made for Lucy with
+  AI image models (credited in its README), compiled in like the placeholder and the default
+  for `[sprite] pack`. Other art still isn't committed; personal packs stay in the data folder.
+- A pack that fails to load is replaced by `default` rather than the placeholder.
+- `placeholder` stays built in as the plain pack to copy when making your own.

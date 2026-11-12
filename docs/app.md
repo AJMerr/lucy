@@ -62,7 +62,9 @@ The app then starts in the background at login: the sprite, if she's on, and the
 ## Sprite packs
 
 How she looks comes from a **pack**: a folder with a `pack.toml` and its frames, one set per
-state (idle, thinking, talking, and optionally happy, error and listening). To make your own,
+state (idle, thinking, talking, and optionally happy, error and listening). She comes with her
+own look, the built-in `default` pack ([how it was made](https://github.com/AJMerr/lucy/tree/main/packs/default)).
+To make your own,
 copy [`packs/placeholder`](https://github.com/AJMerr/lucy/tree/main/packs/placeholder) to
 your data folder's `packs/` (`~/.local/share/lucy/packs/<name>/` on Linux), swap the frames,
 and pick it in Settings → Sprite (`[sprite] pack = "<name>"`). See

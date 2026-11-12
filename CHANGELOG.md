@@ -15,6 +15,10 @@ Lucy goes public.
   **the AUR** (`lucy-bin`), updated by each release.
 - **What stays stable:** from 1.0, config.toml and the `lucy` command follow semver; see
   [docs/stability.md](docs/stability.md).
+- **Her own look:** the sprite now ships with an original kawaii netrunner (the built-in
+  `default` pack, now the default): she blinks, talks, thinks with a thought bubble, and looks
+  happy, frustrated or attentive. The plain `placeholder` pack is still built in to copy
+  from. A pack you made yourself is unchanged if your config names it.
 - **ComfyUI and Ollama share the GPU:** before each picture, Lucy unloads the models of the
   chat's Ollama on this computer, so ComfyUI has the whole card; the chat model loads again for
   her reply. Turn it off with Settings → Pictures → Free the GPU first

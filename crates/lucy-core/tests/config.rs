@@ -36,7 +36,7 @@ fn minimal_config_fills_in_defaults() {
     assert!(!config.remote.enabled);
     assert_eq!(config.remote.bind.to_string(), "127.0.0.1:7077");
 
-    assert_eq!(config.sprite.pack, "placeholder");
+    assert_eq!(config.sprite.pack, "default");
     assert_eq!(config.sprite.scale, 1.0);
     assert_eq!(
         config.sprite.bubble_timeout_secs, 0,

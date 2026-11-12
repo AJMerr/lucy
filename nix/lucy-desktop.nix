@@ -36,6 +36,7 @@ rustPlatform.buildRustPackage {
       ../Cargo.lock
       ../crates
       ../persona
+      ../packs/default
       ../packs/placeholder
       # Its Rust side, and its pages (apps/ui).
       (lib.fileset.difference ../apps/desktop/src-tauri (

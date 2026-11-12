@@ -47,7 +47,7 @@
 </label>
 
 <label class="field">
-  <span>Sprite pack (a folder in packs/ in your data folder; "placeholder" is built in)</span>
+  <span>Sprite pack (a folder in packs/ in your data folder; "default", her own look, and "placeholder" are built in)</span>
   <input value={sprite.pack ?? ""} oninput={(e) => set("pack", e.currentTarget.value.trim())} />
 </label>
 <label class="field">

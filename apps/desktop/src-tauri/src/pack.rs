@@ -53,8 +53,8 @@ pub fn load_configured() -> Loaded {
         autostart: _,
     } = settings;
     let pack = lucy_packs::load(&pack, packs_dir().as_deref()).unwrap_or_else(|err| {
-        eprintln!("lucy-desktop: {err}; showing the placeholder instead");
-        lucy_packs::load("placeholder", None).expect("the placeholder pack is built in")
+        eprintln!("lucy-desktop: {err}; showing her default look instead");
+        lucy_packs::load("default", None).expect("the default pack is built in")
     });
     Loaded {
         pack,

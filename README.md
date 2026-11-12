@@ -97,7 +97,8 @@ crates/
 apps/desktop/      the desktop app's Rust side (Tauri; its own Cargo workspace), with voice
 apps/ui/           its web pages (the sprite and the main window), in Svelte
 persona/           built-in personas
-packs/placeholder/ the built-in sprite pack
+packs/default/     her built-in look (the sprite pack)
+packs/placeholder/ a plain pack to copy when making your own
 nix/               the flake's packages and home-manager module
 docs/              the guides (the docs site), design decisions, example config
 ```

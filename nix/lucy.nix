@@ -17,6 +17,7 @@ rustPlatform.buildRustPackage {
       ../crates
       # Built in: her persona and the placeholder sprite pack.
       ../persona
+      ../packs/default
       ../packs/placeholder
     ];
   };

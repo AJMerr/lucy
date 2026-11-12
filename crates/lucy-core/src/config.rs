@@ -361,7 +361,7 @@ impl Default for SpriteSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            pack: "placeholder".into(),
+            pack: "default".into(),
             scale: 1.0,
             bubble_timeout_secs: 0,
             hotkey: "Ctrl+Shift+Space".into(),
