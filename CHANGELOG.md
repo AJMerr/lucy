@@ -15,6 +15,10 @@ Lucy goes public.
   **the AUR** (`lucy-bin`), updated by each release.
 - **What stays stable:** from 1.0, config.toml and the `lucy` command follow semver; see
   [docs/stability.md](docs/stability.md).
+- **ComfyUI and Ollama share the GPU:** before each picture, Lucy unloads the models of the
+  chat's Ollama on this computer, so ComfyUI has the whole card; the chat model loads again for
+  her reply. Turn it off with Settings → Pictures → Free the GPU first
+  (`[images.comfyui] unload_ollama`). See [docs/images.md](docs/images.md).
 - **Settings → Voice:** "Read typed replies aloud" and "Hey Lucy" are greyed out until Talk to
   Lucy is on, since neither works without it.
 

@@ -134,6 +134,8 @@ url = "http://127.0.0.1:8188"
 # workflow = "~/ComfyUI/my-workflow.json"     # exported with "Export (API)", using {{prompt}},
                                               # {{negative}}, {{width}}, {{height}}, {{seed}},
                                               # {{checkpoint}}; default: Lucy's built-in one
+unload_ollama = true            # before each picture, unload the models the chat's Ollama (on
+                                # this machine) has loaded, so ComfyUI has the GPU
 
 # --- Remote access (off by default) -------------------------------------------------------
 # Lets `lucy` on other machines use this core over WebSocket (ws://<bind>/rpc). Each needs the

@@ -1,6 +1,7 @@
 //! Making pictures: she can call `generate_image` (hosted generators ask first, ComfyUI on
 //! your machine doesn't), and `/image` makes one straight away. Each picture is saved to your
-//! pictures folder and kept with the chat.
+//! pictures folder and kept with the chat. Before ComfyUI draws, the chat's local Ollama lets
+//! go of the GPU.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -77,7 +78,10 @@ fn openrouter_makes_one() -> Vec<FakeResponse> {
 
 enum Maker {
     None,
+    /// ComfyUI, not unloading anything (`unload_ollama = false`).
     ComfyUi,
+    /// ComfyUI, with the chat model's server treated as an Ollama to unload first.
+    ComfyUiBesideOllama,
     OpenRouter,
 }
 
@@ -96,7 +100,7 @@ impl Harness {
         let helper = FakeServer::start([says("A picture.")]).await;
         let maker_server = FakeServer::start(match maker {
             Maker::None => vec![],
-            Maker::ComfyUi => comfyui_makes_one(),
+            Maker::ComfyUi | Maker::ComfyUiBesideOllama => comfyui_makes_one(),
             Maker::OpenRouter => openrouter_makes_one(),
         })
         .await;
@@ -114,11 +118,16 @@ impl Harness {
         );
         match maker {
             Maker::None => {}
-            Maker::ComfyUi => {
+            Maker::ComfyUi | Maker::ComfyUiBesideOllama => {
                 config += &format!(
                     "generator = \"comfyui\"\n\n[images.comfyui]\nurl = \"{}\"\ncheckpoint = \"dream.safetensors\"\n",
                     maker_server.url()
                 );
+                // The fake chat model answers in order whatever is asked, so only tests that
+                // expect the Ollama calls let them happen.
+                if matches!(maker, Maker::ComfyUi) {
+                    config += "unload_ollama = false\n";
+                }
             }
             Maker::OpenRouter => {
                 // The image model's address is the fake server's.
@@ -302,6 +311,89 @@ async fn she_makes_a_picture_with_comfyui_without_asking() {
     let kept = chat.messages.iter().find(|m| m.role == Role::Tool).unwrap();
     assert_eq!(kept.images.len(), 1, "kept with the chat");
     assert!(kept.images[0].made);
+}
+
+/// What the chat's Ollama was asked, in order (not counting chat requests).
+fn ollama_calls(harness: &Harness) -> Vec<(String, Value)> {
+    harness
+        .chat_model
+        .requests()
+        .into_iter()
+        .filter(|r| r.path.starts_with("/api/"))
+        .map(|r| (format!("{} {}", r.method, r.path), r.body))
+        .collect()
+}
+
+#[tokio::test]
+async fn before_comfyui_draws_her_local_ollama_lets_go_of_the_gpu() {
+    let harness = Harness::start(
+        Maker::ComfyUiBesideOllama,
+        true,
+        vec![
+            draws("a lighthouse at dusk"),
+            // Loaded: the chat model and an embedding model.
+            FakeResponse::json(
+                200,
+                json!({"models": [{"name": "m"}, {"name": "nomic-embed-text:latest"}]}).to_string(),
+            ),
+            FakeResponse::json(200, json!({"done_reason": "unload"}).to_string()),
+            FakeResponse::json(200, json!({"done_reason": "unload"}).to_string()),
+            FakeResponse::json(200, json!({"models": []}).to_string()),
+            says("Here it is."),
+        ],
+    )
+    .await;
+    let (client, mut events) = harness.client().await;
+
+    let (_sent, seen) = harness.ask(&client, &mut events, Decision::Deny).await;
+
+    assert_eq!(
+        ollama_calls(&harness),
+        vec![
+            ("GET /api/ps".into(), Value::Null),
+            (
+                "POST /api/generate".into(),
+                json!({"model": "m", "keep_alive": 0})
+            ),
+            (
+                "POST /api/generate".into(),
+                json!({"model": "nomic-embed-text:latest", "keep_alive": 0})
+            ),
+            ("GET /api/ps".into(), Value::Null),
+        ]
+    );
+    assert_eq!(harness.saved_pictures().len(), 1);
+    assert!(seen.iter().any(|e| matches!(e,
+        Event::ToolFinished { images, is_error: false, .. } if images.len() == 1)));
+    // She carries on with her reply afterwards (Ollama loads the model again by itself).
+    assert_eq!(
+        harness.chat_model.requests().last().unwrap().path,
+        "/v1/chat/completions"
+    );
+}
+
+#[tokio::test]
+async fn a_local_server_that_isnt_ollama_is_left_alone() {
+    let harness = Harness::start(
+        Maker::ComfyUiBesideOllama,
+        true,
+        vec![
+            draws("a lighthouse at dusk"),
+            FakeResponse::json(404, "{\"error\": \"not found\"}"),
+            says("Here it is."),
+        ],
+    )
+    .await;
+    let (client, mut events) = harness.client().await;
+
+    let (_sent, seen) = harness.ask(&client, &mut events, Decision::Deny).await;
+
+    assert_eq!(
+        ollama_calls(&harness),
+        vec![("GET /api/ps".into(), Value::Null)]
+    );
+    assert!(seen.iter().any(|e| matches!(e,
+        Event::ToolFinished { images, is_error: false, .. } if images.len() == 1)));
 }
 
 #[tokio::test]
