@@ -24,7 +24,7 @@ toggleable: off means no screen space and no resources. Lucy must run on Linux, 
 - Need an IPC protocol and versioning discipline (see ADR 0003).
 - Front ends must handle "core not running / starting up" gracefully.
 
-## Implementation notes (step 10)
+## Implementation notes (v0.2.0)
 
 - `lucy core run --service` runs until stopped (no idle exit). The login service starts it:
   a systemd user unit (`lucy-core.service`, `WantedBy=default.target`, `Restart=on-failure`)

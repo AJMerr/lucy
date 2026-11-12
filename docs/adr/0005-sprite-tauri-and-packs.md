@@ -27,7 +27,7 @@ Electron can but costs ~150 MB+ RAM for an always-on sprite.
   public later.
 - The renderer is an interface in the webview so Live2D slots in without core changes.
 
-## Implementation notes (milestone 2, slice 2a)
+## Implementation notes (v0.4.0, the sprite)
 
 - **Placement is compositor-agnostic.** On Wayland with the layer-shell protocol the sprite
   is an overlay-layer surface anchored bottom-right (any wlroots compositor, KDE, …), so no
@@ -49,7 +49,7 @@ Electron can but costs ~150 MB+ RAM for an always-on sprite.
 - The app is its own Cargo workspace, so the main workspace builds and tests without
   WebKitGTK.
 
-## Implementation notes (slice 2b, talking)
+## Implementation notes (v0.4.0, talking)
 
 - **Her chat:** one ongoing session titled "Sprite", its ID kept in `<data dir>/sprite-session`
   and recreated if it's gone. The sprite connects through `lucy-cli`'s connection logic, so it
@@ -74,7 +74,7 @@ Electron can but costs ~150 MB+ RAM for an always-on sprite.
   a global shortcut where apps may (not on Wayland, where the compositor binds `lucy sprite
   ask`). `LUCY_SPRITE_NO_LAYER_SHELL=1` forces an ordinary window.
 
-## Implementation notes (slice 2c, around her)
+## Implementation notes (v0.4.0, around her)
 
 - **Chat window:** a second, ordinary Tauri window (`chat.html`), made on demand by "more…" or
   `lucy sprite chat`. Its transcript is a pure reducer (`src/transcript.ts`) from her saved
@@ -95,7 +95,7 @@ Electron can but costs ~150 MB+ RAM for an always-on sprite.
   releases trigger `.github/workflows/release.yml`, which builds `lucy`, bundles per platform
   and attaches the results. Nothing is signed yet.
 
-## Implementation notes (milestone 3d, one app)
+## Implementation notes (v0.5.0, one app)
 
 - The sprite became part of Lucy's desktop app: "Lucy", the `lucy-desktop` program in
   `apps/desktop` (identifier `io.github.ajmerr.lucy`), with the sprite, the main window and a

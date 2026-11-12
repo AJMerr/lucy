@@ -25,7 +25,7 @@ Every agent task has a **step cap** and a **token/cost cap** regardless of level
   MCP tool annotations are used where present; otherwise a local override table.
 - Permission enforcement lives in the core, never in front ends.
 
-## Implementation notes (step 9)
+## Implementation notes (v0.2.0, agent mode)
 
 - **Entry points.** `/mode agent` per chat, `/level 0-3`, and `lucy agent "task" [--level N]
   [--yes]` (exit code 2 at a cap). Agent mode uses `defaults.agent_profile` unless the chat

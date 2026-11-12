@@ -31,14 +31,13 @@ jobs:
           nix shell --inputs-from . nixpkgs#lychee -c lychee --offline --no-progress --include-fragments
           --exclude-path target/book/404.html 'target/book/**/*.html' README.md
       - uses: actions/upload-pages-artifact@v3
-        if: github.ref == 'refs/heads/main' && !github.event.repository.private
+        if: github.ref == 'refs/heads/main'
         with:
           path: target/book
 
-  # Pages needs the repo public (or a paid plan), so this waits until then.
   deploy:
     needs: build
-    if: github.ref == 'refs/heads/main' && !github.event.repository.private
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write

@@ -103,5 +103,5 @@ path checks: their paths name the remote service's data, not this machine's file
 - MCP labels are hints from the server's author. A server that labels a destructive tool
   read-only would run without asking, so only add servers you trust, or set `ask` rules.
 - "Always" approvals live in memory and reset when the core restarts.
-- Agent mode (step 9) will reuse the same verdicts, with `AgentLevel` deciding which asks
+- Agent mode will reuse the same verdicts, with `AgentLevel` deciding which asks
   become runs.
