@@ -1,0 +1,25 @@
+pkgbase = lucy-bin
+	pkgdesc = Model-agnostic personal AI assistant: desktop sprite, chat window, tray icon and the lucy command
+	pkgver = @VERSION@
+	pkgrel = 1
+	url = https://ajmerr.github.io/lucy/
+	arch = x86_64
+	license = MIT OR Apache-2.0
+	depends = webkit2gtk-4.1
+	depends = gtk3
+	depends = gtk-layer-shell
+	depends = libayatana-appindicator
+	depends = alsa-lib
+	depends = hicolor-icon-theme
+	optdepends = gnome-keyring: a keyring for API keys (or another Secret Service provider)
+	optdepends = ollama: run models on this computer
+	provides = lucy
+	conflicts = lucy
+	source = https://github.com/AJMerr/lucy/releases/download/v@VERSION@/Lucy_@VERSION@_amd64.deb
+	source = LICENSE-MIT::https://raw.githubusercontent.com/AJMerr/lucy/v@VERSION@/LICENSE-MIT
+	source = LICENSE-APACHE::https://raw.githubusercontent.com/AJMerr/lucy/v@VERSION@/LICENSE-APACHE
+	sha256sums = @DEB_SHA256@
+	sha256sums = @MIT_SHA256@
+	sha256sums = @APACHE_SHA256@
+
+pkgname = lucy-bin

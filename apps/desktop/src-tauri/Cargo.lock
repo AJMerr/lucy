@@ -2949,7 +2949,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "lucy-cli"
-version = "0.10.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2977,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "lucy-client"
-version = "0.10.0"
+version = "1.0.0"
 dependencies = [
  "futures",
  "interprocess",
@@ -2991,7 +2991,7 @@ dependencies = [
 
 [[package]]
 name = "lucy-core"
-version = "0.10.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -3026,7 +3026,7 @@ dependencies = [
 
 [[package]]
 name = "lucy-desktop"
-version = "0.10.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "gtk",
@@ -3050,7 +3050,7 @@ dependencies = [
 
 [[package]]
 name = "lucy-packs"
-version = "0.10.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -3059,7 +3059,7 @@ dependencies = [
 
 [[package]]
 name = "lucy-protocol"
-version = "0.10.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3068,7 +3068,7 @@ dependencies = [
 
 [[package]]
 name = "lucy-providers"
-version = "0.10.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3083,7 +3083,7 @@ dependencies = [
 
 [[package]]
 name = "lucy-tools"
-version = "0.10.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "dirs",
@@ -3102,7 +3102,7 @@ dependencies = [
 
 [[package]]
 name = "lucy-voice"
-version = "0.10.0"
+version = "1.0.0"
 dependencies = [
  "bzip2",
  "cpal",

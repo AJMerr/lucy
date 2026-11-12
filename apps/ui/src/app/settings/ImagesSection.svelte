@@ -1,5 +1,6 @@
-<!-- Pictures: what makes them (an image model, or ComfyUI on this computer), where they're
-     saved, and which model describes pictures for models that can't see. -->
+<!-- Pictures: what makes them (an image model, or ComfyUI on this computer, which can take
+     the GPU from Ollama first), where they're saved, and which model describes pictures for
+     models that can't see. -->
 <script lang="ts">
   import type { SettingsStore } from "../../lib/stores/settings.ts";
   import SectionBar from "./SectionBar.svelte";
@@ -30,6 +31,22 @@
         target[field] = value.trim();
       }
       if (table === "comfyui" && Object.keys(target).length === 0) {
+        delete d.images.comfyui;
+      }
+    });
+  }
+
+  /** `[images.comfyui] unload_ollama`: on unless set to false, so only "off" is written. */
+  function setUnload(on: boolean): void {
+    store.edit("images", (d) => {
+      d.images ??= {};
+      d.images.comfyui ??= {};
+      if (on) {
+        delete d.images.comfyui.unload_ollama;
+      } else {
+        d.images.comfyui.unload_ollama = false;
+      }
+      if (Object.keys(d.images.comfyui).length === 0) {
         delete d.images.comfyui;
       }
     });
@@ -91,6 +108,16 @@
       value={comfyui.checkpoint ?? ""}
       oninput={(e) => set("checkpoint", e.currentTarget.value, "comfyui")}
     />
+  </label>
+  <label class="check">
+    <input
+      type="checkbox"
+      aria-label="Free the GPU first"
+      checked={comfyui.unload_ollama !== false}
+      onchange={(e) => setUnload(e.currentTarget.checked)}
+    />
+    Free the GPU first: unload Ollama's models before each picture (they load again for her
+    reply). Turn off if your card holds both.
   </label>
   <p class="hint">
     Workflows can use <code>{"{{prompt}}"}</code>, <code>{"{{negative}}"}</code>,

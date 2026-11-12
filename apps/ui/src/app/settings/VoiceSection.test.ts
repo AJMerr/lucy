@@ -72,6 +72,21 @@ test("turning voice on with a Piper voice saves it, then gets voice ready", asyn
   await waitFor(() => screen.getByText(/Ready/));
 });
 
+test("reading aloud and the wake word wait for Talk to Lucy", async () => {
+  await setUp({ read_typed: true });
+
+  const readTyped = screen.getByLabelText("Read typed replies aloud") as HTMLInputElement;
+  const wakeWord = screen.getByLabelText("Listen for Hey Lucy") as HTMLInputElement;
+  assert.ok(readTyped.disabled);
+  assert.ok(wakeWord.disabled);
+  screen.getByText(/Turn on Talk to Lucy to use these/);
+
+  await fireEvent.click(screen.getByLabelText("Talk to Lucy"));
+  assert.ok(!readTyped.disabled);
+  assert.ok(!wakeWord.disabled);
+  assert.equal(screen.queryByText(/Turn on Talk to Lucy to use these/), null);
+});
+
 test("downloads show how far they've got", async () => {
   await setUp({ enabled: true });
 

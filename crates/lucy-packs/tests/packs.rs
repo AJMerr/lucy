@@ -63,6 +63,30 @@ fn the_built_in_placeholder_loads() {
 }
 
 #[test]
+fn the_built_in_default_draws_every_state() {
+    let pack = load("default", None).unwrap();
+
+    assert_eq!(pack.name, "Lucy");
+    assert_eq!(pack.size, (256, 256));
+    let idle = &pack.states["idle"];
+    assert_eq!(idle.frames.len(), 12, "a blink every three seconds");
+    assert_ne!(idle.frames[0], idle.frames[11]);
+    assert_eq!(pack.states["thinking"].frames.len(), 3);
+    for own in ["happy", "error", "listening"] {
+        assert_ne!(
+            pack.states[own], pack.states["idle"],
+            "{own} has its own frame"
+        );
+    }
+    assert!(
+        pack.states
+            .values()
+            .flat_map(|state| &state.frames)
+            .all(|frame| frame.png.starts_with(PNG))
+    );
+}
+
+#[test]
 fn optional_states_fall_back_to_idle() {
     let packs = tempfile::tempdir().unwrap();
     write_pack(packs.path(), "mine", MINIMAL, &[]);

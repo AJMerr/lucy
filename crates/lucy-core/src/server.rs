@@ -31,7 +31,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{Config, McpServer, ProviderKind, ToolSettings};
+use crate::config::{Config, McpServer, Profile, ProviderKind, ToolSettings};
 use crate::mcp::McpHost;
 use crate::persona::{Personas, PromptContext, build_system_prompt, detect_machine};
 use crate::provider::{build_provider, build_provider_with_key};
@@ -933,7 +933,7 @@ async fn handle(
                 .await
                 .map_err(app)?
                 .with_access(access)
-                .with_generator(core.generator(&config));
+                .with_generator(core.generator(&config, None));
             let tools = toolbox.infos(&allowed);
             toolbox.close().await;
             result(ToolsList {
@@ -996,11 +996,15 @@ impl Core {
         }
     }
 
-    /// The picture maker `config` sets up, for `generate_image`: ready, or why not.
-    fn generator(&self, config: &Config) -> Option<GeneratorSlot> {
+    /// The picture maker `config` sets up, for `generate_image` in a chat with `chat`'s
+    /// model: ready, or why not.
+    fn generator(&self, config: &Config, chat: Option<&Profile>) -> Option<GeneratorSlot> {
         match Generator::from_config(config, &self.options.secrets) {
             Ok(None) => None,
-            Ok(Some(generator)) => Some(Ok(Arc::new(generator))),
+            Ok(Some(generator)) => Some(Ok(Arc::new(match chat {
+                Some(chat) => generator.beside(config, chat),
+                None => generator,
+            }))),
             Err(err) => Some(Err(err)),
         }
     }
@@ -1404,7 +1408,7 @@ fn start_turn(core: &Arc<Core>, request: TurnRequest) -> Result<u64, RpcError> {
             servers: config.mcp.servers.clone(),
             cwd,
             access,
-            generator: core.generator(&config),
+            generator: core.generator(&config, Some(profile)),
             memory,
             schedules: Some(Arc::new(schedules::Book {
                 core: Arc::clone(core),
@@ -1461,6 +1465,7 @@ fn images_generate(
         profile: settings.profile.clone(),
         model: config.profiles[&settings.profile].model.clone(),
     };
+    let generator = generator.beside(&config, &config.profiles[&settings.profile]);
 
     let cancel = CancellationToken::new();
     {

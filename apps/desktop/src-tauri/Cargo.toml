@@ -1,9 +1,9 @@
 [package]
 name = "lucy-desktop"
 description = "Lucy's desktop app: her sprite, her main window (chats and settings) and a tray icon."
-version = "0.10.0"
+version = "1.0.0"
 edition = "2024"
-license = "LicenseRef-Proprietary"
+license = "MIT OR Apache-2.0"
 publish = false
 
 # A workspace of its own: building it needs WebKitGTK and friends (see the flake's dev shell),

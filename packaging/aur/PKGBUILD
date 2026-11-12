@@ -1,0 +1,26 @@
+# Maintainer: AJMerr <https://github.com/AJMerr>
+# The release workflow fills in the version and checksum and pushes this to the AUR as lucy-bin.
+pkgname=lucy-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Model-agnostic personal AI assistant: desktop sprite, chat window, tray icon and the lucy command"
+arch=('x86_64')
+url="https://ajmerr.github.io/lucy/"
+license=('MIT OR Apache-2.0')
+depends=('webkit2gtk-4.1' 'gtk3' 'gtk-layer-shell' 'libayatana-appindicator' 'alsa-lib' 'hicolor-icon-theme')
+optdepends=('gnome-keyring: a keyring for API keys (or another Secret Service provider)'
+            'ollama: run models on this computer')
+provides=('lucy')
+conflicts=('lucy')
+source=("https://github.com/AJMerr/lucy/releases/download/v${pkgver}/Lucy_${pkgver}_amd64.deb"
+        "LICENSE-MIT::https://raw.githubusercontent.com/AJMerr/lucy/v${pkgver}/LICENSE-MIT"
+        "LICENSE-APACHE::https://raw.githubusercontent.com/AJMerr/lucy/v${pkgver}/LICENSE-APACHE")
+sha256sums=('@DEB_SHA256@'
+            '@MIT_SHA256@'
+            '@APACHE_SHA256@')
+
+package() {
+  bsdtar -xf data.tar.* -C "$pkgdir"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+}

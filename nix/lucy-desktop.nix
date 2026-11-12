@@ -36,6 +36,7 @@ rustPlatform.buildRustPackage {
       ../Cargo.lock
       ../crates
       ../persona
+      ../packs/default
       ../packs/placeholder
       # Its Rust side, and its pages (apps/ui).
       (lib.fileset.difference ../apps/desktop/src-tauri (
@@ -114,7 +115,7 @@ rustPlatform.buildRustPackage {
   meta = {
     description = "Lucy's desktop app: her sprite, her main window (chats and settings) and a tray icon";
     homepage = "https://github.com/AJMerr/lucy";
-    # No licence yet (see docs/ROADMAP.md); set it here when there is one.
+    license = with lib.licenses; [ mit asl20 ];
     mainProgram = "lucy-desktop";
     platforms = lib.platforms.linux;
   };

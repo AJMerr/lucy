@@ -1,0 +1,50 @@
+name: Docs
+
+# The docs site (https://ajmerr.github.io/lucy/): docs/ built with mdBook, its links checked on
+# every push, and published to GitHub Pages from main.
+
+on:
+  push:
+    branches: ["**"]
+    paths: ["docs/**", "book.toml", "README.md", ".github/workflows/docs.yml"]
+  pull_request:
+    paths: ["docs/**", "book.toml", "README.md", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build the site
+        run: nix shell --inputs-from . nixpkgs#mdbook -c mdbook build
+      - name: Check its links (and the README's)
+        run: >-
+          nix shell --inputs-from . nixpkgs#lychee -c lychee --offline --no-progress --include-fragments
+          --exclude-path target/book/404.html 'target/book/**/*.html' README.md
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: target/book
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

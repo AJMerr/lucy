@@ -134,6 +134,8 @@ url = "http://127.0.0.1:8188"
 # workflow = "~/ComfyUI/my-workflow.json"     # exported with "Export (API)", using {{prompt}},
                                               # {{negative}}, {{width}}, {{height}}, {{seed}},
                                               # {{checkpoint}}; default: Lucy's built-in one
+unload_ollama = true            # before each picture, unload the models the chat's Ollama (on
+                                # this machine) has loaded, so ComfyUI has the GPU
 
 # --- Remote access (off by default) -------------------------------------------------------
 # Lets `lucy` on other machines use this core over WebSocket (ws://<bind>/rpc). Each needs the
@@ -157,7 +159,8 @@ autostart = false               # true: `lucy service install` also starts the a
 
 [sprite]
 enabled = true                  # show her when the app starts; `lucy sprite` shows her anyway
-pack = "placeholder"            # looked up in <data dir>/lucy/packs/, then bundled packs
+pack = "default"                # looked up in <data dir>/lucy/packs/, then the built-in ones
+                                # ("default", her look, and "placeholder")
 scale = 1.0
 bubble_timeout_secs = 0         # seconds before a finished reply fades; 0: until your next message
 hotkey = "Ctrl+Shift+Space"     # opens her input box (X11, macOS, Windows); "" turns it off.

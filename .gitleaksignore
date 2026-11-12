@@ -1,0 +1,2 @@
+# A made-up key in a test that checks Lucy refuses to remember secrets.
+2e3db433b6e1fea5f83c789cac354becd0a45a62:crates/lucy-core/tests/memory.rs:generic-api-key:267

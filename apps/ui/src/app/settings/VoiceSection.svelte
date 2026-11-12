@@ -179,10 +179,12 @@
   </div>
 {/if}
 
+<!-- Both need voice on: without it nothing is downloaded, so she can't speak or listen. -->
 <label class="check">
   <input
     type="checkbox"
     aria-label="Read typed replies aloud"
+    disabled={settings.enabled !== true}
     checked={settings.read_typed === true}
     onchange={(e) => set("read_typed", e.currentTarget.checked)}
   />
@@ -192,11 +194,15 @@
   <input
     type="checkbox"
     aria-label="Listen for Hey Lucy"
+    disabled={settings.enabled !== true}
     checked={settings.wake_word === true}
     onchange={(e) => set("wake_word", e.currentTarget.checked)}
   />
   Listen for "Hey Lucy" (keeps the microphone open while the app runs)
 </label>
+{#if settings.enabled !== true}
+  <p class="hint">Turn on Talk to Lucy to use these.</p>
+{/if}
 
 <SectionBar {section} managed={$store.managed} onSave={save} onRevert={() => store.revert("voice")} />
 

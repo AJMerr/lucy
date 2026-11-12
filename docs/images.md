@@ -125,7 +125,19 @@ generator = "comfyui"
 url = "http://127.0.0.1:8188"              # the default
 # checkpoint = "sd_xl_base_1.0.safetensors" # default: the first checkpoint ComfyUI has
 # workflow = "~/ComfyUI/lucy-flux.json"     # default: Lucy's built-in text-to-image workflow
+# unload_ollama = false                     # default true: see below
 ```
+
+#### Sharing the GPU with Ollama
+
+A chat model and an image model rarely fit on one card together: on 12 GB, a 14B chat model
+leaves too little for ComfyUI, which then runs slowly or fails with "CUDA out of memory". So
+when your chat model runs on Ollama on this computer, Lucy asks Ollama to unload its models
+just before each picture. ComfyUI gets the whole GPU, and Ollama loads the chat model again for
+her reply, which takes a few seconds.
+
+If your card holds both, turn this off: Settings → Pictures → **Free the GPU first**, or
+`unload_ollama = false` under `[images.comfyui]`.
 
 #### Your own workflows
 
@@ -162,7 +174,8 @@ whatever it saves is what Lucy shows.
 - **"ComfyUI has no checkpoints":** put a model file in `ComfyUI/models/checkpoints/`.
 - **"Value not in list: ckpt_name":** `[images.comfyui] checkpoint` names a file ComfyUI doesn't
   have; check the spelling or leave it empty.
-- **CUDA out of memory:** use a smaller model or size, or start ComfyUI with `--lowvram`.
+- **CUDA out of memory:** check **Free the GPU first** is on (it only helps with Ollama on this
+  computer), use a smaller model or size, or start ComfyUI with `--lowvram`.
 - **Every message in a chat fails (e.g. "404 Not Found"):** the chat's model is set to an image
   model, which can't chat. Switch it back with `/model <chat profile>` or the chat's model menu,
   and choose the image model under Settings → Pictures instead.

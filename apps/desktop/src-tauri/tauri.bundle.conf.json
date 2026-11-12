@@ -3,15 +3,32 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/lucy"],
+    "externalBin": [
+      "binaries/lucy"
+    ],
     "publisher": "AJMerr",
+    "license": "MIT OR Apache-2.0",
     "category": "Utility",
     "shortDescription": "Lucy, your AI assistant, on the desktop",
-    "longDescription": "Lucy is a model-agnostic personal AI assistant. This installs her desktop sprite (lucy-sprite) and the lucy command-line program and core it talks to.",
+    "longDescription": "Lucy is a model-agnostic personal AI assistant. This installs her app (the desktop sprite, her main window and a tray icon) and the lucy command-line program and core they talk to.",
     "linux": {
-      "deb": { "depends": ["libgtk-layer-shell0", "libayatana-appindicator3-1", "libasound2"] },
-      "rpm": { "depends": ["gtk-layer-shell", "libayatana-appindicator-gtk3", "alsa-lib"] }
+      "deb": {
+        "depends": [
+          "libgtk-layer-shell0",
+          "libayatana-appindicator3-1",
+          "libasound2"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "gtk-layer-shell",
+          "libayatana-appindicator-gtk3",
+          "alsa-lib"
+        ]
+      }
     },
-    "macOS": { "minimumSystemVersion": "11.0" }
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
   }
 }

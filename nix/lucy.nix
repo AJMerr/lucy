@@ -17,6 +17,7 @@ rustPlatform.buildRustPackage {
       ../crates
       # Built in: her persona and the placeholder sprite pack.
       ../persona
+      ../packs/default
       ../packs/placeholder
     ];
   };
@@ -32,7 +33,7 @@ rustPlatform.buildRustPackage {
   meta = {
     description = "Lucy, a model-agnostic personal AI assistant: CLI and core";
     homepage = "https://github.com/AJMerr/lucy";
-    # No licence yet (see docs/ROADMAP.md); set it here when there is one.
+    license = with lib.licenses; [ mit asl20 ];
     mainProgram = "lucy";
     platforms = lib.platforms.unix;
   };

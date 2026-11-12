@@ -39,9 +39,29 @@ lucy mcp add github --key GITHUB_PERSONAL_ACCESS_TOKEN=github \
 lucy mcp add linear --url https://mcp.linear.app/mcp     # a remote one; offers to sign in
 lucy mcp add                             # or answer a few questions instead
 lucy mcp list                            # which servers start, and how many tools each has
+lucy mcp remove github
+lucy mcp login linear                    # sign in again; `lucy mcp logout linear` forgets it
 ```
 
-The [README](../README.md#mcp-servers) has more on remote servers, sign-in and tool rules.
+`lucy mcp add` keeps your config's comments and layout.
+
+## How they work
+
+- A server's tools show up as `<server>__<tool>` (e.g. `github__create_issue`).
+- Servers start the first time a chat needs tools and keep running until the core stops; one that
+  crashes is restarted on next use.
+- Tools the server labels read-only run by themselves (with the same path checks as Lucy's own);
+  everything else asks. Set `github = "ask"` (or `"deny"`) under `[tools.rules]` to override a
+  whole server; see [Tools](tools.md#rules).
+- **Remote servers** are reached over streamable HTTP. Sign-in uses OAuth: Lucy registers herself
+  with the server, opens your browser, catches the redirect on localhost, and keeps the tokens in
+  your keyring, refreshing them when they expire. If a refresh is refused, `/tools` and
+  `lucy mcp list` say to sign in again (Sign in in Settings, or `lucy mcp login`). Servers that
+  use API keys take a bearer key (`--bearer-key`) or header keys (`--header-key HEADER=keyname`)
+  instead. A remote server's file paths aren't on your machine, so the home-folder checks don't
+  apply to its read-only tools.
+- In config.toml they're under `[mcp.servers.<name>]`; see
+  [config.example.toml](config.example.toml).
 
 ## Google Workspace: making an OAuth client
 

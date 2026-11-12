@@ -17,7 +17,7 @@ Date: 2026-11-05 · Status: Accepted
 - Two transports to keep in sync; both must route through the same request handler.
 - Protocol needs a version field so old front ends fail clearly against a newer core.
 
-## Implementation notes (milestone 1, step 6)
+## Implementation notes (v0.1.0)
 
 - Socket: `$LUCY_SOCKET`, else `$XDG_RUNTIME_DIR/lucy/core.sock` (folder mode 0700), else a
   per-user temp folder; Windows uses the named pipe `lucy-core-<user>`. A stale socket file left
@@ -32,9 +32,9 @@ Date: 2026-11-05 · Status: Accepted
 - Per-session `/model` and `/plain` choices live in the core's memory, not the database.
 - `lucy-client` holds the client side so the sprite can reuse it.
 - The Windows named pipe allows only the user running the core (and SYSTEM), the counterpart
-  of the 0700 socket folder on Unix (step 11).
+  of the 0700 socket folder on Unix (v0.3.0).
 
-## Implementation notes (step 10, protocol v4)
+## Implementation notes (v0.2.0, protocol v4)
 
 - `core.status` (version, PID, `service`, busy chats) and `core.shutdown {force}` work before
   `hello` and keep their shape across protocol versions, so a newer client can always see and
@@ -45,7 +45,7 @@ Date: 2026-11-05 · Status: Accepted
   shuts it down and starts its own (`lucy` prints that it did). A busy or newer core is left
   alone with a message naming `lucy core stop`. Cores before v4 still need `pkill` once.
 
-## Implementation notes (step 11, remote access)
+## Implementation notes (v0.3.0, remote access)
 
 - `[remote] enabled = true` starts a WebSocket listener at `ws://<bind>/rpc` (axum) next to
   the local socket. Each text frame is one JSON-RPC message, handled by the same code as the
@@ -69,7 +69,7 @@ Date: 2026-11-05 · Status: Accepted
   with the token in the keyring entry `remote-client` (`LUCY_KEY_REMOTE_CLIENT`). It never
   spawns a remote core. `lucy service` and `lucy core stop` always act on the local core.
 
-## Implementation notes (milestone 3a, protocol v5: settings over RPC)
+## Implementation notes (v0.5.0, protocol v5: settings over RPC)
 
 - For the GUI (and a phone app later), settings go through the core instead of each front end
   editing files: `config.get` returns config.toml as JSON with defaults filled in, its path,

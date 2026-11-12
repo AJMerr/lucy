@@ -183,6 +183,10 @@ pub struct ComfyUiSettings {
     /// The model file for `{{checkpoint}}`; ComfyUI's first checkpoint when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<String>,
+    /// Before each picture, unload the models loaded in the chat's Ollama (on this machine),
+    /// so ComfyUI has the GPU to itself. Ollama loads the chat model again for her reply.
+    #[serde(skip_serializing_if = "is_true")]
+    pub unload_ollama: bool,
 }
 
 impl Default for ComfyUiSettings {
@@ -191,6 +195,7 @@ impl Default for ComfyUiSettings {
             url: "http://127.0.0.1:8188".into(),
             workflow: None,
             checkpoint: None,
+            unload_ollama: true,
         }
     }
 }
@@ -214,7 +219,7 @@ impl Profile {
         }
     }
 
-    fn is_local(&self) -> bool {
+    pub(crate) fn is_local(&self) -> bool {
         let host = self
             .base_url
             .as_deref()
@@ -356,7 +361,7 @@ impl Default for SpriteSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            pack: "placeholder".into(),
+            pack: "default".into(),
             scale: 1.0,
             bubble_timeout_secs: 0,
             hotkey: "Ctrl+Shift+Space".into(),

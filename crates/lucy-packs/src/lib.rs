@@ -1,6 +1,6 @@
 //! Sprite packs (ADR 0005): a folder with `pack.toml` and PNG frames for each state the
 //! sprite can be in. Packs are found in the user's packs folder first, then among the ones
-//! built into Lucy (only `placeholder`; no character art is committed).
+//! built into Lucy: `default` (her look) and `placeholder` (a plain one to copy from).
 
 use std::collections::BTreeMap;
 use std::io;
@@ -13,7 +13,7 @@ pub const REQUIRED_STATES: [&str; 3] = ["idle", "thinking", "talking"];
 /// States a pack may draw; missing ones show `idle`.
 pub const OPTIONAL_STATES: [&str; 3] = ["happy", "error", "listening"];
 /// The packs built into Lucy.
-pub const BUILT_IN: [&str; 1] = ["placeholder"];
+pub const BUILT_IN: [&str; 2] = ["default", "placeholder"];
 
 /// The pack format this Lucy reads.
 const FORMAT_VERSION: u32 = 1;
@@ -98,10 +98,55 @@ pub fn load(name: &str, user_dir: Option<&Path>) -> Result<Pack, PackError> {
         return load_from(&Source::Dir(dir));
     }
     match name {
+        "default" => load_from(&Source::BuiltIn(DEFAULT)),
         "placeholder" => load_from(&Source::BuiltIn(PLACEHOLDER)),
         _ => Err(not_found()),
     }
 }
+
+/// Lucy's own look, compiled in so it's always there.
+const DEFAULT: &[(&str, &[u8])] = &[
+    (
+        "pack.toml",
+        include_bytes!("../../../packs/default/pack.toml"),
+    ),
+    (
+        "frames/idle-0.png",
+        include_bytes!("../../../packs/default/frames/idle-0.png"),
+    ),
+    (
+        "frames/idle-1.png",
+        include_bytes!("../../../packs/default/frames/idle-1.png"),
+    ),
+    (
+        "frames/thinking-0.png",
+        include_bytes!("../../../packs/default/frames/thinking-0.png"),
+    ),
+    (
+        "frames/thinking-1.png",
+        include_bytes!("../../../packs/default/frames/thinking-1.png"),
+    ),
+    (
+        "frames/thinking-2.png",
+        include_bytes!("../../../packs/default/frames/thinking-2.png"),
+    ),
+    (
+        "frames/talking-1.png",
+        include_bytes!("../../../packs/default/frames/talking-1.png"),
+    ),
+    (
+        "frames/happy-0.png",
+        include_bytes!("../../../packs/default/frames/happy-0.png"),
+    ),
+    (
+        "frames/error-0.png",
+        include_bytes!("../../../packs/default/frames/error-0.png"),
+    ),
+    (
+        "frames/listening-0.png",
+        include_bytes!("../../../packs/default/frames/listening-0.png"),
+    ),
+];
 
 /// The placeholder pack, compiled in so it's always there.
 const PLACEHOLDER: &[(&str, &[u8])] = &[

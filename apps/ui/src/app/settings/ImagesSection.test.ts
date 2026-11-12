@@ -71,6 +71,19 @@ test("choosing ComfyUI shows its settings and saves only what you set", async ()
   ]);
 });
 
+test("ComfyUI frees the GPU from Ollama unless you say not to", async () => {
+  const core = await setUp({ generator: "comfyui" });
+  const unload = screen.getByLabelText("Free the GPU first") as HTMLInputElement;
+  assert.ok(unload.checked, "on by default");
+
+  await fireEvent.click(unload);
+  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  assert.deepEqual(core.sent("config.update"), [
+    { patch: { images: { comfyui: { unload_ollama: false } } } },
+  ]);
+});
+
 test("turning picture making off removes the generator, and the folder can be changed", async () => {
   const core = await setUp({ generator: "pics" });
 

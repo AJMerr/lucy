@@ -96,23 +96,32 @@
               };
             };
 
-            devShells.default = pkgs.mkShell {
-              packages =
-                with pkgs;
-                [
-                  cargo
-                  rustc
-                  clippy
-                  rustfmt
-                  rust-analyzer
-                  pkg-config
-                  nodejs_24
-                  cargo-tauri
-                ]
-                ++ pkgs.lib.optionals isLinux tauriLinuxDeps;
+            devShells.default = pkgs.mkShell (
+              {
+                packages =
+                  with pkgs;
+                  [
+                    cargo
+                    rustc
+                    clippy
+                    rustfmt
+                    rust-analyzer
+                    pkg-config
+                    nodejs_24
+                    cargo-tauri
+                    mdbook
+                    lychee
+                  ]
+                  ++ pkgs.lib.optionals isLinux tauriLinuxDeps;
 
-              RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
-            };
+                RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+              }
+              # The voice engine (sherpa-onnx) is downloaded and loaded at run time, and needs
+              # libstdc++, as in lucy-desktop's wrapper.
+              // pkgs.lib.optionalAttrs isLinux {
+                LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ];
+              }
+            );
           }
         );
 }

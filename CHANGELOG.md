@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.0.0: Lucy goes public (2026-11-12)
+
+The first stable release: Lucy is open source, documented, installable from package managers,
+and has her own look.
+
+- **Open source** under MIT OR Apache-2.0, with CONTRIBUTING, SECURITY (private vulnerability
+  reporting), a code of conduct, and issue and pull request templates.
+- **A docs site** at [ajmerr.github.io/lucy](https://ajmerr.github.io/lucy/): new guides for
+  installing (including getting past the unsigned-installer prompts on macOS and Windows), the
+  first five minutes, the app and sprite, the terminal and config, tools and agent mode, the
+  login service, remote access, Nix and troubleshooting. CI checks every link.
+- **A README for newcomers**, pointing into the guides.
+- **Install from Homebrew** (`brew install --cask ajmerr/lucy/lucy`, or the `lucy` formula) and
+  **the AUR** (`lucy-bin`), updated by each release.
+- **What stays stable:** from 1.0, config.toml and the `lucy` command follow semver; see
+  [docs/stability.md](docs/stability.md).
+- **Her own look:** the sprite now ships with an original kawaii netrunner (the built-in
+  `default` pack, now the default): she blinks, talks, thinks with a thought bubble, and looks
+  happy, frustrated or attentive. The plain `placeholder` pack is still built in to copy
+  from. A pack you made yourself is unchanged if your config names it.
+- **ComfyUI and Ollama share the GPU:** before each picture, Lucy unloads the models of the
+  chat's Ollama on this computer, so ComfyUI has the whole card; the chat model loads again for
+  her reply. Turn it off with Settings → Pictures → Free the GPU first
+  (`[images.comfyui] unload_ollama`). See [docs/images.md](docs/images.md).
+- **Settings → Voice:** "Read typed replies aloud" and "Hey Lucy" are greyed out until Talk to
+  Lucy is on, since neither works without it.
+
+### Upgrading from v0.10.0
+
+- Restart the core after installing: `lucy service restart`, or `lucy core stop` if you
+  don't use the service. Still protocol v5.
+- The sprite takes on her new look unless your config names a pack (`[sprite] pack`); to keep
+  the old one, set `pack = "placeholder"`.
+
 ## v0.10.0: polish (2026-11-11)
 
 The rough edges a newcomer hits first. See [docs/models.md](docs/models.md) and
@@ -79,7 +113,6 @@ Lucy remembers you. See [docs/memory.md](docs/memory.md).
   No memory, and deleted (pictures too) when you leave.
 - **Protocol** (still v5, additions only): `memory.get`, `memory.set`, `chat.send.incognito`,
   `SessionSummary.incognito`.
-- The roadmap file is gone from the repo; the changelog records what shipped.
 
 ## v0.6.0: pictures (2026-11-10)
 
@@ -117,8 +150,7 @@ Lucy can see pictures and make them. See [docs/images.md](docs/images.md).
 
 Lucy now has an app: one program, "Lucy", with her sprite, a main window for your chats and
 every setting, and a tray icon. Anyone can install it and set her up without a terminal, and
-the core can now be configured by any front end, ready for a phone app later. This completes
-milestone 3.
+the core can now be configured by any front end, ready for a phone app later.
 
 ### Settings over the core
 
@@ -192,10 +224,8 @@ milestone 3.
   Builds made with plain `cargo` in the Nix dev shell can't find it on NixOS; the Nix package
   can.
 - **Installers still aren't signed**, so macOS and Windows warn on first run.
-- **The settings screens haven't been clicked through by hand yet** across every platform;
-  report anything that doesn't save as expected.
-- **The mobile app isn't here yet.** The main window works in a browser against a core with
-  remote access on (`app.html?url=ws://host:7077/rpc&token=…`), which is what it'll build on.
+- **No mobile app yet.** The main window works in a browser against a core with remote access
+  on (`app.html?url=ws://host:7077/rpc&token=…`).
 
 ## v0.4.0: desktop sprite (2026-11-07)
 
@@ -203,7 +233,7 @@ Lucy can now live on your desktop: an animated sprite in the corner of the scree
 in speech bubbles, asks before running tools, and opens her whole chat in a window when a reply
 runs long. She uses the same core as `lucy`, so her chat carries on in the terminal and
 vice versa. There are installers for Linux, macOS and Windows, and a Nix flake with a
-home-manager module. This completes milestone 2.
+home-manager module.
 
 ### Desktop sprite
 
@@ -263,15 +293,12 @@ home-manager module. This completes milestone 2.
   for Apple silicon only. Installing one doesn't put `lucy` on your `PATH` on macOS or Windows.
 - **Global hotkeys don't work on Wayland**; bind `lucy sprite ask` in your compositor.
 - **GNOME on Wayland** has no layer shell, so she's an ordinary floating window there.
-- **Typing into her, clicking through around her, and the hotkey on X11, macOS and Windows**
-  haven't been tried by hand yet; report anything odd.
 
 ## v0.3.0: remote access (2026-11-07)
 
 Lucy's core can now serve other machines: your laptop's `lucy` can use your desktop's core,
 with its chats, models, keys and MCP servers, over WebSocket. It's off by default, behind a
-token, and capped so a leaked token can't run commands unapproved. This completes
-milestone 1.
+token, and capped so a leaked token can't run commands unapproved.
 
 ### Remote access
 
@@ -311,9 +338,8 @@ milestone 1.
   connection; there are no per-device tokens yet.
 - **Remote access only lasts while the core runs**, and other machines can't start it, so
   install the login service on the machine that serves.
-- **Tested day to day on Linux only.** Everything passes in CI on Linux, macOS and Windows.
 - The v0.2.0 limitations still apply (Windows console flash at login, level 2 commands,
-  `/undo` scope, Ollama context), and there's no desktop sprite or voice yet (milestone 2).
+  `/undo` scope, Ollama context), and there's no desktop sprite or voice yet.
 
 ### Under the hood
 
@@ -428,9 +454,6 @@ her file changes. Her core can also run from login, ready for the desktop sprite
 
 ### Known limitations
 
-- **Tested day to day on Linux only.** Everything passes in CI on Linux, macOS and Windows,
-  and the login service has been installed for real on NixOS. On macOS and Windows neither the
-  tools nor the service have been used day to day yet.
 - **Windows login:** a console window may flash briefly when the service starts the core.
 - **Level 2 runs commands without asking.** A command can do anything a shell can, including
   installing software or downloading, so use level 2 only in workspaces you'd let a script
@@ -439,7 +462,7 @@ her file changes. Her core can also run from login, ready for the desktop sprite
   or other servers' tools.
 - **Short Ollama context.** Ollama's default 4,096-token window fills faster with tools. Raise
   `OLLAMA_CONTEXT_LENGTH` (e.g. 16384) if replies lose track.
-- **No desktop sprite or voice yet** (milestone 2), and no HTTP/remote access to the core.
+- **No desktop sprite or voice yet**, and no HTTP/remote access to the core.
 
 ### Under the hood
 
@@ -479,15 +502,13 @@ Anthropic model, talks in Lucy's voice, and remembers your conversations.
 ### Requirements
 
 - A Rust toolchain to build (`cargo install --path crates/lucy-cli`).
-- A model: a local server such as Ollama (tested with `qwen3:14b` on an RTX 5070), or an API key.
+- A model: a local server such as Ollama, or an API key.
 - On Linux, a Secret Service provider (e.g. gnome-keyring) if you want keys in the keyring.
 
 ### Known limitations
 
-- **Tested day to day on Linux only.** Every test, including starting the background core, passes
-  in CI on Linux, macOS and Windows. Interactive use has so far only happened on NixOS.
-- **No tools yet.** Lucy can't read files, run commands or browse; that's next (MCP tools, step 8).
-  `/mode agent` is a placeholder.
+- **No tools yet.** Lucy can't read files, run commands or browse, and `/mode agent` is a
+  placeholder.
 - **Some settings reset with the core.** Per-chat `/model` and `/plain` choices last until the core
   restarts (after 30 idle minutes); they aren't saved.
 - **Short Ollama context.** Ollama's default window is 4,096 tokens, which long chats outgrow. Raise

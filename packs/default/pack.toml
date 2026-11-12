@@ -1,0 +1,44 @@
+# Lucy's built-in look. See README.md here for how the frames were made, and
+# docs/adr/0005-sprite-tauri-and-packs.md for the format. To make your own pack, start from
+# packs/placeholder.
+
+name = "Lucy"
+author = "Lucy project"
+format_version = 1
+kind = "frames"
+size = [256, 256]           # Settings → Sprite → Size 0.5 shows her at 128×128
+anchor = "bottom-center"
+
+# A blink every three seconds.
+[states.idle]
+frames = [
+  "frames/idle-0.png", "frames/idle-0.png", "frames/idle-0.png", "frames/idle-0.png",
+  "frames/idle-0.png", "frames/idle-0.png", "frames/idle-0.png", "frames/idle-0.png",
+  "frames/idle-0.png", "frames/idle-0.png", "frames/idle-0.png", "frames/idle-1.png",
+]
+fps = 4
+
+# Her thought bubble fills with dots.
+[states.thinking]
+frames = ["frames/thinking-0.png", "frames/thinking-1.png", "frames/thinking-2.png"]
+fps = 2
+
+[states.talking]
+frames = ["frames/idle-0.png", "frames/talking-1.png"]
+fps = 6
+
+[states.happy]
+frames = ["frames/happy-0.png"]
+fps = 1
+loop = false
+then = "idle"
+
+[states.error]
+frames = ["frames/error-0.png"]
+fps = 1
+loop = false
+then = "idle"
+
+[states.listening]
+frames = ["frames/listening-0.png"]
+fps = 1
