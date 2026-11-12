@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased (1.0)
+## v1.0.0: Lucy goes public (2026-11-12)
 
-Lucy goes public.
+The first stable release: Lucy is open source, documented, installable from package managers,
+and has her own look.
 
 - **Open source** under MIT OR Apache-2.0, with CONTRIBUTING, SECURITY (private vulnerability
   reporting), a code of conduct, and issue and pull request templates.
@@ -25,6 +26,13 @@ Lucy goes public.
   (`[images.comfyui] unload_ollama`). See [docs/images.md](docs/images.md).
 - **Settings → Voice:** "Read typed replies aloud" and "Hey Lucy" are greyed out until Talk to
   Lucy is on, since neither works without it.
+
+### Upgrading from v0.10.0
+
+- Restart the core after installing: `lucy service restart`, or `lucy core stop` if you
+  don't use the service. Still protocol v5.
+- The sprite takes on her new look unless your config names a pack (`[sprite] pack`); to keep
+  the old one, set `pack = "placeholder"`.
 
 ## v0.10.0: polish (2026-11-11)
 

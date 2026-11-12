@@ -1,10 +1,12 @@
 # Lucy
 
+<img src="packs/default/frames/idle-0.png" alt="Lucy's sprite: an anime girl with a blonde bob, pink-tipped hair, purple eyes and a glowing cyberpunk jacket" width="160" align="right">
+
 A personal AI assistant that works with any model, with a netrunner's attitude. Talk to her in
 a terminal, in her app, or through her **sprite**: a small animated figure who lives on your
 desktop and answers in speech bubbles.
 
-> **Status:** v0.10.0. Lucy chats with any OpenAI-compatible or Anthropic model; you add one in a few clicks, choosing from the models the provider offers.
+> **Status:** v1.0.0, the first stable release: config.toml and the `lucy` command now follow [semver](docs/stability.md). Lucy chats with any OpenAI-compatible or Anthropic model; you add one in a few clicks, choosing from the models the provider offers.
 >
 > She can:
 > - read, search, run and edit with your approval;
@@ -15,7 +17,7 @@ desktop and answers in speech bubbles.
 > - talk and listen in her app;
 > - see and make pictures.
 >
-> Long chats are summarised to fit. The core can run from login and serve your other machines. Her app gives you the sprite, a window for your chats and every setting, and a tray icon. Installers, a Nix flake and a home-manager module are available. See the [release notes](CHANGELOG.md).
+> Long chats are summarised to fit. The core can run from login and serve your other machines. Her app gives you the sprite (with her own look), a window for your chats and every setting, and a tray icon. Installers, Homebrew, the AUR, a Nix flake and a home-manager module are available. See the [release notes](CHANGELOG.md).
 
 **Documentation:** [ajmerr.github.io/lucy](https://ajmerr.github.io/lucy/) (the same guides
 are in [`docs/`](docs/index.md)).
