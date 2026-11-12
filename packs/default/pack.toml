@@ -6,7 +6,7 @@ name = "Lucy"
 author = "Lucy project"
 format_version = 1
 kind = "frames"
-size = [128, 128]
+size = [256, 256]           # Settings → Sprite → Size 0.5 shows her at 128×128
 anchor = "bottom-center"
 
 # A blink every three seconds.

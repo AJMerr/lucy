@@ -67,7 +67,7 @@ fn the_built_in_default_draws_every_state() {
     let pack = load("default", None).unwrap();
 
     assert_eq!(pack.name, "Lucy");
-    assert_eq!(pack.size, (128, 128));
+    assert_eq!(pack.size, (256, 256));
     let idle = &pack.states["idle"];
     assert_eq!(idle.frames.len(), 12, "a blink every three seconds");
     assert_ne!(idle.frames[0], idle.frames[11]);
