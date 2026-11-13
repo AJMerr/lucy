@@ -881,6 +881,11 @@ async fn handle(
         }
         method::SETUP_PRESETS => result(crate::setup::presets()),
         method::MEMORY_GET => result(core.memory.view()),
+        method::MEMORY_FORGET => {
+            let p: rpc::MemoryForgetParams = params(request.params)?;
+            core.memory.forget(&p.fact).map_err(RpcError::app)?;
+            result(core.memory.view())
+        }
         method::MEMORY_SET => {
             let p: MemorySetParams = params(request.params)?;
             core.memory.set_text(&p.text).map_err(RpcError::app)?;

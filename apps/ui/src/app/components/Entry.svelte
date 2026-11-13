@@ -11,15 +11,24 @@
   let {
     entry,
     onDecide,
+    onForget,
     picture = () => Promise.reject(new Error("no pictures here")),
   }: {
     entry: Entry;
     onDecide: (callId: string, decision: Decision) => void;
+    /** Take a fact she saved back out of memory. */
+    onForget?: (fact: string) => Promise<void>;
     /** A kept picture as a URL an `<img>` can show. */
     picture?: (id: string) => Promise<string>;
   } = $props();
 
   let showChanges = $state(false);
+  let forgotten = $state(false);
+
+  async function forget(fact: string): Promise<void> {
+    await onForget?.(fact);
+    forgotten = true;
+  }
   let showSummary = $state(false);
 
   // renderBubble escapes everything and adds only its own tags, so this is safe as HTML.
@@ -96,6 +105,12 @@
     ▸ {#each parts(entry.summary) as part}{#if part.code}<code>{part.text}</code
         >{:else}{part.text}{/if}{/each}
     {#if entry.state === "running"}<span class="state"> · running</span>{/if}
+    {#if entry.state === "done" && entry.remembered !== undefined}
+      <span class="state">
+        · remembered{#if forgotten}, then forgotten{:else if onForget !== undefined}
+          <button class="link" onclick={() => forget(entry.remembered ?? "")}>Undo</button>{/if}
+      </span>
+    {/if}
     {#if entry.state === "failed"}<span class="state"> · failed</span>{/if}
   </div>
   {#if (entry.images ?? []).length > 0}

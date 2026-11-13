@@ -350,6 +350,9 @@
           <Entry
             {entry}
             onDecide={(callId, decision) => chats.approve(callId, decision)}
+            onForget={async (fact) => {
+              await core.call("memory.forget", { fact });
+            }}
             picture={(id) => chats.picture(id)}
           />
         {/each}

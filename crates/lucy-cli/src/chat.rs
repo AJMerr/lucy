@@ -456,6 +456,15 @@ impl<W: Write> Chat<'_, W> {
                         let mark = self.styled(if is_error { "31" } else { "32" }, &mark);
                         self.say(&format!("  {mark}"))?;
                         self.show_made(&images, &output).await?;
+                        if let Some(call) = &running
+                            && call.name == "remember"
+                            && !is_error
+                            && let Some(fact) = call.arguments["fact"].as_str()
+                        {
+                            self.note(&format!(
+                                "  Remembered “{fact}” (`lucy memory edit` to change or remove it)"
+                            ))?;
+                        }
                         if let Some(call) = running.take() {
                             self.last_tool = Some((call, output, is_error));
                         }

@@ -313,7 +313,9 @@ impl ToolBox {
             preview: (!fact.is_empty()).then(|| fact.to_owned()),
         };
         if call.name == MEMORY_REMEMBER {
-            if let Some(kind) = memory::looks_secret(fact) {
+            let heading = call.arguments["heading"].as_str().unwrap_or_default();
+            if let Some(kind) = memory::looks_secret(fact).or_else(|| memory::looks_secret(heading))
+            {
                 return Verdict::Refuse(memory::refusal(kind));
             }
             if call.arguments["sensitive"].as_bool() == Some(true)

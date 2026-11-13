@@ -445,7 +445,9 @@ pub(super) fn authorize(
             Ok(())
         }
         CONFIG_UPDATE | KEYS_SET | KEYS_REMOVE | PERSONA_SET | PERSONA_RESET | MEMORY_SET
-        | SCHEDULES_UPDATE | SCHEDULES_DELETE | MODELS_LIST | MODELS_TRY => needs_config(),
+        | MEMORY_FORGET | SCHEDULES_UPDATE | SCHEDULES_DELETE | MODELS_LIST | MODELS_TRY => {
+            needs_config()
+        }
         CORE_SHUTDOWN => Err(RpcError::app(
             "a remote client can't stop the core (it couldn't start it again); stop it on its \
              own machine",

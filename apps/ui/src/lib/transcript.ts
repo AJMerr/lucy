@@ -43,6 +43,8 @@ export type Entry =
       preview?: string;
       /** Pictures it gave back, e.g. one she made. */
       images?: ImageRef[];
+      /** A fact she saved to memory, which you can take back. */
+      remembered?: string;
     }
   /** Where the chat was cleared, or older messages were summarised (with the summary). */
   | { kind: "marker"; marker: "cleared" | "summary"; text?: string };
@@ -151,6 +153,9 @@ function onEvent(transcript: Transcript, event: CoreEvent): Transcript {
         state: asking ? "asking" : "running",
         ...(asking ? { reason: approvalReason(event) } : {}),
         ...(asking && event.preview !== undefined ? { preview: event.preview } : {}),
+        ...(call.name === "remember" && typeof call.arguments?.fact === "string"
+          ? { remembered: call.arguments.fact }
+          : {}),
       };
       const at = entries.findIndex((entry) => entry.kind === "tool" && entry.callId === call.id);
       if (at === -1) {
@@ -172,6 +177,7 @@ function onEvent(transcript: Transcript, event: CoreEvent): Transcript {
           summary: tool.summary,
           state: event.is_error === true ? "failed" : "done",
           ...pictures(event.images),
+          ...(tool.remembered !== undefined && event.is_error !== true ? { remembered: tool.remembered } : {}),
         };
       }
       break;

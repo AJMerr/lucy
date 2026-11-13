@@ -1,7 +1,7 @@
 // One entry in a chat: your message, her reply (Markdown), or a tool she ran or wants to run.
 
 import assert from "node:assert/strict";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, test } from "vitest";
 
 import Entry from "./Entry.svelte";
@@ -134,4 +134,26 @@ test("a /clear marker says she starts fresh, and a summary can be opened", async
   assert.ok(screen.getByText(/summarised/));
   await fireEvent.click(screen.getByRole("button", { name: "Show summary" }));
   assert.ok(screen.getByText("You asked about tides."));
+});
+
+test("a remembered fact can be undone", async () => {
+  const forgot: string[] = [];
+  render(Entry, {
+    entry: {
+      kind: "tool",
+      callId: "c1",
+      summary: 'remember "Likes tea"',
+      state: "done",
+      remembered: "Likes tea",
+    },
+    onDecide: () => {},
+    onForget: async (fact: string) => {
+      forgot.push(fact);
+    },
+  });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+
+  assert.deepEqual(forgot, ["Likes tea"]);
+  await waitFor(() => screen.getByText(/then forgotten/));
 });

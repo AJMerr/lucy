@@ -75,6 +75,8 @@ pub mod method {
     pub const MEMORY_GET: &str = "memory.get";
     /// Replace memory.md's text.
     pub const MEMORY_SET: &str = "memory.set";
+    /// Take one fact back out of memory (`{fact}`), e.g. undoing one she just saved.
+    pub const MEMORY_FORGET: &str = "memory.forget";
     /// Reminders and scheduled tasks, and whether the core runs at login.
     pub const SCHEDULES_LIST: &str = "schedules.list";
     /// Change a reminder or task (pause, reword, reschedule, level, model).
@@ -687,6 +689,12 @@ pub struct MemoryView {
 pub struct MemoryFact {
     pub heading: String,
     pub text: String,
+}
+
+/// `memory.forget`: the fact to take out (as saved, or enough of it to pick one).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryForgetParams {
+    pub fact: String,
 }
 
 /// `memory.set`: replace memory.md's text.
