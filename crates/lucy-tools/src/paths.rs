@@ -71,9 +71,17 @@ impl PrivatePaths {
     }
 }
 
-/// The path as a string with `/` separators, so one pattern works on every OS.
+/// The path as a string with `/` separators, so one pattern works on every OS. Windows'
+/// verbatim prefix (`\\?\C:\…`, from resolving a path) is dropped so it matches like `C:\…`.
 fn slashes(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    let path = path.to_string_lossy().replace('\\', "/");
+    if let Some(unc) = path.strip_prefix("//?/UNC/") {
+        format!("//{unc}")
+    } else if let Some(rest) = path.strip_prefix("//?/") {
+        rest.to_owned()
+    } else {
+        path
+    }
 }
 
 /// `path` made absolute: `~` is home, relative paths start at `cwd`.
