@@ -25,7 +25,10 @@ impl Home {
         let private = PrivatePaths::defaults(Some(&real(dir.path())));
         let protected = PrivatePaths::protected(
             Some(&real(dir.path())),
-            &[real(dir.path()).join(".config/lucy")],
+            &[PathBuf::from(format!(
+                "{}/",
+                real(dir.path()).join(".config/lucy").display()
+            ))],
         );
         Self {
             dir,

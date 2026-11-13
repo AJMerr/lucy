@@ -92,8 +92,9 @@ pub struct Access {
     /// The chat is driven from another machine: memory changes ask, and protected paths
     /// are refused rather than asked about.
     pub remote: bool,
-    /// Lucy's own config and data folders: changing anything in them always asks.
-    pub lucy_folders: Vec<PathBuf>,
+    /// Lucy's own settings and data (files, and folders ending in `/`): changing them always
+    /// asks.
+    pub lucy_files: Vec<PathBuf>,
 }
 
 impl ToolBox {
@@ -161,7 +162,7 @@ impl ToolBox {
 
     /// Apply a chat's mode and level (Assist by default).
     pub fn with_access(mut self, access: Access) -> Self {
-        self.protected = PrivatePaths::protected(self.home.as_deref(), &access.lucy_folders);
+        self.protected = PrivatePaths::protected(self.home.as_deref(), &access.lucy_files);
         self.access = access;
         self
     }

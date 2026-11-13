@@ -133,15 +133,20 @@ impl PrivatePaths {
         Self::new(DEFAULT_PRIVATE_PATHS, home).expect("built-in patterns are valid")
     }
 
-    /// The built-in protected list ([`DEFAULT_PROTECTED_PATHS`]) plus everything in `folders`.
-    pub fn protected(home: Option<&Path>, folders: &[PathBuf]) -> Self {
+    /// The built-in protected list ([`DEFAULT_PROTECTED_PATHS`]) plus `files`: a path ending in
+    /// `/` covers everything in that folder.
+    pub fn protected(home: Option<&Path>, files: &[PathBuf]) -> Self {
         let mut patterns: Vec<String> = DEFAULT_PROTECTED_PATHS
             .iter()
             .map(|p| (*p).to_owned())
             .collect();
-        for folder in folders {
-            let folder = globset::escape(&slashes(folder));
-            patterns.push(format!("{}/**", folder.trim_end_matches('/')));
+        for file in files {
+            let text = slashes(file);
+            let escaped = globset::escape(text.trim_end_matches('/'));
+            patterns.push(match text.ends_with('/') {
+                true => format!("{escaped}/**"),
+                false => escaped,
+            });
         }
         Self::new(&patterns, home).unwrap_or_else(|_| {
             Self::new(DEFAULT_PROTECTED_PATHS, home).expect("built-in patterns are valid")

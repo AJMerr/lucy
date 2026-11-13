@@ -996,7 +996,7 @@ async fn handle(
                         level: settings.level,
                         workspace: config.agent.workspace.as_deref().map(expand_home),
                         remote,
-                        lucy_folders: core.lucy_folders(),
+                        lucy_files: core.lucy_files(),
                     };
                     (allowed, access)
                 }
@@ -1094,18 +1094,32 @@ impl Core {
         }
     }
 
-    /// Lucy's own config, data and persona folders, which her tools never change unasked.
-    fn lucy_folders(&self) -> Vec<PathBuf> {
+    /// Lucy's own settings and data, which her tools never change unasked: the config, the
+    /// remote access settings, personas, chats, memory, pictures, voice models and sprite packs.
+    /// Named one by one, so a project that happens to sit beside them isn't caught too.
+    fn lucy_files(&self) -> Vec<PathBuf> {
         let options = &self.options;
-        [
-            options.config_path.parent().map(Path::to_path_buf),
-            options.db_path.parent().map(Path::to_path_buf),
-            options.personas_dir.clone(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .collect()
+        let folder = |dir: PathBuf| PathBuf::from(format!("{}/", dir.display()));
+        let mut files = vec![options.config_path.clone()];
+        if let Some(config_dir) = options.config_path.parent() {
+            files.push(config_dir.join("remote.toml"));
+        }
+        files.extend(options.personas_dir.clone().map(folder));
+        if let Some(data) = options.db_path.parent() {
+            for name in [
+                "lucy.sqlite",
+                "lucy.sqlite-wal",
+                "lucy.sqlite-shm",
+                "memory.md",
+            ] {
+                files.push(data.join(name));
+            }
+            files.push(options.db_path.clone());
+            for dir in ["images", "voice", "packs"] {
+                files.push(folder(data.join(dir)));
+            }
+        }
+        files
     }
 
     /// Where your own version of persona `name` lives (whether or not it exists yet).
@@ -1526,7 +1540,7 @@ fn start_turn(core: &Arc<Core>, request: TurnRequest) -> Result<u64, RpcError> {
         level: settings.level,
         workspace: config.agent.workspace.as_deref().map(expand_home),
         remote,
-        lucy_folders: core.lucy_folders(),
+        lucy_files: core.lucy_files(),
     };
     tokio::spawn(turn.run(Plan {
         provider,
