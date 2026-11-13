@@ -535,16 +535,13 @@ impl ToolBox {
             reason,
             preview: self.preview(tool, call),
         };
-        match self.rule(tool) {
+        let rule = self.rule(tool);
+        match rule {
             Some(ToolRule::Deny) => {
                 return Verdict::Refuse("The user's settings don't allow this tool.".into());
             }
-            Some(ToolRule::Auto) => return Verdict::Run,
             Some(ToolRule::Ask) => return ask("your settings say to ask".into()),
-            None => {}
-        }
-        if allowed.contains(&call.name) {
-            return Verdict::Run;
+            Some(ToolRule::Auto) | None => {}
         }
         let facts = CallFacts {
             kind: self.kind(tool),
@@ -555,6 +552,14 @@ impl ToolBox {
                 self.paths(tool, &call.arguments).collect()
             },
         };
+        // Private paths, and changes outside the folder, ask even for a tool set to "auto" or
+        // approved "always".
+        if let Some(reason) = policy::always_asks(&facts, &self.policy()) {
+            return ask(reason);
+        }
+        if rule == Some(ToolRule::Auto) || allowed.contains(&call.name) {
+            return Verdict::Run;
+        }
         match policy::decide(&facts, &self.policy()) {
             Decision::Run => Verdict::Run,
             Decision::Ask(reason) => ask(reason),

@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use lucy_core::policy::{CallFacts, CallKind, Decision, Policy, decide};
+use lucy_core::policy::{CallFacts, CallKind, Decision, Policy, always_asks, decide};
 use lucy_protocol::{AgentLevel, Mode};
 use lucy_tools::PrivatePaths;
 
@@ -320,4 +320,108 @@ fn an_agent_reads_where_it_may_write_even_outside_home() {
     assert_runs(decide_at(Mode::Agent, AgentLevel::Workspace));
     // Assist mode keeps to home.
     assert_asks(decide_at(Mode::Assist, AgentLevel::Guarded));
+}
+
+// --- Paths that climb out ---------------------------------------------------------------------
+
+#[test]
+fn climbing_out_through_a_missing_folder_is_still_outside() {
+    let home = Home::new();
+    // Once `new` is created, `new/../..` is two folders up: home, not the working folder.
+    let bashrc = home.path("projects/app/new/../../../.bashrc");
+    let keys = home.path("projects/app/new/../../../.ssh/authorized_keys");
+    let escaped = home.path("projects/app/a/../../../../escaped.txt");
+
+    assert_asks(home.agent(AgentLevel::Guarded, local(CallKind::Write, vec![bashrc])));
+    assert_asks(home.agent(AgentLevel::Guarded, local(CallKind::Write, vec![escaped])));
+    // Private, so it asks even at Unrestricted.
+    assert_asks(home.agent(AgentLevel::Unrestricted, local(CallKind::Write, vec![keys])));
+    // Climbing back into the folder is fine.
+    assert_runs(home.agent(
+        AgentLevel::Guarded,
+        local(
+            CallKind::Write,
+            vec![home.path("projects/app/new/../src/main.rs")],
+        ),
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_to_somewhere_that_doesnt_exist_yet_is_judged_by_where_it_leads() {
+    let home = Home::new();
+    let link = home.path("projects/app/later");
+    std::os::unix::fs::symlink(home.outside("not-yet"), &link).unwrap();
+
+    assert_asks(home.agent(
+        AgentLevel::Guarded,
+        local(CallKind::Write, vec![link.join("x.txt")]),
+    ));
+}
+
+// --- What "always" and "auto" can't skip ------------------------------------------------------
+
+#[test]
+fn private_paths_and_changes_outside_the_folder_ask_even_when_always_allowed() {
+    let home = Home::new();
+    let folder = home.path("projects/app");
+    let homedir = home.path("");
+    let always_asks = |mode: Mode, level: AgentLevel, call: CallFacts| {
+        always_asks(
+            &call,
+            &Policy {
+                mode,
+                level,
+                folder: &folder,
+                home: Some(&homedir),
+                workspace: None,
+                private: &home.private,
+            },
+        )
+    };
+    let key = home.path(".ssh/id_ed25519");
+    let outside = home.path("notes/todo.md");
+    let inside = home.path("projects/app/todo.md");
+
+    for level in [AgentLevel::Guarded, AgentLevel::Unrestricted] {
+        assert!(
+            always_asks(Mode::Agent, level, local(CallKind::Read, vec![key.clone()])).is_some()
+        );
+    }
+    assert!(
+        always_asks(
+            Mode::Assist,
+            AgentLevel::Guarded,
+            local(CallKind::Write, vec![outside.clone()])
+        )
+        .is_some()
+    );
+    assert!(
+        always_asks(
+            Mode::Assist,
+            AgentLevel::Guarded,
+            local(CallKind::Write, vec![inside])
+        )
+        .is_none()
+    );
+    // Reads elsewhere in home, and everything but private paths at Unrestricted, are left to
+    // the rules.
+    assert!(
+        always_asks(
+            Mode::Assist,
+            AgentLevel::Guarded,
+            local(CallKind::Read, vec![outside.clone()])
+        )
+        .is_none()
+    );
+    assert!(
+        always_asks(
+            Mode::Agent,
+            AgentLevel::Unrestricted,
+            local(CallKind::Write, vec![outside])
+        )
+        .is_none()
+    );
+    // A remote server's paths aren't on this machine.
+    assert!(always_asks(Mode::Assist, AgentLevel::Guarded, remote(CallKind::Read)).is_none());
 }

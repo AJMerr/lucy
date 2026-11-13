@@ -2,7 +2,7 @@
 //! Pure: the caller describes the call; this decides. Config rules and "always" approvals are
 //! applied before this, by the tool box.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use lucy_protocol::{AgentLevel, Mode};
 use lucy_tools::PrivatePaths;
@@ -49,6 +49,38 @@ pub enum Decision {
     Ask(String),
 }
 
+/// Why `call` asks even when config rules or an "always" approval would let it run: it
+/// touches a private path, or (below level 3) changes a file outside the folder it may write in.
+pub fn always_asks(call: &CallFacts, policy: &Policy) -> Option<String> {
+    if call.remote {
+        return None;
+    }
+    if let Some(path) = call.paths.iter().find(|p| is_private(p, policy.private)) {
+        return Some(format!("touches a private path ({})", path.display()));
+    }
+    let unrestricted = policy.mode == Mode::Agent && policy.level == AgentLevel::Unrestricted;
+    if call.kind == CallKind::Write && !unrestricted {
+        let (area, name) = write_area(policy);
+        if let Some(path) = call.paths.iter().find(|p| !within(p, area)) {
+            return Some(format!(
+                "changes a file outside {name} ({})",
+                path.display()
+            ));
+        }
+    }
+    None
+}
+
+/// Where an agent's file changes may run without asking, and what to call it.
+fn write_area<'a>(policy: &Policy<'a>) -> (&'a Path, &'static str) {
+    match (policy.mode, policy.level) {
+        (Mode::Agent, AgentLevel::Workspace) => {
+            (policy.workspace.unwrap_or(policy.folder), "the workspace")
+        }
+        _ => (policy.folder, "the working folder"),
+    }
+}
+
 pub fn decide(call: &CallFacts, policy: &Policy) -> Decision {
     let ask = |reason: String| Decision::Ask(reason);
     // Secrets always ask, at every level.
@@ -84,10 +116,7 @@ pub fn decide(call: &CallFacts, policy: &Policy) -> Decision {
         CallKind::Write if !agent => ask("changes a file".into()),
         CallKind::Write if call.paths.is_empty() => ask("changes files it doesn't name".into()),
         CallKind::Write => {
-            let (area, name) = match policy.level {
-                AgentLevel::Workspace => (workspace, "the workspace"),
-                _ => (policy.folder, "the working folder"),
-            };
+            let (area, name) = write_area(policy);
             match call.paths.iter().find(|p| !within(p, area)) {
                 None => Decision::Run,
                 Some(path) => ask(format!(
@@ -124,13 +153,38 @@ fn within(path: &Path, area: &Path) -> bool {
 }
 
 /// `path` with symlinks resolved, so a link can't smuggle a call past the rules. Paths that
-/// don't exist yet resolve through their nearest existing parent.
+/// don't exist yet resolve through their nearest existing parent, the way the system will once
+/// the missing folders are created: `new/../../x` is two folders up, not inside `new`.
 pub fn real_path(path: &Path) -> PathBuf {
+    real_path_within(path, 40)
+}
+
+/// [`real_path`], following at most `links` dangling symlinks (a loop ends there).
+fn real_path_within(path: &Path, links: u32) -> PathBuf {
     if let Ok(real) = path.canonicalize() {
         return real;
     }
-    match (path.parent(), path.file_name()) {
-        (Some(parent), Some(name)) if parent != path => real_path(parent).join(name),
+    // A link to something that doesn't exist yet: where it points is what gets written.
+    if links > 0
+        && let Ok(target) = std::fs::read_link(path)
+    {
+        let target = match path.parent() {
+            Some(parent) => parent.join(target),
+            None => target,
+        };
+        return real_path_within(&target, links - 1);
+    }
+    let mut components = path.components();
+    match components.next_back() {
+        Some(Component::Normal(name)) => real_path_within(components.as_path(), links).join(name),
+        Some(Component::ParentDir) => {
+            let above = real_path_within(components.as_path(), links);
+            match above.parent() {
+                Some(up) => up.to_owned(),
+                None => above,
+            }
+        }
+        Some(Component::CurDir) => real_path_within(components.as_path(), links),
         _ => path.to_owned(),
     }
 }

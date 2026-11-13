@@ -13,6 +13,8 @@ In an ordinary chat (**Assist** mode), she decides what to use, and you decide w
   wants to do (and, for file edits, the changes) with **Allow**, **Always** (this tool, for the
   rest of this chat) and **Deny**; in a terminal, `y`, `a` or `n`.
 - **Always asks:** private paths like `~/.ssh`, keys and `.env` files, whatever the mode.
+  **Always** and an `auto` rule don't change that, and they don't let her change files outside
+  the folder she's working in (the workspace at level 2) either; those still ask.
 
 `/tools` in the terminal lists every tool and whether it runs by itself or asks. `/last` shows
 the last tool call's full input and output.
@@ -64,7 +66,8 @@ Settings → Chat & agent, or `[tools]` in config.toml:
 builtin = true          # Lucy's own tools; false leaves only MCP servers' tools
 max_rounds = 10         # tool rounds per message before she must answer
 
-[tools.rules]           # override the usual rule: "auto", "ask" or "deny"
+[tools.rules]           # override the usual rule: "auto", "ask" or "deny" (private paths
+                        # and changes outside the folder ask even with "auto")
 run_command = "deny"
 github = "ask"          # every tool from the `github` MCP server
 ```
