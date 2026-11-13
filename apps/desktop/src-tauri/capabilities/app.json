@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "app",
+  "description": "The main window: chats and settings through the core, Lucy's own commands, and voice.",
+  "windows": ["app"],
+  "permissions": [
+    "core:default",
+    "allow-rpc-call",
+    "allow-run-lucy",
+    "allow-take-pending-chat",
+    "allow-voice-prepare",
+    "allow-voice-status",
+    "allow-voice-listen",
+    "allow-voice-stop-listening",
+    "allow-voice-say",
+    "allow-voice-hush"
+  ]
+}

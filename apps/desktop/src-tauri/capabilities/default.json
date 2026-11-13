@@ -1,7 +1,0 @@
-{
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "What her pages (the sprite and the main window) may do.",
-  "windows": ["sprite", "app"],
-  "permissions": ["core:default"]
-}

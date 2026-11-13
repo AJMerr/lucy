@@ -192,6 +192,12 @@ const PLACEHOLDER: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// Limits on a pack, so one can't cover the screen with an always-on-top window or fill
+/// memory: its size, frames in all, and bytes per frame.
+const MAX_SIDE: u32 = 1024;
+const MAX_FRAMES: usize = 128;
+const MAX_FRAME_BYTES: u64 = 4 * 1024 * 1024;
+
 /// Where a pack's files come from.
 enum Source {
     Dir(PathBuf),
@@ -201,7 +207,23 @@ enum Source {
 impl Source {
     fn read(&self, rel: &str) -> io::Result<Vec<u8>> {
         match self {
-            Source::Dir(dir) => std::fs::read(dir.join(rel)),
+            Source::Dir(dir) => {
+                // A link could lead anywhere on the computer; frames are the pack's own files.
+                let path = dir.join(rel);
+                let meta = std::fs::symlink_metadata(&path)?;
+                if meta.file_type().is_symlink() {
+                    return Err(io::Error::other(
+                        "it's a link; frames must be files in the pack",
+                    ));
+                }
+                if meta.len() > MAX_FRAME_BYTES {
+                    return Err(io::Error::other(format!(
+                        "it's over {} MB",
+                        MAX_FRAME_BYTES / (1024 * 1024)
+                    )));
+                }
+                std::fs::read(path)
+            }
             Source::BuiltIn(files) => files
                 .iter()
                 .find(|(path, _)| *path == rel)
@@ -284,6 +306,17 @@ fn load_from(source: &Source) -> Result<Pack, PackError> {
     let [width, height] = manifest.size;
     if width == 0 || height == 0 {
         return Err(invalid("size must be at least 1×1 pixels".into()));
+    }
+    if width > MAX_SIDE || height > MAX_SIDE {
+        return Err(invalid(format!(
+            "size can be at most {MAX_SIDE}×{MAX_SIDE} pixels"
+        )));
+    }
+    let frame_count: usize = manifest.states.values().map(|s| s.frames.len()).sum();
+    if frame_count > MAX_FRAMES {
+        return Err(invalid(format!(
+            "a pack can have at most {MAX_FRAMES} frames (this one has {frame_count})"
+        )));
     }
     let anchor = match manifest.anchor.as_deref() {
         None | Some("bottom-center") => Anchor::BottomCenter,

@@ -15,9 +15,30 @@ function transport(): Transport {
   if ("__TAURI_INTERNALS__" in window) {
     return new TauriTransport();
   }
-  const params = new URLSearchParams(location.search);
-  const url = params.get("url") ?? `ws://${location.hostname || "127.0.0.1"}:7077/rpc`;
-  return new SocketTransport(webSocket(url, params.get("token") ?? ""), { client: CLIENT });
+  // The token comes after `#` (never sent to a server, and taken out of the address bar
+  // straight away so it doesn't stay in history); the core's address only from this page's own
+  // host unless you confirm another.
+  const params = new URLSearchParams(location.hash.slice(1) || location.search);
+  const token = params.get("token") ?? "";
+  if (location.hash !== "" || params.has("token")) {
+    history.replaceState(null, "", location.pathname);
+  }
+  const own = `wss://${location.hostname || "127.0.0.1"}:7077/rpc`;
+  const asked = params.get("url");
+  const elsewhere = (address: string) => {
+    try {
+      return new URL(address).hostname !== location.hostname;
+    } catch {
+      return true;
+    }
+  };
+  const url =
+    asked !== null && elsewhere(asked)
+      ? confirm(`Connect to Lucy's core at ${asked}? Only do this if you set it up.`)
+        ? asked
+        : own
+      : (asked ?? own);
+  return new SocketTransport(webSocket(url, token), { client: CLIENT });
 }
 
 const target = document.getElementById("app");

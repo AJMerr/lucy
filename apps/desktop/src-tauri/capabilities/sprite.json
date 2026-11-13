@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "sprite",
+  "description": "The sprite: her look, chatting through the app, approvals and voice. No direct line to the core.",
+  "windows": ["sprite"],
+  "permissions": [
+    "core:default",
+    "allow-pack",
+    "allow-send",
+    "allow-approve",
+    "allow-picture",
+    "allow-model",
+    "allow-open-chat",
+    "allow-set-layout",
+    "allow-voice-prepare",
+    "allow-voice-status",
+    "allow-voice-listen",
+    "allow-voice-stop-listening",
+    "allow-voice-say",
+    "allow-voice-hush"
+  ]
+}
