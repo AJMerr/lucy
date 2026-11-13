@@ -55,3 +55,16 @@ Every agent task has a **step cap** and a **token/cost cap** regardless of level
   contents (or "didn't exist") per reply, last 20 replies per chat, files up to 10 MB.
   `session.undo` lists and restores the newest reply's set. Command and external-tool changes
   aren't tracked.
+
+## Implementation notes (v1.0.1, what rules can't skip)
+
+- Config rules and "always" approvals no longer come before everything. Private paths, and
+  file changes outside the area writes may run in (the chat's folder, or the workspace at level
+  2), are checked first and ask whatever the rule or approval says; level 3 still writes
+  anywhere but private paths. `deny` and `ask` rules apply first as before.
+- Paths are judged the way the system will resolve them: `..` after a folder that doesn't
+  exist yet counts from where that folder will be, and a link to something that doesn't exist
+  yet is judged by its target. Before, `new/../../.bashrc` counted as inside the working folder.
+- `search_files` walks the real path of its folder, and matches private paths against both
+  that and the path it was given, so `~/./.config` or a link to a private folder is still
+  private.
