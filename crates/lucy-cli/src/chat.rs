@@ -21,6 +21,7 @@ use tokio::sync::mpsc;
 use crate::commands::{COMMANDS, Command, Input, parse};
 use crate::inline_pictures;
 use crate::markdown::{Op, Renderer};
+use crate::safe_text::visible;
 use crate::tool_display;
 
 pub enum ReadLine {
@@ -147,11 +148,13 @@ impl<W: Write> Chat<'_, W> {
         Ok(())
     }
 
+    /// `text` (made safe to print) in the colour `codes` names.
     fn styled(&self, codes: &str, text: &str) -> String {
+        let text = visible(text);
         if self.color {
             format!("\x1b[{codes}m{text}\x1b[0m")
         } else {
-            text.to_owned()
+            text.into_owned()
         }
     }
 
@@ -316,7 +319,7 @@ impl<W: Write> Chat<'_, W> {
                 _ => {
                     if !message.content.is_empty() {
                         let mut renderer = Renderer::new(self.color);
-                        let mut ops = renderer.push(&message.content);
+                        let mut ops = renderer.push(&visible(&message.content));
                         ops.extend(renderer.finish());
                         let mut printer = Printer::new(self.color, self.width);
                         for op in ops {
@@ -406,7 +409,7 @@ impl<W: Write> Chat<'_, W> {
                     None => bail!(ClientError::Disconnected),
                     Some(event) if turn_of(&event) != Some(sent.turn_id) => {}
                     Some(Event::Delta { text, .. }) => {
-                        for op in renderer.push(&text) {
+                        for op in renderer.push(&visible(&text)) {
                             printer.op(self.out, op)?;
                         }
                     }
@@ -492,8 +495,10 @@ impl<W: Write> Chat<'_, W> {
                         },
                     )
                     .await;
-                if let Ok(data) = data {
-                    write!(self.out, "{}", inline_pictures::draw(&data.data, columns))?;
+                if let Ok(data) = data
+                    && let Some(picture) = inline_pictures::draw(&data.data, columns)
+                {
+                    write!(self.out, "{picture}")?;
                 }
             }
         }
@@ -647,7 +652,7 @@ impl<W: Write> Chat<'_, W> {
                     let current = self.session.as_deref() == Some(s.id.as_str());
                     let marker = if current { "›" } else { " " };
                     let id = self.styled("36", &s.id[..10]);
-                    let title = s.title.as_deref().unwrap_or("(untitled)");
+                    let title = visible(s.title.as_deref().unwrap_or("(untitled)"));
                     let count = self.styled("2", &format!("({} messages)", s.message_count));
                     let incognito = if s.incognito { "  (incognito)" } else { "" };
                     self.say(&format!("{marker} {id}  {title}  {count}{incognito}"))?;
@@ -819,9 +824,9 @@ impl<W: Write> Chat<'_, W> {
                     let title = self.styled("1", &format!("{} ({})", call.name, call.id));
                     self.say(&title)?;
                     let args = serde_json::to_string_pretty(&call.arguments)?;
-                    self.say(&args)?;
+                    self.say(&visible(&args))?;
                     self.note(if is_error { "failed:" } else { "output:" })?;
-                    self.say(output.trim_end())?;
+                    self.say(&visible(output.trim_end()))?;
                 }
             },
         }

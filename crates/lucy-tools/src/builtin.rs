@@ -223,11 +223,16 @@ impl Builtin {
             ),
             None => None,
         };
-        let root = resolve(args.path.as_deref().unwrap_or("."), &self.cwd);
-        if !root.exists() {
-            return Err(format!("{} does not exist", root.display()));
-        }
-        let cwd = self.cwd.clone();
+        let given = resolve(args.path.as_deref().unwrap_or("."), &self.cwd);
+        // Walk the real folder, so `~/./.config` or a link to a private folder is still
+        // recognised as private; private paths are matched both ways.
+        let root = Root {
+            real: given
+                .canonicalize()
+                .map_err(|_| format!("{} does not exist", given.display()))?,
+            given: given.components().collect(),
+        };
+        let cwd = self.cwd.canonicalize().unwrap_or_else(|_| self.cwd.clone());
         let private = self.private.clone();
         tokio::task::spawn_blocking(move || search(&root, &cwd, &regex, glob.as_ref(), &private))
             .await
@@ -367,19 +372,36 @@ fn apply_edit(text: &str, args: &EditFileArgs, shown: &str) -> Result<String, St
     }
 }
 
+/// The folder a search walks: its real path, and the path it was asked for.
+#[derive(Clone)]
+struct Root {
+    real: PathBuf,
+    given: PathBuf,
+}
+
+impl Root {
+    fn is_private(&self, path: &Path, private: &PrivatePaths) -> bool {
+        private.contains(path)
+            || path
+                .strip_prefix(&self.real)
+                .is_ok_and(|rel| private.contains(&self.given.join(rel)))
+    }
+}
+
 fn search(
-    root: &Path,
+    root: &Root,
     cwd: &Path,
     regex: &regex::Regex,
     glob: Option<&globset::GlobMatcher>,
     private: &PrivatePaths,
 ) -> String {
-    let walker = ignore::WalkBuilder::new(root)
+    let walker = ignore::WalkBuilder::new(&root.real)
         .hidden(true)
         .require_git(false)
         .filter_entry({
             let private = private.clone();
-            move |entry| !private.contains(entry.path())
+            let root = root.clone();
+            move |entry| !root.is_private(entry.path(), &private)
         })
         .build();
     let mut matches = Vec::new();
@@ -391,7 +413,7 @@ fn search(
         let path = entry.path();
         let shown = display(path, cwd);
         if let Some(glob) = glob {
-            let rel = path.strip_prefix(root).unwrap_or(path);
+            let rel = path.strip_prefix(&root.real).unwrap_or(path);
             let name = path.file_name().map(Path::new).unwrap_or(rel);
             if !(glob.is_match(rel) || glob.is_match(name)) {
                 continue;

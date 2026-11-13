@@ -18,8 +18,13 @@ pub fn supported(env: impl Fn(&str) -> Option<String>) -> bool {
 }
 
 /// The escapes that draw a PNG (`data`, base64) `columns` wide, keeping its shape, then move
-/// to the next line.
-pub fn draw(data: &str, columns: u16) -> String {
+/// to the next line. `None` when `data` isn't base64, which could end the escape early and
+/// smuggle in others.
+pub fn draw(data: &str, columns: u16) -> Option<String> {
+    let base64 = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=');
+    if data.is_empty() || !data.bytes().all(base64) {
+        return None;
+    }
     let chunks: Vec<&str> = data
         .as_bytes()
         .chunks(CHUNK)
@@ -37,5 +42,5 @@ pub fn draw(data: &str, columns: u16) -> String {
         out += &format!("\x1b_G{keys};{chunk}\x1b\\");
     }
     out.push('\n');
-    out
+    Some(out)
 }

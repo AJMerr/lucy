@@ -240,6 +240,34 @@ async fn search_files_never_looks_inside_private_or_ignored_files() {
 }
 
 #[tokio::test]
+async fn search_files_cant_reach_private_files_by_another_route() {
+    let tools = Tools::start().await;
+    tools.write(".ssh/config", "API_KEY in ssh config\n");
+    tools.write(".ssh/notes/more", "API_KEY deeper\n");
+
+    let dotted = tools
+        .ok(
+            "search_files",
+            json!({"pattern": "API_KEY", "path": "./.ssh/./notes/.."}),
+        )
+        .await;
+
+    assert_eq!(dotted.trim(), "No matches.");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(tools.dir.path().join(".ssh"), tools.dir.path().join("keys"))
+            .unwrap();
+        let linked = tools
+            .ok(
+                "search_files",
+                json!({"pattern": "API_KEY", "path": "keys"}),
+            )
+            .await;
+        assert_eq!(linked.trim(), "No matches.");
+    }
+}
+
+#[tokio::test]
 async fn search_files_rejects_a_bad_pattern() {
     let tools = Tools::start().await;
     let err = tools
@@ -409,4 +437,33 @@ async fn fetch_url_reports_http_errors() {
         .await;
 
     assert!(err.contains("404"), "{err}");
+}
+
+// --- Private paths, however they're spelled ---------------------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn a_home_behind_a_link_is_private_by_either_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real-home");
+    std::fs::create_dir_all(real.join(".ssh")).unwrap();
+    let link = dir.path().join("home");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let private = PrivatePaths::defaults(Some(&link));
+
+    assert!(private.contains(&link.join(".ssh/config")));
+    assert!(private.contains(&real.canonicalize().unwrap().join(".ssh/config")));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_patterns_can_use_backslashes_and_resolved_paths() {
+    use std::path::Path;
+    let private = PrivatePaths::new(&[r"C:\Secrets\**", r"\\?\D:\Keys\**"], None).unwrap();
+
+    assert!(private.contains(Path::new(r"C:\secrets\token")));
+    assert!(private.contains(Path::new(r"\\?\C:\Secrets\token")));
+    assert!(private.contains(Path::new(r"D:\Keys\a")));
+    assert!(!private.contains(Path::new(r"C:\Public\a")));
 }

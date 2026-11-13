@@ -15,6 +15,7 @@ use lucy_tools::builtin::{self, BuiltinOptions};
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, value};
 
 use crate::core_process;
+use crate::safe_text::visible;
 use crate::wizard::Prompter;
 
 #[derive(Debug, Default, Clone)]
@@ -279,7 +280,10 @@ pub async fn check(name: &str, server: &McpServer) -> Result<Checked> {
             Checked::NeedsLogin
         }
         Err(err) => {
-            println!("✗ {err}\n  The entry is saved; fix it and run `lucy mcp list`.");
+            println!(
+                "✗ {}\n  The entry is saved; fix it and run `lucy mcp list`.",
+                visible(&err.to_string())
+            );
             Checked::Failed
         }
     };

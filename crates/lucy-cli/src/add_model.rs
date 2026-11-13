@@ -11,6 +11,7 @@ use lucy_protocol::rpc::{KeySetParams, ModelsListParams, ModelsTryParams, method
 use lucy_providers::models::ModelInfo;
 use serde_json::{Value, json};
 
+use crate::safe_text::visible;
 use crate::wizard::Prompter;
 
 /// More models than this, and you're asked for part of the name first.
@@ -92,7 +93,7 @@ pub async fn run(
             serde_json::from_value::<ModelInfo>(tried["info"].clone()).ok()
         }
         Err(err) => {
-            writeln!(out, "It didn't answer: {err}")?;
+            writeln!(out, "It didn't answer: {}", visible(&err.to_string()))?;
             let choice = prompter.select("Save it anyway?", &["Save anyway", "Cancel"], 1)?;
             if choice == 1 {
                 bail!("not saved");

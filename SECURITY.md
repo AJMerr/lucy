@@ -15,6 +15,10 @@ published with credit to you, unless you'd rather not be named.
 
 Fixes go into the latest release. Please check a problem still happens there before reporting.
 
+A security fix ships in the next release even if it changes behaviour; the changelog lists
+those changes under **Breaking for security**. See
+[What stays stable](docs/stability.md#security-fixes).
+
 ## What counts
 
 For example:

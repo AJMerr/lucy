@@ -1,8 +1,11 @@
-//! How tool calls look in the terminal: one compact line each, and the approval prompt.
+//! How tool calls look in the terminal: one compact line each, and the approval prompt. Names,
+//! arguments and output come from the model and the tools, so they're made safe to print.
 
 use lucy_protocol::ToolCall;
 use lucy_protocol::rpc::Decision;
 use serde_json::Value;
+
+use crate::safe_text::{exact, visible};
 
 /// Argument names worth showing first, in order of preference.
 const KEY_ARGS: &[&str] = &[
@@ -15,10 +18,11 @@ pub const APPROVAL_PROMPT: &str = "Allow? [y]es · [a]lways this chat · [N]o �
 /// `⚙ read_file  src/main.rs`, without the outcome.
 pub fn started(call: &ToolCall) -> String {
     let summary = summary(&call.arguments);
+    let name = visible(&call.name);
     if summary.is_empty() {
-        format!("⚙ {}", call.name)
+        format!("⚙ {name}")
     } else {
-        format!("⚙ {}  {summary}", call.name)
+        format!("⚙ {name}  {}", visible(&summary))
     }
 }
 
@@ -29,7 +33,7 @@ pub fn finished(output: &str, is_error: bool) -> String {
             .lines()
             .find(|l| !l.trim().is_empty())
             .unwrap_or("failed");
-        format!("✗ {}", shorten(first.trim(), 80))
+        format!("✗ {}", visible(&shorten(first.trim(), 80)))
     } else {
         format!("✓ {}", size(output.len()))
     }
@@ -62,20 +66,24 @@ pub fn approval(call: &ToolCall, reason: &str, preview: Option<&str>, color: boo
     };
     let mut lines = vec![format!(
         "{} {}",
-        paint("1;33", &format!("Lucy wants to use {}", call.name)),
-        paint("2", &format!("({reason})"))
+        paint(
+            "1;33",
+            &format!("Lucy wants to use {}", visible(&call.name))
+        ),
+        paint("2", &format!("({})", visible(reason)))
     )];
     let full_command = call.arguments.get("command").and_then(Value::as_str);
     match (full_command, preview) {
-        (Some(command), _) => lines.extend(command.lines().map(|l| format!("  $ {l}"))),
+        // Exactly as it will run: a carriage return or a lookalike space can't hide anything.
+        (Some(command), _) => lines.extend(exact(command).lines().map(|l| format!("  $ {l}"))),
         (None, Some(_)) => {}
         (None, None) => {
             let args = serde_json::to_string_pretty(&call.arguments).unwrap_or_default();
-            lines.extend(args.lines().map(|l| format!("  {l}")));
+            lines.extend(exact(&args).lines().map(|l| format!("  {l}")));
         }
     }
     if let Some(preview) = preview {
-        for line in preview.lines() {
+        for line in visible(preview).lines() {
             let styled = match line.chars().next() {
                 _ if line.starts_with("+++") || line.starts_with("---") => paint("1", line),
                 Some('+') => paint("32", line),

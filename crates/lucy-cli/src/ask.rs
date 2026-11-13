@@ -13,6 +13,7 @@ use lucy_protocol::{AgentLevel, Mode, ToolCall};
 use serde_json::{Value, json};
 
 use crate::core_process;
+use crate::safe_text::visible;
 use crate::tool_display;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -95,6 +96,7 @@ async fn ask(text: String, options: AskOptions) -> Result<Finish> {
         .await?;
 
     let mut out = std::io::stdout();
+    let on_terminal = out.is_terminal();
     let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let dim = |text: &str| {
         if color {
@@ -110,7 +112,12 @@ async fn ask(text: String, options: AskOptions) -> Result<Finish> {
             event = events.recv() => match event {
                 None => bail!("lost connection to the Lucy core"),
                 Some(Event::Delta { turn_id, text, .. }) if turn_id == sent.turn_id => {
-                    write!(out, "{text}")?;
+                    // On a terminal, her reply is made safe to print; piped, it is passed on as is.
+                    if on_terminal {
+                        write!(out, "{}", visible(&text))?;
+                    } else {
+                        write!(out, "{text}")?;
+                    }
                     out.flush()?;
                     mid_line = !text.ends_with('\n');
                 }

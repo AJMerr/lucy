@@ -12,6 +12,27 @@ Something on its way out is **deprecated first**: it keeps working, with a warni
 to use instead, for at least one minor release (e.g. deprecated in 1.3, gone no earlier than
 2.0). Breaking changes only come in a major version, listed in the [changelog](https://github.com/AJMerr/lucy/blob/main/CHANGELOG.md).
 
+## What each number means
+
+- **Major (2.0.0):** something above stops working as it did. A setting is removed, renamed or
+  means something new; a value that used to be accepted is refused; a subcommand or flag is
+  removed; exit codes or `lucy ask`'s output change; `memory.md` stops being plain Markdown; a
+  sprite pack format or a supported platform is dropped.
+- **Minor (1.1.0):** new features, settings, commands and flags; changes to the core's protocol;
+  deprecations; and new defaults, when a setting brings the old behaviour back.
+- **Patch (1.0.1):** fixes only. No new settings and no protocol change, so `lucy`, the app and
+  the core from any two patch releases of the same minor work together.
+
+## Security fixes
+
+Closing a security hole comes before compatibility. A security fix ships in the next release,
+a patch if it needs no protocol change, even when it changes behaviour you might rely on (more
+calls ask first, say). The changelog lists those changes under **Breaking for security**, with
+what to do, and a setting to restore the old behaviour where turning the protection off is a
+reasonable choice. Fixed vulnerabilities are published as
+[security advisories](https://github.com/AJMerr/lucy/security/advisories); see
+[SECURITY.md](https://github.com/AJMerr/lucy/blob/main/SECURITY.md) to report one.
+
 ## Not covered
 
 - **The core's protocol** (the JSON-RPC that `lucy`, the app and other front ends speak to the
