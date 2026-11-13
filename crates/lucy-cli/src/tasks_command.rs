@@ -10,6 +10,7 @@ use lucy_protocol::rpc::{ScheduleId, ScheduleInfo, ScheduleUpdate, SchedulesList
 use serde_json::{Value, json};
 
 use crate::core_process;
+use crate::safe_text::visible;
 
 pub enum Action {
     List,
@@ -57,9 +58,9 @@ pub async fn list(client: &Client, out: &mut impl Write) -> Result<()> {
             out,
             "{}  {}  ({detail}){next}{paused}",
             short_id(&s.id),
-            s.title
+            visible(&s.title)
         )?;
-        writeln!(out, "      {}", s.what)?;
+        writeln!(out, "      {}", visible(&s.what))?;
     }
     if !all.always_on {
         writeln!(
@@ -89,7 +90,7 @@ pub async fn set_paused(
         )
         .await?;
     let verb = if paused { "Paused" } else { "Resumed" };
-    writeln!(out, "{verb} “{}”.", target.title)?;
+    writeln!(out, "{verb} “{}”.", visible(&target.title))?;
     Ok(())
 }
 
@@ -103,7 +104,7 @@ pub async fn delete(client: &Client, which: &str, out: &mut impl Write) -> Resul
             },
         )
         .await?;
-    writeln!(out, "Deleted “{}”.", target.title)?;
+    writeln!(out, "Deleted “{}”.", visible(&target.title))?;
     Ok(())
 }
 

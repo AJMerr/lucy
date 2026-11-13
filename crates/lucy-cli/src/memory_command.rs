@@ -9,6 +9,7 @@ use lucy_protocol::rpc::{MemorySetParams, MemoryView, method};
 use serde_json::json;
 
 use crate::core_process;
+use crate::safe_text::visible;
 
 pub fn run(edit_it: bool) -> Result<()> {
     tokio::runtime::Runtime::new()?.block_on(async {
@@ -33,7 +34,7 @@ pub async fn show(client: &Client, out: &mut impl Write) -> Result<()> {
         )?;
         return Ok(());
     }
-    writeln!(out, "{}", memory.text.trim_end())?;
+    writeln!(out, "{}", visible(memory.text.trim_end()))?;
     writeln!(out, "\n({}; `lucy memory edit` to change it)", memory.path)?;
     Ok(())
 }

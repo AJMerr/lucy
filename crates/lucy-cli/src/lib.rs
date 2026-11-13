@@ -10,6 +10,7 @@ pub mod markdown;
 pub mod mcp;
 pub mod memory_command;
 pub mod remote;
+pub mod safe_text;
 pub mod service;
 pub mod sprite;
 pub mod tasks_command;

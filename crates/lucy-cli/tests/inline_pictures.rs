@@ -33,7 +33,7 @@ fn other_terminals_and_tmux_dont() {
 
 #[test]
 fn a_small_png_is_one_escape_sized_in_columns() {
-    let drawn = draw("QUJD", 40);
+    let drawn = draw("QUJD", 40).unwrap();
 
     assert_eq!(drawn, "\x1b_Gf=100,a=T,c=40;QUJD\x1b\\\n");
 }
@@ -42,7 +42,7 @@ fn a_small_png_is_one_escape_sized_in_columns() {
 fn a_big_png_is_sent_in_4096_byte_chunks() {
     let data = "A".repeat(4096 * 2 + 10);
 
-    let drawn = draw(&data, 30);
+    let drawn = draw(&data, 30).unwrap();
 
     let chunks: Vec<&str> = drawn
         .trim_end()
@@ -54,4 +54,11 @@ fn a_big_png_is_sent_in_4096_byte_chunks() {
     assert_eq!(chunks[0].split_once(';').unwrap().1.len(), 4096);
     assert_eq!(chunks[1], format!("\x1b_Gm=1;{}", "A".repeat(4096)));
     assert_eq!(chunks[2], format!("\x1b_Gm=0;{}", "A".repeat(10)));
+}
+
+#[test]
+fn data_that_isnt_base64_draws_nothing() {
+    // It could end the escape early and smuggle in others.
+    assert_eq!(draw("QUJD\x1b\\\x1b]52;c;ZXZpbA==\x07", 40), None);
+    assert_eq!(draw("", 40), None);
 }
