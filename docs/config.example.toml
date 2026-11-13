@@ -65,9 +65,10 @@ vision = true                   # can see pictures you send; others get [images]
 builtin = true                  # Lucy's own tools: read_file, list_dir, search_files,
                                 # fetch_url, run_command, write_file, edit_file
 max_rounds = 10                 # tool rounds per message before Lucy must answer
-# Never read without asking. `~/` is your home; `**/` matches anywhere. Setting this replaces
-# the built-in list, so copy the defaults you want to keep:
-# private_paths = ["~/.ssh/**", "~/.gnupg/**", "~/.aws/**", "**/.env", "**/*.pem", "**/*.key"]
+# Never read without asking. `~/` is your home; `**/` matches anywhere. To add your own,
+# use extra_private_paths; private_paths replaces the built-in list (keys, credentials, browser
+# profiles, shell histories, Lucy's own chats…).
+# extra_private_paths = ["~/work/secrets/**"]
 
 [tools.rules]                   # override the usual rule for a tool: "auto" | "ask" | "deny"
 # run_command = "deny"
@@ -145,11 +146,16 @@ unload_ollama = true            # before each picture, unload the models the cha
 [remote]
 enabled = false
 bind = "127.0.0.1:7077"         # e.g. "100.64.0.7:7077" for your Tailscale address
-# allow_network = true          # needed for any bind beyond 127.0.0.1; there's no TLS, so only
-                                # on networks you trust (Tailscale) or behind a TLS proxy
+# allow_network = true          # needed for any bind beyond 127.0.0.1
+# tls = false                   # only behind a proxy that adds TLS itself; by default the core
+                                # encrypts with its own certificate (`lucy remote token` shows
+                                # its fingerprint)
 # max_level = 1                 # highest agent level for chats from other machines (0-3)
-# allow_config = true           # let other machines change settings, keys and the persona
-                                # (they can always read settings, never keys)
+# approvals = "remote"          # let other machines approve their own chats' tool calls
+                                # (default "local": only this machine approves)
+# allow_config = true           # let other machines change settings, keys, the persona, memory
+                                # and tasks (they can always read settings, never keys)
+# allowed_origins = ["https://lucy.example.com"]   # web pages allowed to connect
 
 # --- Desktop app (`lucy app`) and her sprite (`lucy sprite`) ------------------------------
 

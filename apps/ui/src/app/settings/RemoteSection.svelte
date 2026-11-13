@@ -33,8 +33,8 @@
 <h2>Remote access</h2>
 <p class="hint">
   Lets <code>lucy</code> on another machine (or this app in a browser) use this core: the same
-  chats, models and keys, with tools running here. There's no TLS, so use it over Tailscale, an SSH
-  tunnel, or a TLS proxy. Changes here apply when the core restarts.
+  chats, models and keys, with tools running here. It's encrypted with this core's own
+  certificate, which the other machine pins by its fingerprint. Changes apply straight away.
 </p>
 
 <label class="check">
@@ -59,7 +59,21 @@
     checked={remote.allow_config === true}
     onchange={(e) => set("allow_config", e.currentTarget.checked)}
   />
-  Let other machines change settings, keys and the persona (they can always read settings)
+  Let other machines change settings, keys, the persona, memory and tasks (they can always read
+  settings)
+</label>
+<label class="check">
+  <input
+    type="checkbox"
+    checked={remote.approvals === "remote"}
+    onchange={(e) => set("approvals", e.currentTarget.checked ? "remote" : "local")}
+  />
+  Let other machines approve their own chats' tool calls (otherwise you approve them here; with
+  this on, whoever has the token can do what you can, up to the level below)
+</label>
+<label class="check">
+  <input type="checkbox" checked={remote.tls !== false} onchange={(e) => set("tls", e.currentTarget.checked)} />
+  Encrypt with this core's own certificate (turn off only behind a proxy that adds TLS)
 </label>
 <label class="field">
   <span>Highest agent level for their chats</span>
@@ -80,7 +94,10 @@
 
 {#if onToken !== undefined}
   <h3>Token</h3>
-  <p class="hint">Other machines need it to connect (<code>lucy remote connect host:7077</code>).</p>
+  <p class="hint">
+    Other machines need it and the certificate fingerprint to connect
+    (<code>lucy remote connect host:7077</code>). A new token disconnects every other machine.
+  </p>
   <div class="row">
     <button onclick={() => showToken(false)}>Show token</button>
     <button onclick={() => showToken(true)}>New token</button>

@@ -68,3 +68,23 @@ Every agent task has a **step cap** and a **token/cost cap** regardless of level
 - `search_files` walks the real path of its folder, and matches private paths against both
   that and the path it was given, so `~/./.config` or a link to a private folder is still
   private.
+
+## Implementation notes (v1.1.0, home and protected files)
+
+- **Home isn't a write area.** The folder (or workspace) writes may run in is never home or a
+  folder holding it, since chats with no folder of their own work in home; there, changes ask,
+  and so do commands at level 2 when the workspace is home.
+- **Protected files** (`DEFAULT_PROTECTED_PATHS`: shell startup files, autostart, systemd user
+  units, `~/.local/bin`, git hooks and config, `.envrc`, editor tasks) and Lucy's own files
+  (the config, `remote.toml`, personas, chats, memory, pictures, voice models and sprite packs,
+  each named, so a project beside them isn't caught) ask before any change, at every level and whatever the rules; from
+  another machine they're refused.
+- **Private paths** cover developer, cloud and AI tool credentials, browser and mail profiles,
+  shell histories, Lucy's own chats and more key file types; `extra_private_paths` adds to the
+  list.
+- **fetch_url** reaches public addresses through a resolver and redirect policy that refuse
+  private ones; an address on this machine or a private network asks every time, and only
+  follows redirects on that host. Pages are read up to 5 MB.
+- **Approved calls are checked again** before they run; one that would now be refused, or ask
+  for a different reason, doesn't. Undo leaves a file that has since become a link alone.
+- Commands and MCP servers don't inherit `LUCY_KEY_*` or the providers' own key variables.

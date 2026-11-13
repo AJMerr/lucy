@@ -88,3 +88,37 @@ Date: 2026-11-05 · Status: Accepted
 - Remote clients can read settings and key status. Changing settings, keys or the persona
   needs `[remote] allow_config = true`; MCP sign-in is refused remotely regardless. Service
   actions (install, restart) stay out of the protocol: the desktop app runs `lucy service`.
+
+## Implementation notes (v1.1.0, protocol v6: remote access locked down)
+
+- **What a remote client may call** is an allowlist (`server/remote.rs`, `authorize`): anything
+  not named is refused. Settings, keys, the persona, memory, scheduled tasks and `models.*` need
+  `[remote] allow_config`; `core.shutdown`, `mcp.login` and `remote.rotate` are never allowed.
+  Session methods that change a chat (`chat.clear`, `sessions.delete`, `session.set_*`, undo …)
+  only work on chats started from another machine (a `remote` column on sessions); a level set
+  remotely is clamped to `max_level` when stored. Other clients' incognito chats are hidden from
+  lists, events, `core.status` and lookups. `config.get` hides MCP `env` and `headers` values
+  without `allow_config`.
+- **Approvals carry where they came from.** A pending approval records whether its reply is
+  remote and which connection started it. A remote client may answer only its own replies' calls,
+  and only `deny` unless `[remote] approvals = "remote"`; the `tool_approval` event says
+  `local_only` so clients can show it. "Always" from or in a remote reply counts once. Memory
+  changes in a remote reply ask; tasks scheduled from one are marked `remote` and run at most at
+  `max_level` (re-checked when they fire).
+- **Keys** given by name to `models.list`/`models.try` only go to an address a profile or preset
+  pairs with that name. Lucy's own keyring entries (`remote-*`, `mcp-oauth-*`) are never used as
+  API keys, by profiles, MCP servers or `keys.set`/`keys.remove`.
+- **TLS:** by default (`[remote] tls`) the core serves `wss://` with a self-signed certificate it
+  makes once and keeps in the keyring (`remote-tls`). Clients pin its SHA-256 fingerprint
+  (`Endpoint::Remote { pin }`, `remote.toml` `fingerprint`); a proxy's real certificate is checked
+  with webpki roots when no pin is set. Plain `ws://` is only sent to loopback or Tailscale
+  addresses (judged by the connected peer) unless `insecure`. Each core gets its own client
+  token entry (`remote-client-<host>-<port>`).
+- **The listener** has its own accept loop: at most 32 connections, a 10-second deadline for
+  TLS and the request headers, 32 MiB messages, and an `Origin` check against
+  `[remote] allowed_origins` (Lucy's own clients send none). The token is cached in memory and
+  must be at least 32 characters. `remote.rotate` replaces it and closes every remote
+  connection; a `config.update` that changes `[remote]` restarts the listener straight away, and
+  turning it off closes connections.
+- **The local socket** is only trusted in a folder of the user's own that others can't write to
+  (Unix); otherwise another account could stand in for the core in a shared `/tmp`.
