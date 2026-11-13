@@ -1,6 +1,6 @@
 [package]
 name = "lucy-voice"
-version = "1.0.1"
+version = "1.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Lucy's voice: hearing (Whisper), speaking (Kokoro, Piper, hosted) and her wake word, on sherpa-onnx loaded at run time"
