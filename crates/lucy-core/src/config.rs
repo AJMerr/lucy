@@ -246,7 +246,11 @@ pub struct ToolSettings {
     /// Tool rounds allowed per message in Assist mode before Lucy has to answer.
     pub max_rounds: u32,
     /// Glob patterns Lucy never reads without asking. `~/` means home; `**/` matches anywhere.
+    /// Setting this replaces the built-in list; `extra_private_paths` adds to it instead.
     pub private_paths: Vec<String>,
+    /// More private paths, on top of `private_paths`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_private_paths: Vec<String>,
     /// Per-tool overrides of the usual rule, e.g. `run_command = "deny"`.
     pub rules: BTreeMap<String, ToolRule>,
 }
@@ -260,6 +264,7 @@ impl Default for ToolSettings {
                 .iter()
                 .map(|p| p.to_string())
                 .collect(),
+            extra_private_paths: Vec::new(),
             rules: BTreeMap::new(),
         }
     }

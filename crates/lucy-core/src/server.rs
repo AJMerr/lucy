@@ -991,6 +991,7 @@ async fn handle(
                         level: settings.level,
                         workspace: config.agent.workspace.as_deref().map(expand_home),
                         remote,
+                        lucy_folders: core.lucy_folders(),
                     };
                     (allowed, access)
                 }
@@ -1086,6 +1087,20 @@ impl Core {
             }))),
             Err(err) => Some(Err(err)),
         }
+    }
+
+    /// Lucy's own config, data and persona folders, which her tools never change unasked.
+    fn lucy_folders(&self) -> Vec<PathBuf> {
+        let options = &self.options;
+        [
+            options.config_path.parent().map(Path::to_path_buf),
+            options.db_path.parent().map(Path::to_path_buf),
+            options.personas_dir.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .collect()
     }
 
     /// Where your own version of persona `name` lives (whether or not it exists yet).
@@ -1498,6 +1513,7 @@ fn start_turn(core: &Arc<Core>, request: TurnRequest) -> Result<u64, RpcError> {
         level: settings.level,
         workspace: config.agent.workspace.as_deref().map(expand_home),
         remote,
+        lucy_folders: core.lucy_folders(),
     };
     tokio::spawn(turn.run(Plan {
         provider,

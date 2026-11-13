@@ -12,6 +12,7 @@ struct Home {
     /// Somewhere outside home.
     elsewhere: tempfile::TempDir,
     private: PrivatePaths,
+    protected: PrivatePaths,
 }
 
 impl Home {
@@ -22,10 +23,15 @@ impl Home {
         }
         std::fs::write(dir.path().join(".ssh/config"), "Host x").unwrap();
         let private = PrivatePaths::defaults(Some(&real(dir.path())));
+        let protected = PrivatePaths::protected(
+            Some(&real(dir.path())),
+            &[real(dir.path()).join(".config/lucy")],
+        );
         Self {
             dir,
             elsewhere: tempfile::tempdir().unwrap(),
             private,
+            protected,
         }
     }
 
@@ -57,6 +63,7 @@ impl Home {
                 home: Some(&home),
                 workspace: workspace.as_deref(),
                 private: &self.private,
+                protected: &self.protected,
             },
         )
     }
@@ -312,6 +319,7 @@ fn an_agent_reads_where_it_may_write_even_outside_home() {
                 home: Some(&home.path("")),
                 workspace: None,
                 private: &home.private,
+                protected: &home.protected,
             },
         )
     };
@@ -376,6 +384,7 @@ fn private_paths_and_changes_outside_the_folder_ask_even_when_always_allowed() {
                 home: Some(&homedir),
                 workspace: None,
                 private: &home.private,
+                protected: &home.protected,
             },
         )
     };
@@ -424,4 +433,100 @@ fn private_paths_and_changes_outside_the_folder_ask_even_when_always_allowed() {
     );
     // A remote server's paths aren't on this machine.
     assert!(always_asks(Mode::Assist, AgentLevel::Guarded, remote(CallKind::Read)).is_none());
+}
+
+// --- Home and protected files ---------------------------------------------------------------
+
+/// Decide for a chat working in `folder` (relative to home; "" is home itself).
+fn decide_in(
+    home: &Home,
+    folder: &str,
+    mode: Mode,
+    level: AgentLevel,
+    workspace: Option<&str>,
+    call: CallFacts,
+) -> Decision {
+    let folder = home.path(folder);
+    let homedir = home.path("");
+    let workspace = workspace.map(|w| home.path(w));
+    decide(
+        &call,
+        &Policy {
+            mode,
+            level,
+            folder: &folder,
+            home: Some(&homedir),
+            workspace: workspace.as_deref(),
+            private: &home.private,
+            protected: &home.protected,
+        },
+    )
+}
+
+#[test]
+fn a_chat_working_in_home_doesnt_change_files_there_unasked() {
+    let home = Home::new();
+    let note = local(CallKind::Write, vec![home.path("notes/todo.md")]);
+
+    assert_asks(decide_in(
+        &home,
+        "",
+        Mode::Agent,
+        AgentLevel::Guarded,
+        None,
+        note.clone(),
+    ));
+    assert_asks(decide_in(
+        &home,
+        "",
+        Mode::Agent,
+        AgentLevel::Workspace,
+        None,
+        note.clone(),
+    ));
+    // A workspace of its own is where it may.
+    assert_runs(decide_in(
+        &home,
+        "",
+        Mode::Agent,
+        AgentLevel::Workspace,
+        Some("notes"),
+        note,
+    ));
+    // Nor do commands run freely with home as the workspace.
+    assert_asks(decide_in(
+        &home,
+        "",
+        Mode::Agent,
+        AgentLevel::Workspace,
+        Some(""),
+        local(CallKind::Command, vec![]),
+    ));
+}
+
+#[test]
+fn files_that_run_at_startup_or_hold_lucys_settings_always_ask() {
+    let home = Home::new();
+    let hook = home.path("projects/app/.git/hooks/pre-commit");
+    let config = home.path(".config/lucy/config.toml");
+
+    for level in [
+        AgentLevel::Guarded,
+        AgentLevel::Workspace,
+        AgentLevel::Unrestricted,
+    ] {
+        for path in [
+            home.path(".bashrc"),
+            hook.clone(),
+            config.clone(),
+            home.path(".config/autostart/x.desktop"),
+        ] {
+            assert_asks(home.agent(level, local(CallKind::Write, vec![path])));
+        }
+    }
+    // Reading them is fine.
+    assert_runs(home.agent(
+        AgentLevel::Guarded,
+        local(CallKind::Read, vec![home.path(".bashrc")]),
+    ));
 }

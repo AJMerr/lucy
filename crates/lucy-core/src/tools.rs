@@ -70,6 +70,8 @@ pub struct ToolBox {
     cwd: PathBuf,
     home: Option<PathBuf>,
     private: PrivatePaths,
+    /// Files that run code at startup, and Lucy's own settings: changing them always asks.
+    protected: PrivatePaths,
     settings: ToolSettings,
     access: Access,
     /// `generate_image`, when a generator is set: ready, or why it can't make pictures.
@@ -90,6 +92,8 @@ pub struct Access {
     /// The chat is driven from another machine: memory changes ask, and protected paths
     /// are refused rather than asked about.
     pub remote: bool,
+    /// Lucy's own config and data folders: changing anything in them always asks.
+    pub lucy_folders: Vec<PathBuf>,
 }
 
 impl ToolBox {
@@ -100,8 +104,14 @@ impl ToolBox {
         external: Vec<Arc<ExternalServer>>,
     ) -> Result<Self, String> {
         let home = dirs::home_dir();
-        let private = PrivatePaths::new(&settings.private_paths, home.as_deref())
+        let patterns: Vec<&String> = settings
+            .private_paths
+            .iter()
+            .chain(&settings.extra_private_paths)
+            .collect();
+        let private = PrivatePaths::new(&patterns, home.as_deref())
             .map_err(|err| format!("bad pattern in tools.private_paths: {err}"))?;
+        let protected = PrivatePaths::protected(home.as_deref(), &[]);
         let mut tools = Vec::new();
         let builtin = if settings.builtin {
             let client = builtin::connect(BuiltinOptions {
@@ -140,6 +150,7 @@ impl ToolBox {
             cwd,
             home,
             private,
+            protected,
             settings: settings.clone(),
             access: Access::default(),
             generator: None,
@@ -150,6 +161,7 @@ impl ToolBox {
 
     /// Apply a chat's mode and level (Assist by default).
     pub fn with_access(mut self, access: Access) -> Self {
+        self.protected = PrivatePaths::protected(self.home.as_deref(), &access.lucy_folders);
         self.access = access;
         self
     }
@@ -559,8 +571,19 @@ impl ToolBox {
                 self.paths(tool, &call.arguments).collect()
             },
         };
-        // Private paths, and changes outside the folder, ask even for a tool set to "auto" or
-        // approved "always".
+        // From another machine, files that run at startup or hold Lucy's settings are off
+        // limits.
+        if self.access.remote
+            && let Some(path) = policy::protected_change(&facts, &self.policy())
+        {
+            return Verdict::Refuse(format!(
+                "{} runs code at startup or holds Lucy's settings, so it can't be changed from \
+                 another machine.",
+                path.display()
+            ));
+        }
+        // Private and protected paths, and changes outside the folder, ask even for a tool set
+        // to "auto" or approved "always".
         if let Some(reason) = policy::always_asks(&facts, &self.policy()) {
             return ask(reason);
         }
@@ -591,6 +614,7 @@ impl ToolBox {
             home: self.home.as_deref(),
             workspace: self.access.workspace.as_deref(),
             private: &self.private,
+            protected: &self.protected,
         }
     }
 
