@@ -29,10 +29,15 @@ use tokio_tungstenite::tungstenite::Message;
 pub enum Endpoint {
     Path(PathBuf),
     Pipe(String),
-    /// `ws://host:7077/rpc`, and the token that core accepts.
+    /// `wss://host:7077/rpc`, the token that core accepts, and how to trust it.
     Remote {
         url: String,
         token: String,
+        /// The SHA-256 fingerprint of the core's own certificate (`lucy remote token` shows
+        /// it). `None` checks a `wss://` certificate the usual way (a proxy with a real one).
+        pin: Option<String>,
+        /// Allow plain `ws://` beyond this machine and Tailscale.
+        insecure: bool,
     },
 }
 
@@ -113,6 +118,17 @@ pub enum ClientError {
          stop it with `lucy core stop` and try again"
     )]
     VersionMismatch { core: u32, client: u32 },
+    #[error(
+        "the Lucy core at {url} has a different certificate from the one this machine paired \
+         with; if it changed on purpose (a new install), run `lucy remote connect` again with \
+         the fingerprint `lucy remote token` shows there"
+    )]
+    WrongCertificate { url: String },
+    #[error(
+        "not sending the token to {url} unencrypted: plain ws:// is only used on this machine or \
+         over Tailscale; use wss://, or pass --insecure if the network is trusted"
+    )]
+    Plaintext { url: String },
     #[error("lost connection to the Lucy core")]
     Disconnected,
     #[error(transparent)]
@@ -215,8 +231,16 @@ impl Client {
         };
 
         let tasks = match endpoint {
-            Endpoint::Remote { url, token } => {
-                let (mut sink, mut source) = connect_websocket(url, token).await?.split();
+            Endpoint::Remote {
+                url,
+                token,
+                pin,
+                insecure,
+            } => {
+                let (mut sink, mut source) =
+                    connect_websocket(url, token, pin.as_deref(), *insecure)
+                        .await?
+                        .split();
                 let writer = tokio::spawn(async move {
                     while let Some(line) = to_send.recv().await {
                         if sink.send(Message::text(line)).await.is_err() {
@@ -242,6 +266,10 @@ impl Client {
                     endpoint: local.to_string(),
                     source,
                 };
+                #[cfg(unix)]
+                if let Endpoint::Path(path) = local {
+                    trusted_socket(path).map_err(connect_err)?;
+                }
                 let stream = Stream::connect(local.name().map_err(connect_err)?)
                     .await
                     .map_err(connect_err)?;
@@ -396,8 +424,16 @@ impl Incoming {
 type WebSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-/// Open a WebSocket to a remote core, sending `token` as a bearer token.
-async fn connect_websocket(url: &str, token: &str) -> Result<WebSocket, ClientError> {
+/// Open a WebSocket to a remote core, sending `token` as a bearer token. Over `wss://` the
+/// core's certificate must match `pin`; plain `ws://` only goes to this machine or a
+/// Tailscale address (judged by the address actually connected to), unless `insecure`.
+async fn connect_websocket(
+    url: &str,
+    token: &str,
+    pin: Option<&str>,
+    insecure: bool,
+) -> Result<WebSocket, ClientError> {
+    use tokio_tungstenite::Connector;
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::{Error, http};
 
@@ -405,22 +441,207 @@ async fn connect_websocket(url: &str, token: &str) -> Result<WebSocket, ClientEr
         endpoint: url.to_owned(),
         source,
     };
+    let invalid = |err: String| connect_err(io::Error::new(io::ErrorKind::InvalidInput, err));
     let mut request = url
         .into_client_request()
-        .map_err(|err| connect_err(io::Error::new(io::ErrorKind::InvalidInput, err)))?;
+        .map_err(|err| invalid(err.to_string()))?;
+    let secure = match request.uri().scheme_str() {
+        Some("wss") => true,
+        Some("ws") => false,
+        _ => return Err(invalid(format!("{url} isn't a ws:// or wss:// address"))),
+    };
+    let host = request
+        .uri()
+        .host()
+        .ok_or_else(|| invalid(format!("{url} has no host")))?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_owned();
+    let port = request
+        .uri()
+        .port_u16()
+        .unwrap_or(if secure { 443 } else { 80 });
+    let tcp = tokio::net::TcpStream::connect((host.as_str(), port))
+        .await
+        .map_err(connect_err)?;
+    if !secure && !insecure && !tcp.peer_addr().is_ok_and(|peer| private_link(peer.ip())) {
+        return Err(ClientError::Plaintext { url: url.into() });
+    }
     let bearer = format!("Bearer {token}")
         .parse()
         .map_err(|_| ClientError::Refused { url: url.into() })?;
     request
         .headers_mut()
         .insert(http::header::AUTHORIZATION, bearer);
-    match tokio_tungstenite::connect_async(request).await {
+    let connector = match (secure, pin) {
+        (true, Some(pin)) => Some(Connector::Rustls(Arc::new(pinned::config(pin)))),
+        _ => None,
+    };
+    match tokio_tungstenite::client_async_tls_with_config(request, tcp, None, connector).await {
         Ok((socket, _)) => Ok(socket),
         Err(Error::Http(response)) if response.status() == http::StatusCode::UNAUTHORIZED => {
             Err(ClientError::Refused { url: url.into() })
         }
+        Err(Error::Tls(err)) if err.to_string().contains(pinned::MISMATCH) => {
+            Err(ClientError::WrongCertificate { url: url.into() })
+        }
+        Err(Error::Io(err)) if err.to_string().contains(pinned::MISMATCH) => {
+            Err(ClientError::WrongCertificate { url: url.into() })
+        }
         Err(Error::Io(err)) => Err(connect_err(err)),
         Err(err) => Err(connect_err(io::Error::other(err))),
+    }
+}
+
+/// A local socket is only trusted in a folder that's this user's own and that nobody else can
+/// write to, and only if this user made it: otherwise another account on a shared machine
+/// (with the socket in /tmp) could stand in for the core and read everything sent to it.
+#[cfg(unix)]
+fn trusted_socket(path: &std::path::Path) -> io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    // SAFETY: getuid has no preconditions and can't fail.
+    let me = unsafe { libc::getuid() };
+    let untrusted = |what: String| {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{what}, so a core listening there can't be trusted"),
+        )
+    };
+    // Missing: connecting fails anyway, with the usual message.
+    if let Some(dir) = path.parent()
+        && let Ok(meta) = std::fs::symlink_metadata(dir)
+    {
+        if meta.file_type().is_symlink() || meta.uid() != me {
+            return Err(untrusted(format!(
+                "{} isn't a folder of yours",
+                dir.display()
+            )));
+        }
+        if meta.permissions().mode() & 0o022 != 0 {
+            return Err(untrusted(format!("others can write to {}", dir.display())));
+        }
+    }
+    if let Ok(meta) = std::fs::symlink_metadata(path)
+        && meta.uid() != me
+    {
+        return Err(untrusted(format!(
+            "{} belongs to someone else",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+/// This machine, or a Tailscale address (which WireGuard already encrypts).
+fn private_link(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_loopback() || (ip.octets()[0] == 100 && (ip.octets()[1] & 0xc0) == 64)
+        }
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip
+                    .to_ipv4_mapped()
+                    .is_some_and(|v4| private_link(v4.into()))
+                || ip.segments()[..3] == [0xfd7a, 0x115c, 0xa1e0]
+        }
+    }
+}
+
+/// Trusting a core by its certificate's fingerprint rather than a certificate authority.
+mod pinned {
+    use std::sync::Arc;
+
+    use rustls::DigitallySignedStruct;
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+    use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
+    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+    use sha2::{Digest, Sha256};
+
+    pub const MISMATCH: &str = "the core's certificate doesn't match the pinned fingerprint";
+
+    /// The fingerprint as compared: hex digits only, lowercase.
+    pub fn normalize(fingerprint: &str) -> String {
+        fingerprint
+            .chars()
+            .filter(char::is_ascii_hexdigit)
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    }
+
+    #[derive(Debug)]
+    struct Pinned {
+        fingerprint: String,
+        provider: Arc<CryptoProvider>,
+    }
+
+    pub fn config(pin: &str) -> rustls::ClientConfig {
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let verifier = Pinned {
+            fingerprint: normalize(pin),
+            provider: Arc::clone(&provider),
+        };
+        rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("the default protocol versions are supported")
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(verifier))
+            .with_no_client_auth()
+    }
+
+    impl ServerCertVerifier for Pinned {
+        fn verify_server_cert(
+            &self,
+            end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: UnixTime,
+        ) -> Result<ServerCertVerified, rustls::Error> {
+            let seen: String = Sha256::digest(end_entity.as_ref())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            if !self.fingerprint.is_empty() && seen == self.fingerprint {
+                Ok(ServerCertVerified::assertion())
+            } else {
+                Err(rustls::Error::General(MISMATCH.into()))
+            }
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            verify_tls12_signature(
+                message,
+                cert,
+                dss,
+                &self.provider.signature_verification_algorithms,
+            )
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            verify_tls13_signature(
+                message,
+                cert,
+                dss,
+                &self.provider.signature_verification_algorithms,
+            )
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            self.provider
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
     }
 }
 

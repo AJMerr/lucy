@@ -2,7 +2,8 @@
 //! and where a client keeps the core it talks to.
 
 use lucy_cli::remote::{
-    forget_connection, normalize_url, save_connection, saved_connection, token,
+    Connection, client_token_key, forget_connection, normalize_url, save_connection,
+    saved_connection, token,
 };
 use lucy_core::secrets::{MemoryStore, SecretStore};
 use lucy_core::server::REMOTE_TOKEN_KEY;
@@ -37,8 +38,10 @@ fn rotating_replaces_the_token() {
 #[test]
 fn addresses_become_websocket_urls() {
     for (given, expected) in [
-        ("desktop", "ws://desktop:7077/rpc"),
-        ("desktop:8000", "ws://desktop:8000/rpc"),
+        // Encrypted with the core's own certificate unless said otherwise.
+        ("desktop", "wss://desktop:7077/rpc"),
+        ("desktop:8000", "wss://desktop:8000/rpc"),
+        ("wss://desktop:7077", "wss://desktop:7077/rpc"),
         ("ws://desktop:7077", "ws://desktop:7077/rpc"),
         ("ws://100.64.0.7:7077/rpc", "ws://100.64.0.7:7077/rpc"),
         (
@@ -60,11 +63,13 @@ fn a_connection_is_saved_and_forgotten() {
     let file = dir.path().join("lucy/remote.toml");
 
     assert_eq!(saved_connection(&file).unwrap(), None);
-    save_connection(&file, "ws://desktop:7077/rpc").unwrap();
-    assert_eq!(
-        saved_connection(&file).unwrap().as_deref(),
-        Some("ws://desktop:7077/rpc")
-    );
+    let connection = Connection {
+        url: "wss://desktop:7077/rpc".into(),
+        fingerprint: Some("ab12 cd34".into()),
+        insecure: false,
+    };
+    save_connection(&file, &connection).unwrap();
+    assert_eq!(saved_connection(&file).unwrap(), Some(connection));
 
     assert!(forget_connection(&file).unwrap());
     assert_eq!(saved_connection(&file).unwrap(), None);
@@ -81,12 +86,22 @@ fn reconnecting_keeps_comments() {
     )
     .unwrap();
 
-    save_connection(&file, "ws://desktop:7077/rpc").unwrap();
+    save_connection(&file, &Connection::new("ws://desktop:7077/rpc")).unwrap();
 
     let text = std::fs::read_to_string(&file).unwrap();
     assert!(text.contains("# the desktop under the desk"), "{text}");
     assert_eq!(
-        saved_connection(&file).unwrap().as_deref(),
+        saved_connection(&file).unwrap().map(|c| c.url).as_deref(),
         Some("ws://desktop:7077/rpc")
     );
+}
+
+#[test]
+fn each_core_gets_its_own_token_entry() {
+    let desktop = client_token_key("wss://desktop:7077/rpc");
+    let typo = client_token_key("wss://desktpo:7077/rpc");
+
+    assert_eq!(desktop, "remote-client-desktop-7077");
+    assert_ne!(desktop, typo);
+    assert_eq!(client_token_key("wss://Desktop:7077/rpc"), desktop);
 }

@@ -413,9 +413,19 @@ impl<W: Write> Chat<'_, W> {
                             printer.op(self.out, op)?;
                         }
                     }
-                    Some(Event::ToolApproval { call, reason, preview, .. }) => {
+                    Some(Event::ToolApproval { call, reason, preview, local_only, .. }) => {
                         self.end_text(&mut renderer, &mut printer)?;
-                        let answer = self.approval(&call, &reason, preview.as_deref(), input).await?;
+                        let answer = if local_only {
+                            match self.decline_or_wait(&call, &reason, preview.as_deref(), input).await? {
+                                // Approving happens on the core's machine; the reply goes on
+                                // when someone answers there.
+                                Some(None) => continue,
+                                Some(Some(decision)) => Some(decision),
+                                None => None,
+                            }
+                        } else {
+                            self.approval(&call, &reason, preview.as_deref(), input).await?
+                        };
                         let decision = answer.unwrap_or(Decision::Deny);
                         let approved: Result<Value> = self
                             .call(
@@ -446,6 +456,15 @@ impl<W: Write> Chat<'_, W> {
                         let mark = self.styled(if is_error { "31" } else { "32" }, &mark);
                         self.say(&format!("  {mark}"))?;
                         self.show_made(&images, &output).await?;
+                        if let Some(call) = &running
+                            && call.name == "remember"
+                            && !is_error
+                            && let Some(fact) = call.arguments["fact"].as_str()
+                        {
+                            self.note(&format!(
+                                "  Remembered “{fact}” (`lucy memory edit` to change or remove it)"
+                            ))?;
+                        }
                         if let Some(call) = running.take() {
                             self.last_tool = Some((call, output, is_error));
                         }
@@ -614,6 +633,35 @@ impl<W: Write> Chat<'_, W> {
                 },
                 ReadLine::Interrupted => return Ok(None),
                 ReadLine::Eof => return Ok(Some(Decision::Deny)),
+            }
+        }
+    }
+
+    /// A call only the machine running Lucy may approve: show it, then decline here or wait.
+    /// `Some(None)` waits, `Some(Some(Deny))` declines, `None` (Ctrl+C) stops the reply.
+    async fn decline_or_wait<S: LineSource>(
+        &mut self,
+        call: &ToolCall,
+        reason: &str,
+        preview: Option<&str>,
+        input: &mut S,
+    ) -> Result<Option<Option<Decision>>> {
+        for line in tool_display::approval(call, reason, preview, self.color) {
+            self.say(&line)?;
+        }
+        self.note("Only the machine that runs Lucy can approve this.")?;
+        loop {
+            match input.read_line(tool_display::LOCAL_ONLY_PROMPT).await {
+                ReadLine::Text(answer) => match answer.trim().to_ascii_lowercase().as_str() {
+                    "" => {
+                        self.note("Waiting for an answer there…")?;
+                        return Ok(Some(None));
+                    }
+                    "n" | "no" => return Ok(Some(Some(Decision::Deny))),
+                    _ => self.note("Press Enter to wait, or type n to decline.")?,
+                },
+                ReadLine::Interrupted => return Ok(None),
+                ReadLine::Eof => return Ok(Some(Some(Decision::Deny))),
             }
         }
     }

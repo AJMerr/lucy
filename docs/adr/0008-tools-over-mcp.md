@@ -105,3 +105,14 @@ path checks: their paths name the remote service's data, not this machine's file
 - "Always" approvals live in memory and reset when the core restarts.
 - Agent mode will reuse the same verdicts, with `AgentLevel` deciding which asks
   become runs.
+
+## Implementation notes (v1.1.0)
+
+- A local tool marked `readOnlyHint` counts as a local read only with `openWorldHint: false`;
+  without it, it's treated as going online, as the MCP spec's default says. Remote servers'
+  read-only tools still run by themselves (set `[tools.rules]` to `ask` for a server you'd rather
+  check).
+- Besides arguments named like paths, any string argument of another server's tool that looks
+  like a path on this machine (`/…`, `~/…`, `file://…`, `C:\\…`) is checked against home and the
+  private and protected lists.
+- The approval card shows every argument of a tool Lucy has no summary for.

@@ -34,6 +34,8 @@ const MAX_SEARCH_FILE: u64 = 2 * 1024 * 1024;
 const DEFAULT_COMMAND_TIMEOUT: u64 = 120;
 const MAX_COMMAND_TIMEOUT: u64 = 600;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+/// The most of a page read; past it, the rest is cut off.
+const MAX_FETCH: usize = 5 * 1024 * 1024;
 
 pub struct BuiltinOptions {
     /// The user's working folder: relative paths and commands start here.
@@ -60,7 +62,12 @@ pub async fn connect(
 pub struct Builtin {
     cwd: PathBuf,
     private: PrivatePaths,
+    /// For public addresses: never connects to this machine or a private network, even when
+    /// redirected or when a name resolves there.
     http: reqwest::Client,
+    /// For an address that names this machine or a private network itself (asked about every
+    /// time): redirects stay on that host.
+    local_http: reqwest::Client,
     tool_router: ToolRouter<Self>,
 }
 
@@ -136,6 +143,32 @@ impl Builtin {
             http: reqwest::Client::builder()
                 .timeout(FETCH_TIMEOUT)
                 .user_agent(concat!("Lucy/", env!("CARGO_PKG_VERSION")))
+                .dns_resolver(std::sync::Arc::new(PublicOnly))
+                .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    if attempt.previous().len() >= 10 {
+                        attempt.error("too many redirects")
+                    } else if names_private_host(attempt.url().as_str()) {
+                        attempt.error("it redirects to this machine or a private network")
+                    } else {
+                        attempt.follow()
+                    }
+                }))
+                .build()
+                .expect("HTTP client builds"),
+            local_http: reqwest::Client::builder()
+                .timeout(FETCH_TIMEOUT)
+                .user_agent(concat!("Lucy/", env!("CARGO_PKG_VERSION")))
+                .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    let same_host = attempt
+                        .previous()
+                        .first()
+                        .is_some_and(|first| first.host_str() == attempt.url().host_str());
+                    if attempt.previous().len() >= 10 || !same_host {
+                        attempt.error("it redirects to another host")
+                    } else {
+                        attempt.follow()
+                    }
+                }))
                 .build()
                 .expect("HTTP client builds"),
             tool_router: Self::tool_router(),
@@ -316,8 +349,11 @@ impl Builtin {
         if !(args.url.starts_with("http://") || args.url.starts_with("https://")) {
             return Err("only http:// and https:// addresses can be fetched".into());
         }
-        let response = self
-            .http
+        let client = match names_private_host(&args.url) {
+            true => &self.local_http,
+            false => &self.http,
+        };
+        let mut response = client
             .get(&args.url)
             .send()
             .await
@@ -328,10 +364,20 @@ impl Builtin {
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.contains("html"));
-        let body = response
-            .text()
+        // Read only so much: a huge (or endless) page mustn't fill memory.
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
             .await
-            .map_err(|err| format!("could not read {}: {err}", args.url))?;
+            .map_err(|err| format!("could not read {}: {err}", args.url))?
+        {
+            bytes.extend_from_slice(&chunk);
+            if bytes.len() >= MAX_FETCH {
+                bytes.truncate(MAX_FETCH);
+                break;
+            }
+        }
+        let body = String::from_utf8_lossy(&bytes).into_owned();
         let text = if is_html {
             crate::html::to_text(&body)
         } else {
@@ -341,6 +387,84 @@ impl Builtin {
             return Err(format!("HTTP {status}\n{}", truncate(&text, 2000)));
         }
         Ok(truncate(&text, MAX_OUTPUT))
+    }
+}
+
+/// Variables in Lucy's environment holding keys she uses (`LUCY_KEY_*`, and the providers'
+/// own names for theirs). Commands and MCP servers she starts don't inherit them.
+pub fn secret_vars() -> Vec<String> {
+    const VENDOR: &[&str] = &[
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "ELEVENLABS_API_KEY",
+    ];
+    std::env::vars_os()
+        .filter_map(|(name, _)| name.into_string().ok())
+        .filter(|name| name.starts_with("LUCY_KEY_") || VENDOR.contains(&name.as_str()))
+        .collect()
+}
+
+/// Whether `url` names this machine or a private network itself (`localhost`, `127.0.0.1`,
+/// `192.168.1.5`, `169.254.169.254`…), rather than a public name.
+pub fn names_private_host(url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            name == "localhost" || name.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => private_ip(ip.into()),
+        Some(url::Host::Ipv6(ip)) => private_ip(ip.into()),
+        None => false,
+    }
+}
+
+/// This machine, a private or link-local network, or shared address space (Tailscale).
+fn private_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_broadcast()
+                || (ip.octets()[0] == 100 && (ip.octets()[1] & 0xc0) == 64)
+        }
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
+                || ip.to_ipv4_mapped().is_some_and(|v4| private_ip(v4.into()))
+        }
+    }
+}
+
+/// Resolves names to public addresses only, so a page can't send Lucy into the local network
+/// by redirecting to (or being renamed as) a private address.
+struct PublicOnly;
+
+impl reqwest::dns::Resolve for PublicOnly {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_owned();
+        Box::pin(async move {
+            let public: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await?
+                .filter(|addr| !private_ip(addr.ip()))
+                .collect();
+            if public.is_empty() {
+                return Err(format!(
+                    "{host} is on this machine or a private network; fetch it by that address \
+                     to be asked about it"
+                )
+                .into());
+            }
+            Ok(Box::new(public.into_iter()) as reqwest::dns::Addrs)
+        })
     }
 }
 
@@ -460,6 +584,9 @@ async fn run(command: &str, cwd: &Path, timeout: Duration) -> Result<String, Str
         cmd.arg("-c").arg(command);
         cmd
     };
+    for var in secret_vars() {
+        cmd.env_remove(var);
+    }
     cmd.current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

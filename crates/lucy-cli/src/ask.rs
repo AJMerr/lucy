@@ -121,11 +121,19 @@ async fn ask(text: String, options: AskOptions) -> Result<Finish> {
                     out.flush()?;
                     mid_line = !text.ends_with('\n');
                 }
-                Some(Event::ToolApproval { turn_id, call, reason, preview, .. })
+                Some(Event::ToolApproval { turn_id, call, reason, preview, local_only, .. })
                     if turn_id == sent.turn_id =>
                 {
                     if std::mem::take(&mut mid_line) {
                         writeln!(out)?;
+                    }
+                    // Not ours to approve (`--yes` included): wait for the core's machine.
+                    if local_only {
+                        for line in tool_display::approval(&call, &reason, preview.as_deref(), color) {
+                            eprintln!("{line}");
+                        }
+                        eprintln!("{}", dim("Waiting for approval on the machine that runs Lucy…"));
+                        continue;
                     }
                     let decision = if yes {
                         Decision::Once

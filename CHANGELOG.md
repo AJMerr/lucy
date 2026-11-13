@@ -1,5 +1,70 @@
 # Changelog
 
+## v1.1.0: security hardening (2026-11-13)
+
+The rest of the fixes from the security review. Remote access is locked down and encrypted, and
+Lucy's tools are harder to turn against you through text she reads (a web page, a file, another
+server's tool). Please upgrade; if you use remote access, pair your other machines again (see
+Upgrading).
+
+### Breaking for security
+
+- **Remote access is encrypted and paired by fingerprint.** The core serves `wss://` with its own
+  certificate, and `lucy remote connect` asks for the fingerprint `lucy remote token` shows. Plain
+  `ws://` is only sent to this machine or a Tailscale address unless you add `--insecure`; behind
+  a proxy that adds TLS, set `[remote] tls = false`. See [docs/remote.md](docs/remote.md).
+- **Remote chats are approved on the machine running Lucy.** From another machine you can only
+  decline; `[remote] approvals = "remote"` lets it approve its own chats again. "Always" never
+  carries over to or from a remote chat.
+- **Remote clients change only chats started from another machine.** They still read and
+  continue your chats, but never see incognito ones they didn't start. Without
+  `[remote] allow_config` they can't change memory or scheduled tasks, or list models with stored
+  keys; tasks they schedule run at most at `max_level`.
+- **Home isn't a place she changes files unasked.** Chats with no folder of their own (the app,
+  scheduled tasks, remote chats) ask before changing files in home, and level 2 runs no commands
+  there by itself; set `[agent] workspace` to a folder she may change freely.
+- **Protected files always ask**, at every level: shell startup files, autostart, systemd user
+  units, `~/.local/bin`, git hooks, `.envrc`, editor tasks, and Lucy's own config and data.
+- **More paths are private**, among them developer and cloud credentials (`~/.config/gh`,
+  `~/.npmrc`, `~/.cargo/credentials`…), AI tools' credentials, browser and mail profiles, shell
+  histories and Lucy's own chats. Add your own with `[tools] extra_private_paths`.
+- **Fetching from this machine or your local network asks every time**, and a public page can't
+  redirect (or resolve) there.
+- **An MCP tool marked read-only that doesn't say it stays on this machine** asks like going
+  online does, as the MCP spec's defaults say.
+- **A stored key only goes where it's already used:** adding a model at a new address needs its
+  key typed in again.
+
+### Also fixed
+
+- Remote access: only what remote clients are allowed is answered; a new token disconnects every
+  remote client; changes under `[remote]` apply straight away; tokens need 32 characters; slow
+  or idle connections are dropped and their number capped; web pages need their origin in
+  `[remote] allowed_origins`; settings read remotely hide MCP servers' variables and headers;
+  each core gets its own token on the other machine; the local socket is only used in a folder
+  that's yours alone.
+- Memory: what she saves shows in the chat, with **Undo** in the app; headings are one short
+  line and checked for secrets; her prompt treats memory as notes about you, never instructions.
+  A chat from another machine needs approval here to change it.
+- Approvals show every argument of a tool, with characters that hide or reverse text made
+  visible; the sprite sends long or odd-looking calls to the chat window. An approved call is
+  checked again before it runs, and undo leaves files that have become links alone.
+- Commands and MCP servers don't inherit `LUCY_KEY_*` or the providers' key variables.
+- The app: each window may only use its own commands, a stricter content policy and a navigation
+  guard keep it on Lucy's pages, and a dropped link isn't opened. Every voice download is
+  checked against its SHA-256, size-capped and unpacked safely. Notifications show as plain text
+  on Linux; sprite packs are limited in size and frames; in a browser the token goes after `#`.
+- Protocol v6: `memory.forget`, `remote.rotate`, and `local_only` on `tool_approval`.
+
+### Upgrading from v1.0.1
+
+- Restart the core after installing: `lucy service restart`, or `lucy core stop` if you don't
+  use the service. It speaks protocol v6, so `lucy`, the app and the core must all be 1.1.0.
+- Remote access: run `lucy remote token` on the machine that runs Lucy, then
+  `lucy remote connect <host>` again on each other machine, with the token and fingerprint.
+- If an agent chat in the app or a scheduled task now asks before changing files, set
+  `[agent] workspace` to the folder it may change freely.
+
 ## v1.0.1: security fixes (2026-11-13)
 
 Fixes for problems found in a security review of tool approvals and the terminal. Please

@@ -52,6 +52,13 @@ fn main() {
                 })
                 .build(),
         )
+        // Her windows only ever show her own pages: a dropped or clicked link never takes one
+        // somewhere else.
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("lucy-navigation")
+                .on_navigation(|_, url| own_page(url))
+                .build(),
+        )
         .manage(chat::Chat::default())
         .manage(bridge::Bridge::default())
         .manage(app_window::AppWindow::default())
@@ -233,5 +240,18 @@ fn tray_supported() -> bool {
     #[cfg(not(target_os = "linux"))]
     {
         true
+    }
+}
+
+/// One of Lucy's own pages: bundled (`tauri://`, or `tauri.localhost` on Windows), or the dev
+/// server while developing.
+fn own_page(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" => true,
+        "http" | "https" if url.host_str() == Some("tauri.localhost") => true,
+        "http" if cfg!(debug_assertions) => {
+            url.host_str() == Some("localhost") && url.port() == Some(1420)
+        }
+        _ => false,
     }
 }

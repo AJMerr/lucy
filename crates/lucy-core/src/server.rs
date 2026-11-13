@@ -31,7 +31,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{Config, McpServer, Profile, ProviderKind, ToolSettings};
+use crate::config::{Config, McpServer, Profile, ProviderKind, RemoteApprovals, ToolSettings};
 use crate::mcp::McpHost;
 use crate::persona::{Personas, PromptContext, build_system_prompt, detect_machine};
 use crate::provider::{build_provider, build_provider_with_key};
@@ -133,7 +133,13 @@ struct Core {
     events: broadcast::Sender<Event>,
     activity: Activity,
     /// Tool calls waiting for the user, by (session, call ID).
-    approvals: Mutex<HashMap<(String, String), oneshot::Sender<Decision>>>,
+    approvals: Mutex<HashMap<(String, String), PendingApproval>>,
+    /// Numbers each client connection, so a reply knows which one started it.
+    next_connection: AtomicU64,
+    /// Incognito chats in progress, which remote clients that didn't start them never see.
+    incognito: Mutex<HashSet<String>>,
+    /// Remote access: its listener, token and connections.
+    remote: remote::Remote,
     /// External MCP servers, shared by every chat.
     mcp: McpHost,
     /// Cancelled by `core.shutdown`.
@@ -150,6 +156,15 @@ struct Core {
     context_limits: Mutex<HashMap<String, Option<u32>>>,
 }
 
+/// A tool call waiting for an answer.
+struct PendingApproval {
+    answer: oneshot::Sender<Decision>,
+    /// The reply was driven from another machine.
+    remote: bool,
+    /// The connection whose message started the reply (none for a scheduled task).
+    started_by: Option<u64>,
+}
+
 #[derive(Default, Clone)]
 struct Overrides {
     /// Tools approved with "always" in this session.
@@ -159,6 +174,8 @@ struct Overrides {
 /// Per-connection state shared by its reader and event forwarder.
 #[derive(Default)]
 struct ConnState {
+    /// This connection's number (`Core::next_connection`).
+    id: u64,
     hello: bool,
     subscribed: bool,
     own_sessions: HashSet<String>,
@@ -222,6 +239,9 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         schedules_changed: Notify::new(),
         notifying: AtomicUsize::new(0),
         context_limits: Mutex::default(),
+        next_connection: AtomicU64::new(1),
+        incognito: Mutex::default(),
+        remote: remote::Remote::default(),
     });
 
     // Reminders and scheduled tasks.
@@ -245,7 +265,7 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         })
     };
 
-    let remote = remote::start(Arc::clone(&core)).await;
+    remote::start(&core).await;
 
     loop {
         let changed = core.activity.changed.notified();
@@ -260,9 +280,7 @@ pub async fn serve(options: CoreOptions) -> Result<(), CoreError> {
         }
     }
     acceptor.abort();
-    if let Some(remote) = remote {
-        remote.abort();
-    }
+    remote::stop(&core);
     // Dropping the listener (inside the aborted task) removes the socket file.
     let _ = acceptor.await;
     if core.shutdown.is_cancelled() {
@@ -356,7 +374,8 @@ async fn socket_client(core: Arc<Core>, stream: Stream) {
             }
         }
     });
-    serve_client(core, in_rx, out_tx, false).await;
+    let id = core.next_connection.fetch_add(1, Ordering::Relaxed);
+    serve_client(core, in_rx, out_tx, id, false).await;
     reader.abort();
     let _ = writer.await;
 }
@@ -367,9 +386,11 @@ async fn serve_client(
     core: Arc<Core>,
     mut incoming: mpsc::UnboundedReceiver<String>,
     out_tx: mpsc::UnboundedSender<String>,
+    id: u64,
     remote: bool,
 ) {
     let state = Arc::new(Mutex::new(ConnState {
+        id,
         remote,
         ..ConnState::default()
     }));
@@ -377,6 +398,7 @@ async fn serve_client(
         let mut events = core.events.subscribe();
         let state = Arc::clone(&state);
         let out_tx = out_tx.clone();
+        let core = Arc::clone(&core);
         tokio::spawn(async move {
             loop {
                 let event = match events.recv().await {
@@ -386,7 +408,12 @@ async fn serve_client(
                 };
                 let wanted = {
                     let state = state.lock().unwrap();
-                    state.subscribed || state.own_sessions.contains(event.session_id())
+                    let session = event.session_id();
+                    // Someone else's incognito chat stays out of sight of other machines.
+                    let hidden = state.remote
+                        && !state.incognito.contains(session)
+                        && core.incognito.lock().unwrap().contains(session);
+                    !hidden && (state.subscribed || state.own_sessions.contains(session))
                 };
                 if wanted && out_tx.send(line(&Notification::event(&event))).is_err() {
                     break;
@@ -467,43 +494,24 @@ async fn handle(
             folder,
         });
     }
-    if request.method == method::CORE_SHUTDOWN && state.lock().unwrap().remote {
-        return Err(RpcError::app(
-            "a remote client can't stop the core (it couldn't start it again); stop it on its \
-             own machine",
-        ));
-    }
-    if request.method == method::MCP_LOGIN && state.lock().unwrap().remote {
-        return Err(RpcError::app(
-            "signing in opens a browser on the machine that runs Lucy, so do it there",
-        ));
-    }
-    let changes_settings = matches!(
-        request.method.as_str(),
-        method::CONFIG_UPDATE
-            | method::KEYS_SET
-            | method::KEYS_REMOVE
-            | method::PERSONA_SET
-            | method::PERSONA_RESET
-            | method::MEMORY_SET
-    );
-    if changes_settings
-        && state.lock().unwrap().remote
-        && !core.config().is_ok_and(|config| config.remote.allow_config)
-    {
-        return Err(RpcError::app(
-            "remote clients can't change settings, keys or the persona; set `[remote] \
-             allow_config = true` on the machine that runs Lucy to allow it",
-        ));
+    let remote = state.lock().unwrap().remote;
+    if remote {
+        remote::authorize(core, state, &request)?;
     }
     // These two work before `hello`, so any client version can see and stop the core.
     if request.method == method::CORE_STATUS {
+        let mut busy = core.busy();
+        if remote {
+            let mine = state.lock().unwrap().incognito.clone();
+            let incognito = core.incognito.lock().unwrap();
+            busy.retain(|b| !incognito.contains(&b.session_id) || mine.contains(&b.session_id));
+        }
         return result(CoreStatus {
             protocol_version: PROTOCOL_VERSION,
             core_version: env!("CARGO_PKG_VERSION").into(),
             pid: std::process::id(),
             service: core.options.idle_timeout.is_none(),
-            busy: core.busy(),
+            busy,
         });
     }
     if request.method == method::CORE_SHUTDOWN {
@@ -550,8 +558,14 @@ async fn handle(
         }
         method::MODELS_LIST => {
             let p: ModelsListParams = params(request.params)?;
-            let (kind, base_url, key) =
-                provider_access(core, &p.provider, p.base_url, p.key_name, p.key)?;
+            let (kind, base_url, key) = provider_access(
+                core,
+                &core.config()?,
+                &p.provider,
+                p.base_url,
+                p.key_name,
+                p.key,
+            )?;
             result(
                 lucy_providers::models::list_models(kind, &base_url, key.as_deref())
                     .await
@@ -560,8 +574,14 @@ async fn handle(
         }
         method::MODELS_TRY => {
             let p: ModelsTryParams = params(request.params)?;
-            let (kind, base_url, key) =
-                provider_access(core, &p.provider, p.base_url, p.key_name, p.key)?;
+            let (kind, base_url, key) = provider_access(
+                core,
+                &core.config()?,
+                &p.provider,
+                p.base_url,
+                p.key_name,
+                p.key,
+            )?;
             let profile = crate::config::Profile {
                 provider: if p.provider == "anthropic" {
                     crate::config::ProviderKind::Anthropic
@@ -630,7 +650,9 @@ async fn handle(
             result(Value::Null)
         }
         method::SCHEDULES_LIST => result(schedules::list(core)?),
-        method::SCHEDULES_UPDATE => result(schedules::update(core, params(request.params)?)?),
+        method::SCHEDULES_UPDATE => {
+            result(schedules::update(core, params(request.params)?, remote)?)
+        }
         method::SCHEDULES_DELETE => {
             let p: ScheduleId = params(request.params)?;
             schedules::delete(core, &p.id)?;
@@ -643,11 +665,19 @@ async fn handle(
             result(session_dto(store.load(&id).map_err(app)?))
         }
         method::SESSIONS_CREATE => {
-            let id = core.store.lock().unwrap().create().map_err(app)?;
+            let store = core.store.lock().unwrap();
+            let id = store.create().map_err(app)?;
+            if remote {
+                store.mark_remote(&id).map_err(app)?;
+            }
             result(id.to_string())
         }
         method::SESSIONS_LIST => {
-            let sessions = core.store.lock().unwrap().list().map_err(app)?;
+            let mut sessions = core.store.lock().unwrap().list().map_err(app)?;
+            if remote {
+                let mine = state.lock().unwrap().incognito.clone();
+                sessions.retain(|s| !s.incognito || mine.contains(&s.id.to_string()));
+            }
             result(sessions.into_iter().map(summary_dto).collect::<Vec<_>>())
         }
         method::SESSIONS_RESOLVE => {
@@ -717,7 +747,13 @@ async fn handle(
         }
         method::SESSION_SET_LEVEL => {
             let p: SetLevelParams = params(request.params)?;
-            core.update_settings(&p.session_id, &core.config()?, |s| s.level = Some(p.level))
+            let config = core.config()?;
+            // From another machine, never above what remote chats may run at.
+            let level = match remote {
+                true => p.level.min(config.remote.max_level),
+                false => p.level,
+            };
+            core.update_settings(&p.session_id, &config, |s| s.level = Some(level))
         }
         method::SESSION_UNDO => {
             let p: UndoParams = params(request.params)?;
@@ -732,15 +768,20 @@ async fn handle(
         method::CONFIG_GET => {
             let path = &core.options.config_path;
             let config = Config::load(path).map_err(app)?;
+            let hide = remote && !config.as_ref().is_some_and(|c| c.remote.allow_config);
+            let mut config = config
+                .map(|config| serde_json::to_value(config).map_err(app))
+                .transpose()?;
+            if hide && let Some(config) = &mut config {
+                remote::redact(config);
+            }
             result(ConfigView {
                 path: path.display().to_string(),
                 managed: matches!(
                     crate::config::check_writable(path),
                     Err(crate::config::ConfigError::Managed { .. })
                 ),
-                config: config
-                    .map(|config| serde_json::to_value(config).map_err(app))
-                    .transpose()?,
+                config,
             })
         }
         method::CONFIG_UPDATE => {
@@ -749,10 +790,13 @@ async fn handle(
             let before = Config::load(path).map_err(app)?;
             crate::config::update_file(path, &p.patch).map_err(app)?;
             let after = Config::load(path).map_err(app)?;
-            // The listener for remote access is set up when the core starts.
-            let remote = |config: &Option<Config>| config.as_ref().map(|c| c.remote.clone());
+            // Remote access follows its settings straight away.
+            let settings = |config: &Option<Config>| config.as_ref().map(|c| c.remote.clone());
+            if settings(&before) != settings(&after) {
+                remote::restart(Arc::clone(core)).await;
+            }
             result(ConfigUpdateResult {
-                restart_needed: remote(&before) != remote(&after),
+                restart_needed: false,
             })
         }
         method::KEYS_STATUS => {
@@ -791,11 +835,13 @@ async fn handle(
                     "a key needs a name and a value",
                 ));
             }
+            crate::secrets::not_reserved(&p.name).map_err(RpcError::app)?;
             core.options.secrets.set(&p.name, &p.value).map_err(app)?;
             result(Value::Null)
         }
         method::KEYS_REMOVE => {
             let p: KeyParams = params(request.params)?;
+            crate::secrets::not_reserved(&p.name).map_err(RpcError::app)?;
             result(core.options.secrets.remove(&p.name).map_err(app)?)
         }
         method::PERSONA_GET => {
@@ -835,6 +881,11 @@ async fn handle(
         }
         method::SETUP_PRESETS => result(crate::setup::presets()),
         method::MEMORY_GET => result(core.memory.view()),
+        method::MEMORY_FORGET => {
+            let p: rpc::MemoryForgetParams = params(request.params)?;
+            core.memory.forget(&p.fact).map_err(RpcError::app)?;
+            result(core.memory.view())
+        }
         method::MEMORY_SET => {
             let p: MemorySetParams = params(request.params)?;
             core.memory.set_text(&p.text).map_err(RpcError::app)?;
@@ -883,22 +934,44 @@ async fn handle(
         method::TOOL_APPROVE => {
             let p: ApproveParams = params(request.params)?;
             let key = core.resolve_key(&p.session_id)?;
-            let waiting = core
-                .approvals
-                .lock()
-                .unwrap()
-                .remove(&(key, p.call_id.clone()));
-            match waiting {
-                Some(tx) => {
-                    let _ = tx.send(p.decision);
-                    result(Value::Null)
-                }
-                None => Err(RpcError::app(format!(
+            let connection = state.lock().unwrap().id;
+            let approvals_from_remote = core.config()?.remote.approvals == RemoteApprovals::Remote;
+            let mut approvals = core.approvals.lock().unwrap();
+            let slot = (key, p.call_id.clone());
+            let Some(waiting) = approvals.get(&slot) else {
+                return Err(RpcError::app(format!(
                     "no tool call `{}` is waiting for approval (already answered?)",
                     p.call_id
-                ))),
+                )));
+            };
+            if remote {
+                // Another machine answers only for replies it asked for, and (unless
+                // `[remote] approvals = "remote"`) can only decline.
+                if waiting.started_by != Some(connection) {
+                    return Err(RpcError::app(
+                        "from another machine you can only answer tool calls in replies you \
+                         started",
+                    ));
+                }
+                if p.decision != Decision::Deny && !approvals_from_remote {
+                    return Err(RpcError::app(
+                        "approve this on the machine that runs Lucy (from here you can only \
+                         decline); `[remote] approvals = \"remote\"` there allows approving from \
+                         other machines",
+                    ));
+                }
             }
+            // "Always" never outlives a reply driven from another machine.
+            let decision = match (waiting.remote, p.decision) {
+                (true, Decision::Always) => Decision::Once,
+                (_, decision) => decision,
+            };
+            if let Some(waiting) = approvals.remove(&slot) {
+                let _ = waiting.answer.send(decision);
+            }
+            result(Value::Null)
         }
+        method::REMOTE_ROTATE => result(json!({"token": remote::rotate(core).await?})),
         method::TOOLS_LIST => {
             let p: ToolsListParams = params(request.params)?;
             let config = core.config()?;
@@ -907,22 +980,33 @@ async fn handle(
                 Some(prefix) => {
                     let key = core.resolve_key(prefix)?;
                     let mut settings = core.settings(&key, &config)?;
-                    cap_remote_level(&mut settings, &config, state.lock().unwrap().remote);
-                    let allowed = core
-                        .overrides
-                        .lock()
-                        .unwrap()
-                        .get(&key)
-                        .map(|o| o.allowed_tools.clone())
-                        .unwrap_or_default();
+                    cap_remote_level(&mut settings, &config, remote);
+                    let allowed = match remote {
+                        true => HashSet::new(),
+                        false => core
+                            .overrides
+                            .lock()
+                            .unwrap()
+                            .get(&key)
+                            .map(|o| o.allowed_tools.clone())
+                            .unwrap_or_default(),
+                    };
                     let access = Access {
                         mode: settings.mode,
                         level: settings.level,
                         workspace: config.agent.workspace.as_deref().map(expand_home),
+                        remote,
+                        lucy_files: core.lucy_files(),
                     };
                     (allowed, access)
                 }
-                None => (HashSet::new(), Access::default()),
+                None => (
+                    HashSet::new(),
+                    Access {
+                        remote,
+                        ..Access::default()
+                    },
+                ),
             };
             let cwd = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
             let (external, failed) = core
@@ -987,6 +1071,7 @@ impl Core {
         if let Some(token) = self.turns.lock().unwrap().get(key) {
             token.cancel();
         }
+        self.incognito.lock().unwrap().remove(key);
         let Ok(id) = key.parse::<SessionId>() else {
             return;
         };
@@ -1007,6 +1092,34 @@ impl Core {
             }))),
             Err(err) => Some(Err(err)),
         }
+    }
+
+    /// Lucy's own settings and data, which her tools never change unasked: the config, the
+    /// remote access settings, personas, chats, memory, pictures, voice models and sprite packs.
+    /// Named one by one, so a project that happens to sit beside them isn't caught too.
+    fn lucy_files(&self) -> Vec<PathBuf> {
+        let options = &self.options;
+        let folder = |dir: PathBuf| PathBuf::from(format!("{}/", dir.display()));
+        let mut files = vec![options.config_path.clone()];
+        if let Some(config_dir) = options.config_path.parent() {
+            files.push(config_dir.join("remote.toml"));
+        }
+        files.extend(options.personas_dir.clone().map(folder));
+        if let Some(data) = options.db_path.parent() {
+            for name in [
+                "lucy.sqlite",
+                "lucy.sqlite-wal",
+                "lucy.sqlite-shm",
+                "memory.md",
+            ] {
+                files.push(data.join(name));
+            }
+            files.push(options.db_path.clone());
+            for dir in ["images", "voice", "packs"] {
+                files.push(folder(data.join(dir)));
+            }
+        }
+        files
     }
 
     /// Where your own version of persona `name` lives (whether or not it exists yet).
@@ -1110,6 +1223,14 @@ impl Core {
         }
         let mut problems = Vec::new();
         for backup in &backups {
+            // A link put where the file was would send the restore somewhere else.
+            if std::fs::symlink_metadata(&backup.path).is_ok_and(|m| m.file_type().is_symlink()) {
+                problems.push(format!(
+                    "{}: it's now a link, so it was left alone",
+                    backup.path.display()
+                ));
+                continue;
+            }
             let restored = match &backup.before {
                 Some(content) => std::fs::write(&backup.path, content),
                 None => match std::fs::remove_file(&backup.path) {
@@ -1153,10 +1274,23 @@ fn chat_send(
         (id, incognito)
     };
     let key = session_id.to_string();
-    if incognito && p.session_id.is_none() {
-        state.lock().unwrap().incognito.insert(key.clone());
+    let (remote, connection) = {
+        let state = state.lock().unwrap();
+        (state.remote, state.id)
+    };
+    if p.session_id.is_none() {
+        if incognito {
+            state.lock().unwrap().incognito.insert(key.clone());
+            core.incognito.lock().unwrap().insert(key.clone());
+        }
+        if remote {
+            core.store
+                .lock()
+                .unwrap()
+                .mark_remote(&session_id)
+                .map_err(app)?;
+        }
     }
-    let remote = state.lock().unwrap().remote;
     // A remote client's folder is on another machine; its chats work in the core's.
     let cwd = match remote {
         true => remote_folder(&config),
@@ -1170,6 +1304,7 @@ fn chat_send(
             images: p.images,
             cwd,
             remote,
+            started_by: Some(connection),
             incognito,
             task: None,
         },
@@ -1190,6 +1325,8 @@ struct TurnRequest {
     cwd: PathBuf,
     /// From another machine: the agent level is capped.
     remote: bool,
+    /// The connection that sent the message (none for a scheduled task).
+    started_by: Option<u64>,
     incognito: bool,
     /// A scheduled task, running at its own level and model with nobody there to ask.
     task: Option<TaskRun>,
@@ -1211,6 +1348,7 @@ fn start_turn(core: &Arc<Core>, request: TurnRequest) -> Result<u64, RpcError> {
         images,
         cwd,
         remote,
+        started_by,
         incognito,
         task,
     } = request;
@@ -1394,11 +1532,15 @@ fn start_turn(core: &Arc<Core>, request: TurnRequest) -> Result<u64, RpcError> {
         origin,
         reply: new_reply_id(),
         task,
+        remote,
+        started_by,
     };
     let access = Access {
         mode: settings.mode,
         level: settings.level,
         workspace: config.agent.workspace.as_deref().map(expand_home),
+        remote,
+        lucy_files: core.lucy_files(),
     };
     tokio::spawn(turn.run(Plan {
         provider,
@@ -1413,6 +1555,8 @@ fn start_turn(core: &Arc<Core>, request: TurnRequest) -> Result<u64, RpcError> {
             schedules: Some(Arc::new(schedules::Book {
                 core: Arc::clone(core),
                 profile: settings.profile.clone(),
+                remote,
+                max_level: config.remote.max_level,
             }) as Arc<dyn crate::tools::ScheduleBook>),
         }),
         budget,
@@ -1451,13 +1595,21 @@ fn images_generate(
                  ([images] generator: an image model profile, or \"comfyui\")",
             )
         })?;
+    let (remote, connection) = {
+        let state = state.lock().unwrap();
+        (state.remote, state.id)
+    };
     let session_id = {
         let store = core.store.lock().unwrap();
-        match &p.session_id {
+        let id = match &p.session_id {
             Some(prefix) => store.resolve(prefix),
             None => store.create(),
         }
-        .map_err(app)?
+        .map_err(app)?;
+        if remote && p.session_id.is_none() {
+            store.mark_remote(&id).map_err(app)?;
+        }
+        id
     };
     let key = session_id.to_string();
     let settings = core.settings(&key, &config)?;
@@ -1507,6 +1659,8 @@ fn images_generate(
         origin,
         reply: new_reply_id(),
         task: None,
+        remote,
+        started_by: Some(connection),
     };
     tokio::spawn(turn.image(generator, prompt, cancel));
     result(ChatSendResult {
@@ -1596,6 +1750,11 @@ struct Turn {
     reply: String,
     /// A scheduled task: nobody is there to approve calls, and its result is announced.
     task: Option<TaskRun>,
+    /// Driven from another machine: "always" approvals don't apply, and approving may be
+    /// left to the core's machine.
+    remote: bool,
+    /// The connection whose message started it (none for a scheduled task).
+    started_by: Option<u64>,
 }
 
 struct Plan {
@@ -2059,14 +2218,19 @@ impl Turn {
 
     /// Check permissions (asking the user if needed), then run the call.
     async fn run_call(&self, toolbox: &ToolBox, call: &ToolCall) -> ToolOutput {
-        let allowed = self
-            .core
-            .overrides
-            .lock()
-            .unwrap()
-            .get(&self.key)
-            .map(|o| o.allowed_tools.clone())
-            .unwrap_or_default();
+        // "Always" approvals given at the core's machine don't carry over to a reply driven
+        // from another one.
+        let allowed = match self.remote {
+            true => HashSet::new(),
+            false => self
+                .core
+                .overrides
+                .lock()
+                .unwrap()
+                .get(&self.key)
+                .map(|o| o.allowed_tools.clone())
+                .unwrap_or_default(),
+        };
         let go_ahead = match toolbox.verdict(call, &allowed) {
             Verdict::Run => Ok(()),
             Verdict::Refuse(reason) => Err(reason),
@@ -2076,27 +2240,38 @@ impl Turn {
                  they were away. Carry on without it, and say what you couldn't do; they can \
                  raise the task's level to allow it."
             )),
-            Verdict::Ask { reason, preview } => match self.approval(call, reason, preview).await {
-                Some(Decision::Once) => Ok(()),
-                Some(Decision::Always) => {
-                    self.core
-                        .overrides
-                        .lock()
-                        .unwrap()
-                        .entry(self.key.clone())
-                        .or_default()
-                        .allowed_tools
-                        .insert(call.name.clone());
-                    Ok(())
+            Verdict::Ask { reason, preview } => {
+                let decision = self
+                    .approval(call, reason.clone(), preview)
+                    .await
+                    .map(|decision| self.still_fine(toolbox, call, &allowed, &reason, decision));
+                match decision {
+                    Some(Err(changed)) => Err(changed),
+                    Some(Ok(Decision::Once)) => Ok(()),
+                    Some(Ok(Decision::Always)) => {
+                        if !self.remote {
+                            self.core
+                                .overrides
+                                .lock()
+                                .unwrap()
+                                .entry(self.key.clone())
+                                .or_default()
+                                .allowed_tools
+                                .insert(call.name.clone());
+                        }
+                        Ok(())
+                    }
+                    Some(Ok(Decision::Deny)) => Err(
+                        "The user declined this tool call. Don't try it again unless they ask."
+                            .into(),
+                    ),
+                    None => Err(format!(
+                        "Nobody answered the approval prompt within {} minutes, so this didn't \
+                         run.",
+                        APPROVAL_TIMEOUT.as_secs() / 60
+                    )),
                 }
-                Some(Decision::Deny) => Err(
-                    "The user declined this tool call. Don't try it again unless they ask.".into(),
-                ),
-                None => Err(format!(
-                    "Nobody answered the approval prompt within {} minutes, so this didn't run.",
-                    APPROVAL_TIMEOUT.as_secs() / 60
-                )),
-            },
+            }
         };
         match go_ahead {
             Ok(()) => {
@@ -2109,6 +2284,30 @@ impl Turn {
                 toolbox.call(call).await
             }
             Err(reason) => self.announce(call, reason),
+        }
+    }
+
+    /// An approved call, checked again: the approval may have taken minutes, and what the call
+    /// touches (a link, a file) may have changed meanwhile. Anything that would now be refused,
+    /// or ask for a different reason, doesn't run.
+    fn still_fine(
+        &self,
+        toolbox: &ToolBox,
+        call: &ToolCall,
+        allowed: &HashSet<String>,
+        asked_because: &str,
+        decision: Decision,
+    ) -> Result<Decision, String> {
+        if decision == Decision::Deny {
+            return Ok(decision);
+        }
+        match toolbox.verdict(call, allowed) {
+            Verdict::Refuse(reason) => Err(reason),
+            Verdict::Ask { reason, .. } if reason != asked_because => Err(format!(
+                "Not run: while it waited for approval, what it would touch changed ({reason}). \
+                 Try again if it's still wanted."
+            )),
+            _ => Ok(decision),
         }
     }
 
@@ -2141,17 +2340,26 @@ impl Turn {
         preview: Option<String>,
     ) -> Option<Decision> {
         let (tx, rx) = oneshot::channel();
-        self.core
-            .approvals
-            .lock()
-            .unwrap()
-            .insert((self.key.clone(), call.id.clone()), tx);
+        self.core.approvals.lock().unwrap().insert(
+            (self.key.clone(), call.id.clone()),
+            PendingApproval {
+                answer: tx,
+                remote: self.remote,
+                started_by: self.started_by,
+            },
+        );
+        let local_only = self.remote
+            && self
+                .core
+                .config()
+                .map_or(true, |c| c.remote.approvals == RemoteApprovals::Local);
         self.emit(Event::ToolApproval {
             session_id: self.key.clone(),
             turn_id: self.id,
             call: call.clone(),
             reason,
             preview,
+            local_only,
         });
         let decision = tokio::time::timeout(APPROVAL_TIMEOUT, rx).await;
         self.core
@@ -2428,9 +2636,12 @@ async fn compress_now(core: &Arc<Core>, key: &str) -> Result<String, RpcError> {
     Ok(summary)
 }
 
-/// Where to reach a provider, for `models.*`: its kind, address and key.
+/// Where to reach a provider, for `models.*`: its kind, address and key. A stored key only
+/// goes where it's already used: a profile that names it, or the preset it belongs to.
+/// Elsewhere, the key has to be given with the call.
 fn provider_access(
     core: &Core,
+    config: &Config,
     provider: &str,
     base_url: Option<String>,
     key_name: Option<String>,
@@ -2449,13 +2660,37 @@ fn provider_access(
     }
     let key = match (key.filter(|k| !k.is_empty()), key_name) {
         (Some(key), _) => Some(key),
-        (None, Some(name)) => core
-            .options
-            .secrets
-            .resolve(&name)
-            .map_err(app)?
-            .map(|resolved| resolved.value),
+        (None, Some(name)) => {
+            crate::secrets::not_reserved(&name).map_err(RpcError::app)?;
+            if !key_goes_to(config, &name, &base_url) {
+                return Err(RpcError::app(format!(
+                    "the stored key `{name}` is only sent to the addresses that already use it; \
+                     enter the key to try it with {base_url}"
+                )));
+            }
+            core.options
+                .secrets
+                .resolve(&name)
+                .map_err(app)?
+                .map(|resolved| resolved.value)
+        }
         (None, None) => None,
     };
     Ok((kind, base_url, key))
+}
+
+/// Whether the key `name` is meant for `base_url` (empty for Anthropic's own API): a
+/// profile pairs them, or a provider preset does.
+fn key_goes_to(config: &Config, name: &str, base_url: &str) -> bool {
+    let same = |url: &str| {
+        url.trim_end_matches('/')
+            .eq_ignore_ascii_case(base_url.trim_end_matches('/'))
+    };
+    let profiles = config.profiles.values().any(|profile| {
+        profile.key_name.as_deref() == Some(name) && same(profile.base_url.as_deref().unwrap_or(""))
+    });
+    let presets = crate::setup::presets().iter().any(|preset| {
+        preset.key_name.as_deref() == Some(name) && same(preset.base_url.as_deref().unwrap_or(""))
+    });
+    profiles || presets
 }

@@ -278,9 +278,10 @@
     ondragover={(event) => event.preventDefault()}
     ondrop={(event) => {
       // A picture dropped anywhere on the chat goes with your next message.
+      // Anything else (a link, text) is ignored rather than opened in this window.
+      event.preventDefault();
       const files = [...(event.dataTransfer?.files ?? [])];
       if (files.length > 0) {
-        event.preventDefault();
         void composer?.add(files);
       }
     }}
@@ -350,6 +351,9 @@
           <Entry
             {entry}
             onDecide={(callId, decision) => chats.approve(callId, decision)}
+            onForget={async (fact) => {
+              await core.call("memory.forget", { fact });
+            }}
             picture={(id) => chats.picture(id)}
           />
         {/each}

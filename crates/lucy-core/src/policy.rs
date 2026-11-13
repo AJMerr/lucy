@@ -40,6 +40,8 @@ pub struct Policy<'a> {
     /// `[agent] workspace`; the working folder when unset.
     pub workspace: Option<&'a Path>,
     pub private: &'a PrivatePaths,
+    /// Files that run code at startup, and Lucy's own settings: changing them always asks.
+    pub protected: &'a PrivatePaths,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +52,8 @@ pub enum Decision {
 }
 
 /// Why `call` asks even when config rules or an "always" approval would let it run: it
-/// touches a private path, or (below level 3) changes a file outside the folder it may write in.
+/// touches a private path, changes a protected file, or (below level 3) changes a file outside
+/// the folder it may write in.
 pub fn always_asks(call: &CallFacts, policy: &Policy) -> Option<String> {
     if call.remote {
         return None;
@@ -58,27 +61,58 @@ pub fn always_asks(call: &CallFacts, policy: &Policy) -> Option<String> {
     if let Some(path) = call.paths.iter().find(|p| is_private(p, policy.private)) {
         return Some(format!("touches a private path ({})", path.display()));
     }
+    if let Some(path) = protected_change(call, policy) {
+        return Some(protected_reason(path));
+    }
     let unrestricted = policy.mode == Mode::Agent && policy.level == AgentLevel::Unrestricted;
     if call.kind == CallKind::Write && !unrestricted {
-        let (area, name) = write_area(policy);
-        if let Some(path) = call.paths.iter().find(|p| !within(p, area)) {
-            return Some(format!(
-                "changes a file outside {name} ({})",
-                path.display()
-            ));
+        match write_area(policy) {
+            Some((area, name)) => {
+                if let Some(path) = call.paths.iter().find(|p| !within(p, area)) {
+                    return Some(format!(
+                        "changes a file outside {name} ({})",
+                        path.display()
+                    ));
+                }
+            }
+            None => return Some(HOME_WRITE.into()),
         }
     }
     None
 }
 
-/// Where an agent's file changes may run without asking, and what to call it.
-fn write_area<'a>(policy: &Policy<'a>) -> (&'a Path, &'static str) {
-    match (policy.mode, policy.level) {
+/// Why a change in a folder that is (or holds) home asks.
+const HOME_WRITE: &str = "changes a file in your home folder (set [agent] workspace to a folder \
+                          she may change freely)";
+
+/// A file `call` would change that runs code at startup or holds Lucy's settings: such a
+/// change asks at every level (and from another machine, is refused).
+pub fn protected_change<'c>(call: &'c CallFacts, policy: &Policy) -> Option<&'c PathBuf> {
+    if call.remote || call.kind != CallKind::Write {
+        return None;
+    }
+    call.paths.iter().find(|p| is_private(p, policy.protected))
+}
+
+fn protected_reason(path: &Path) -> String {
+    format!(
+        "changes a file that runs code at startup or holds Lucy's settings ({})",
+        path.display()
+    )
+}
+
+/// Where an agent's file changes may run without asking, and what to call it. Never home (or
+/// a folder holding it): chats with no folder of their own work there, and home holds what
+/// runs at login.
+fn write_area<'a>(policy: &Policy<'a>) -> Option<(&'a Path, &'static str)> {
+    let (area, name) = match (policy.mode, policy.level) {
         (Mode::Agent, AgentLevel::Workspace) => {
             (policy.workspace.unwrap_or(policy.folder), "the workspace")
         }
         _ => (policy.folder, "the working folder"),
-    }
+    };
+    let holds_home = policy.home.is_some_and(|home| within(home, area));
+    (!holds_home).then_some((area, name))
 }
 
 pub fn decide(call: &CallFacts, policy: &Policy) -> Decision {
@@ -88,6 +122,10 @@ pub fn decide(call: &CallFacts, policy: &Policy) -> Decision {
         && let Some(path) = call.paths.iter().find(|p| is_private(p, policy.private))
     {
         return ask(format!("touches a private path ({})", path.display()));
+    }
+    // So do files that run at startup or hold Lucy's settings.
+    if let Some(path) = protected_change(call, policy) {
+        return ask(protected_reason(path));
     }
     let agent = policy.mode == Mode::Agent;
     if agent && policy.level == AgentLevel::Supervised {
@@ -115,20 +153,22 @@ pub fn decide(call: &CallFacts, policy: &Policy) -> Decision {
         },
         CallKind::Write if !agent => ask("changes a file".into()),
         CallKind::Write if call.paths.is_empty() => ask("changes files it doesn't name".into()),
-        CallKind::Write => {
-            let (area, name) = write_area(policy);
-            match call.paths.iter().find(|p| !within(p, area)) {
+        CallKind::Write => match write_area(policy) {
+            None => ask(HOME_WRITE.into()),
+            Some((area, name)) => match call.paths.iter().find(|p| !within(p, area)) {
                 None => Decision::Run,
                 Some(path) => ask(format!(
                     "changes a file outside {name} ({})",
                     path.display()
                 )),
-            }
-        }
+            },
+        },
+        // Commands run freely only in a workspace that isn't home (or a folder holding it).
         CallKind::Command
             if agent
                 && policy.level == AgentLevel::Workspace
-                && within(policy.folder, workspace) =>
+                && within(policy.folder, workspace)
+                && !policy.home.is_some_and(|home| within(home, workspace)) =>
         {
             Decision::Run
         }

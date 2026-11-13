@@ -70,6 +70,8 @@ pub struct ToolBox {
     cwd: PathBuf,
     home: Option<PathBuf>,
     private: PrivatePaths,
+    /// Files that run code at startup, and Lucy's own settings: changing them always asks.
+    protected: PrivatePaths,
     settings: ToolSettings,
     access: Access,
     /// `generate_image`, when a generator is set: ready, or why it can't make pictures.
@@ -87,6 +89,12 @@ pub struct Access {
     pub level: AgentLevel,
     /// `[agent] workspace`, home-expanded.
     pub workspace: Option<PathBuf>,
+    /// The chat is driven from another machine: memory changes ask, and protected paths
+    /// are refused rather than asked about.
+    pub remote: bool,
+    /// Lucy's own settings and data (files, and folders ending in `/`): changing them always
+    /// asks.
+    pub lucy_files: Vec<PathBuf>,
 }
 
 impl ToolBox {
@@ -97,8 +105,14 @@ impl ToolBox {
         external: Vec<Arc<ExternalServer>>,
     ) -> Result<Self, String> {
         let home = dirs::home_dir();
-        let private = PrivatePaths::new(&settings.private_paths, home.as_deref())
+        let patterns: Vec<&String> = settings
+            .private_paths
+            .iter()
+            .chain(&settings.extra_private_paths)
+            .collect();
+        let private = PrivatePaths::new(&patterns, home.as_deref())
             .map_err(|err| format!("bad pattern in tools.private_paths: {err}"))?;
+        let protected = PrivatePaths::protected(home.as_deref(), &[]);
         let mut tools = Vec::new();
         let builtin = if settings.builtin {
             let client = builtin::connect(BuiltinOptions {
@@ -137,6 +151,7 @@ impl ToolBox {
             cwd,
             home,
             private,
+            protected,
             settings: settings.clone(),
             access: Access::default(),
             generator: None,
@@ -147,6 +162,7 @@ impl ToolBox {
 
     /// Apply a chat's mode and level (Assist by default).
     pub fn with_access(mut self, access: Access) -> Self {
+        self.protected = PrivatePaths::protected(self.home.as_deref(), &access.lucy_files);
         self.access = access;
         self
     }
@@ -298,7 +314,9 @@ impl ToolBox {
             preview: (!fact.is_empty()).then(|| fact.to_owned()),
         };
         if call.name == MEMORY_REMEMBER {
-            if let Some(kind) = memory::looks_secret(fact) {
+            let heading = call.arguments["heading"].as_str().unwrap_or_default();
+            if let Some(kind) = memory::looks_secret(fact).or_else(|| memory::looks_secret(heading))
+            {
                 return Verdict::Refuse(memory::refusal(kind));
             }
             if call.arguments["sensitive"].as_bool() == Some(true)
@@ -306,6 +324,10 @@ impl ToolBox {
             {
                 return ask("remembers something sensitive about you".into());
             }
+        }
+        // Memory steers every later chat, so another machine changes it only with approval.
+        if self.access.remote && self.memory_rule(&call.name) != Some(ToolRule::Deny) {
+            return ask("changes Lucy's memory from another machine".into());
         }
         match self.memory_rule(&call.name) {
             Some(ToolRule::Deny) => {
@@ -552,10 +574,33 @@ impl ToolBox {
                 self.paths(tool, &call.arguments).collect()
             },
         };
-        // Private paths, and changes outside the folder, ask even for a tool set to "auto" or
-        // approved "always".
+        // From another machine, files that run at startup or hold Lucy's settings are off
+        // limits.
+        if self.access.remote
+            && let Some(path) = policy::protected_change(&facts, &self.policy())
+        {
+            return Verdict::Refuse(format!(
+                "{} runs code at startup or holds Lucy's settings, so it can't be changed from \
+                 another machine.",
+                path.display()
+            ));
+        }
+        // Private and protected paths, and changes outside the folder, ask even for a tool set
+        // to "auto" or approved "always".
         if let Some(reason) = policy::always_asks(&facts, &self.policy()) {
             return ask(reason);
+        }
+        // Services on this machine or the local network (a router, a metadata endpoint, other
+        // apps' APIs) are fetched only with a yes each time.
+        if tool.external.is_none()
+            && call.name == "fetch_url"
+            && let Some(url) = call.arguments["url"]
+                .as_str()
+                .filter(|url| builtin::names_private_host(url))
+        {
+            return ask(format!(
+                "fetches from this machine or a private network ({url})"
+            ));
         }
         if rule == Some(ToolRule::Auto) || allowed.contains(&call.name) {
             return Verdict::Run;
@@ -584,6 +629,7 @@ impl ToolBox {
             home: self.home.as_deref(),
             workspace: self.access.workspace.as_deref(),
             private: &self.private,
+            protected: &self.protected,
         }
     }
 
@@ -603,8 +649,10 @@ impl ToolBox {
         match (read_only, hints.open_world_hint) {
             // A remote service's own data: reading it is what you connected it for.
             (true, _) if is_remote(tool) => CallKind::Read,
-            (true, Some(true)) => CallKind::Online,
-            (true, _) => CallKind::Read,
+            // Only a tool that says it stays on this machine is a local read: the MCP spec
+            // takes an unlabelled tool as reaching the outside world.
+            (true, Some(false)) => CallKind::Read,
+            (true, _) => CallKind::Online,
             // Unlabelled tools are treated as the MCP spec says: open world, possibly
             // destructive.
             (false, Some(false)) => CallKind::Write,
@@ -700,6 +748,23 @@ impl ToolBox {
                     _ => {}
                 }
             }
+            // Another server's tool may take a path under any name (`uri`, `source`, …): any
+            // value that looks like one counts too.
+            if tool.external.is_some() {
+                for value in args.values() {
+                    let texts: Vec<&str> = match value {
+                        Value::String(text) => vec![text],
+                        Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
+                        _ => vec![],
+                    };
+                    paths.extend(
+                        texts
+                            .into_iter()
+                            .filter_map(looks_like_path)
+                            .map(|p| resolve(&p, &base)),
+                    );
+                }
+            }
             let takes_path = tool
                 .def
                 .input_schema
@@ -712,6 +777,24 @@ impl ToolBox {
         }
         paths.into_iter()
     }
+}
+
+/// An argument that names a file on this machine: absolute, from home, or a `file:` URL.
+fn looks_like_path(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.contains('\n') {
+        return None;
+    }
+    if let Some(rest) = text.strip_prefix("file://") {
+        return Some(rest.to_owned());
+    }
+    let bytes = text.as_bytes();
+    let drive = bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    (text.starts_with('/') || text.starts_with("~/") || text.starts_with("\\\\") || drive)
+        .then(|| text.to_owned())
 }
 
 /// Reached over the network rather than started on this machine.

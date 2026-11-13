@@ -150,8 +150,9 @@ async fn config_update_writes_a_valid_change_and_refuses_a_broken_one() {
     );
 }
 
+/// Remote access follows its settings straight away, so nothing waits for a restart.
 #[tokio::test]
-async fn changing_remote_access_says_the_core_needs_a_restart() {
+async fn changing_remote_access_needs_no_restart() {
     let harness = Harness::start().await;
     let client = harness.client().await;
 
@@ -163,7 +164,7 @@ async fn changing_remote_access_says_the_core_needs_a_restart() {
         .await
         .unwrap();
 
-    assert!(done.restart_needed);
+    assert!(!done.restart_needed);
 }
 
 #[tokio::test]

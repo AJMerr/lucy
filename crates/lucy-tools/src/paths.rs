@@ -18,6 +18,54 @@ pub const DEFAULT_PRIVATE_PATHS: &[&str] = &[
     "~/.password-store/**",
     "~/.local/share/keyrings/**",
     "~/.pki/**",
+    // Developer and package-manager credentials.
+    "~/.config/gh/**",
+    "~/.config/hub",
+    "~/.npmrc",
+    "~/.yarnrc",
+    "~/.yarnrc.yml",
+    "~/.pypirc",
+    "~/.cargo/credentials",
+    "~/.cargo/credentials.toml",
+    "~/.gem/credentials",
+    "~/.m2/settings.xml",
+    "~/.gradle/gradle.properties",
+    "~/.config/rclone/**",
+    "~/.s3cfg",
+    "~/.boto",
+    "~/.terraform.d/**",
+    "~/.vault-token",
+    "~/.pgpass",
+    "~/.my.cnf",
+    "~/.config/sops/**",
+    "~/.config/op/**",
+    "~/.local/share/kwalletd/**",
+    "~/.config/Bitwarden*/**",
+    // AI tools' own credentials and history.
+    "~/.claude/**",
+    "~/.claude.json",
+    "~/.codex/**",
+    "~/.config/github-copilot/**",
+    // Browser, mail and messenger profiles.
+    "~/.mozilla/**",
+    "~/.config/google-chrome/**",
+    "~/.config/chromium/**",
+    "~/.config/BraveSoftware/**",
+    "~/.thunderbird/**",
+    "~/.config/Signal/**",
+    "~/Library/Application Support/Google/Chrome/**",
+    "~/Library/Application Support/Firefox/**",
+    "~/Library/Keychains/**",
+    // Shell histories.
+    "~/.bash_history",
+    "~/.zsh_history",
+    "~/.local/share/fish/fish_history",
+    "~/.python_history",
+    "~/.node_repl_history",
+    "~/.psql_history",
+    // Lucy's own chats, memory and remote access settings.
+    "~/.local/share/lucy/**",
+    "~/.config/lucy/remote.toml",
     "**/.env",
     "**/.env.*",
     "**/*.pem",
@@ -25,6 +73,52 @@ pub const DEFAULT_PRIVATE_PATHS: &[&str] = &[
     "**/id_rsa*",
     "**/id_ecdsa*",
     "**/id_ed25519*",
+    "**/*.p12",
+    "**/*.pfx",
+    "**/*.ppk",
+    "**/*.kdbx",
+    "**/*.gpg",
+    "**/*.asc",
+    "**/*.tfstate",
+    "**/*.tfstate.backup",
+    "**/credentials",
+    "**/credentials.json",
+    "**/*service-account*.json",
+    "**/kubeconfig*",
+];
+
+/// Files that run code or change how Lucy behaves: shell startup files, autostart and
+/// user services, `~/.local/bin`, git hooks, direnv and editor tasks. Changing one always
+/// asks, at every level (Lucy's own config and data folders are added to these).
+pub const DEFAULT_PROTECTED_PATHS: &[&str] = &[
+    "~/.bashrc",
+    "~/.bash_profile",
+    "~/.bash_login",
+    "~/.bash_logout",
+    "~/.profile",
+    "~/.zshrc",
+    "~/.zshenv",
+    "~/.zprofile",
+    "~/.zlogin",
+    "~/.config/fish/**",
+    "~/.config/nushell/**",
+    "~/.config/environment.d/**",
+    "~/.config/autostart/**",
+    "~/.config/systemd/**",
+    "~/.local/bin/**",
+    "~/.local/share/applications/**",
+    "~/.xprofile",
+    "~/.xinitrc",
+    "~/Library/LaunchAgents/**",
+    "~/.ssh/**",
+    "~/.gitconfig",
+    "~/.config/git/**",
+    "**/.git/hooks/**",
+    "**/.git/config",
+    "**/.envrc",
+    "**/.vscode/tasks.json",
+    "**/.vscode/settings.json",
+    "**/.idea/workspace.xml",
 ];
 
 /// Paths matching any of a set of glob patterns.
@@ -37,6 +131,26 @@ impl PrivatePaths {
     /// The built-in list ([`DEFAULT_PRIVATE_PATHS`]).
     pub fn defaults(home: Option<&Path>) -> Self {
         Self::new(DEFAULT_PRIVATE_PATHS, home).expect("built-in patterns are valid")
+    }
+
+    /// The built-in protected list ([`DEFAULT_PROTECTED_PATHS`]) plus `files`: a path ending in
+    /// `/` covers everything in that folder.
+    pub fn protected(home: Option<&Path>, files: &[PathBuf]) -> Self {
+        let mut patterns: Vec<String> = DEFAULT_PROTECTED_PATHS
+            .iter()
+            .map(|p| (*p).to_owned())
+            .collect();
+        for file in files {
+            let text = slashes(file);
+            let escaped = globset::escape(text.trim_end_matches('/'));
+            patterns.push(match text.ends_with('/') {
+                true => format!("{escaped}/**"),
+                false => escaped,
+            });
+        }
+        Self::new(&patterns, home).unwrap_or_else(|_| {
+            Self::new(DEFAULT_PROTECTED_PATHS, home).expect("built-in patterns are valid")
+        })
     }
 
     /// Patterns starting with `~/` are skipped when there is no home folder.

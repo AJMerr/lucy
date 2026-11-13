@@ -246,7 +246,11 @@ pub struct ToolSettings {
     /// Tool rounds allowed per message in Assist mode before Lucy has to answer.
     pub max_rounds: u32,
     /// Glob patterns Lucy never reads without asking. `~/` means home; `**/` matches anywhere.
+    /// Setting this replaces the built-in list; `extra_private_paths` adds to it instead.
     pub private_paths: Vec<String>,
+    /// More private paths, on top of `private_paths`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_private_paths: Vec<String>,
     /// Per-tool overrides of the usual rule, e.g. `run_command = "deny"`.
     pub rules: BTreeMap<String, ToolRule>,
 }
@@ -260,6 +264,7 @@ impl Default for ToolSettings {
                 .iter()
                 .map(|p| p.to_string())
                 .collect(),
+            extra_private_paths: Vec::new(),
             rules: BTreeMap::new(),
         }
     }
@@ -310,14 +315,35 @@ impl Default for AgentSettings {
 pub struct RemoteSettings {
     pub enabled: bool,
     pub bind: SocketAddr,
-    /// Needed to listen beyond loopback (LAN, Tailscale). There's no TLS, so only on networks
-    /// you trust, or behind something that adds it.
+    /// Needed to listen beyond loopback (LAN, Tailscale).
     pub allow_network: bool,
+    /// Encrypt with the core's own certificate, which clients pin (`lucy remote token` shows
+    /// its fingerprint). Off only behind something that adds TLS itself, like a reverse proxy.
+    pub tls: bool,
+    /// Web pages (by origin, e.g. `https://lucy.example.com`) allowed to connect from a browser.
+    /// Lucy's own clients send no origin and are always allowed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed_origins: Vec<String>,
     /// Let remote clients change settings, API keys and the persona (reading is always
     /// allowed). Off, a leaked token can chat but not rewrite Lucy.
     pub allow_config: bool,
     /// The highest agent level a chat driven from a remote client runs at.
     pub max_level: AgentLevel,
+    /// Who may approve tool calls in chats driven from a remote client: only the machine
+    /// running Lucy (`local`), or the remote client too (`remote`; then the token is as
+    /// good as sitting at that machine).
+    pub approvals: RemoteApprovals,
+}
+
+/// Who answers approval prompts in chats driven from another machine.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteApprovals {
+    /// Only clients on the machine running Lucy; a remote client can only decline.
+    #[default]
+    Local,
+    /// The remote client that started the reply may approve too.
+    Remote,
 }
 
 impl Default for RemoteSettings {
@@ -326,8 +352,11 @@ impl Default for RemoteSettings {
             enabled: false,
             bind: SocketAddr::from(([127, 0, 0, 1], 7077)),
             allow_network: false,
+            tls: true,
+            allowed_origins: Vec::new(),
             allow_config: false,
             max_level: AgentLevel::Guarded,
+            approvals: RemoteApprovals::Local,
         }
     }
 }

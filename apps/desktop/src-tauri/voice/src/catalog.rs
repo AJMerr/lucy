@@ -48,7 +48,7 @@ pub fn runtime() -> Option<(Pack, &'static str)> {
             url,
             installs: "runtime-1.12.9",
             size,
-            sha256: Some(sha256),
+            sha256,
         },
         lib,
     ))
@@ -81,30 +81,34 @@ impl Hearing {
     }
 
     pub fn pack(self) -> Pack {
-        let (url, installs, size, label) = match self {
+        let (url, installs, size, label, sha256) = match self {
             Hearing::Tiny => (
                 "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2",
                 "sherpa-onnx-whisper-tiny",
                 116_204_861,
                 "Whisper tiny",
+                "c46116994e539aa165266d96b325252728429c12535eb9d8b6a2b10f129e66b1",
             ),
             Hearing::Base => (
                 "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-base.tar.bz2",
                 "sherpa-onnx-whisper-base",
                 207_557_382,
                 "Whisper base",
+                "911b2083efd7c0dca2ac3b358b75222660dc09fb716d64fbfc417ba6c99ff3de",
             ),
             Hearing::Small => (
                 "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-small.tar.bz2",
                 "sherpa-onnx-whisper-small",
                 639_387_718,
                 "Whisper small",
+                "486a46afbb7ba798507190ffe02fea2dd726049af212e774537efac6afb210a6",
             ),
             Hearing::Turbo => (
                 "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-turbo.tar.bz2",
                 "sherpa-onnx-whisper-turbo",
                 563_790_207,
                 "Whisper turbo",
+                "b11acbbcd660b44a8e0df33724feb5aaa709cf65668f2823d59f656312544f22",
             ),
         };
         Pack {
@@ -112,7 +116,7 @@ impl Hearing {
             url: url.into(),
             installs,
             size,
-            sha256: None,
+            sha256,
         }
     }
 }
@@ -124,7 +128,7 @@ pub fn vad() -> Pack {
         url: format!("{RELEASES}/asr-models/silero_vad.onnx"),
         installs: "silero_vad.onnx",
         size: 643_854,
-        sha256: None,
+        sha256: "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
     }
 }
 
@@ -137,7 +141,7 @@ pub fn wake_word() -> Pack {
         ),
         installs: "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01",
         size: 17_626_723,
-        sha256: None,
+        sha256: "f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a",
     }
 }
 
@@ -151,7 +155,7 @@ pub fn kokoro() -> Pack {
         url: format!("{RELEASES}/tts-models/kokoro-en-v0_19.tar.bz2"),
         installs: "kokoro-en-v0_19",
         size: 319_625_534,
-        sha256: None,
+        sha256: "912804855a04745fa77a30be545b3f9a5d15c4d66db00b88cbcd4921df605ac7",
     }
 }
 
@@ -174,14 +178,18 @@ pub const KOKORO_SPEAKERS: &[&str] = &[
 pub const PIPER_VOICES: &[&str] = &["en_US-amy-medium", "en_GB-jenny_dioco-medium"];
 
 pub fn piper(voice: &str) -> Option<Pack> {
-    let (url, installs) = match voice {
+    let (url, installs, size, sha256) = match voice {
         "en_US-amy-medium" => (
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-medium.tar.bz2",
             "vits-piper-en_US-amy-medium",
+            67_223_746,
+            "9a5d1fc497f85e8022b785bff5f8105203b1e33099ee6265203efc70b0cb0264",
         ),
         "en_GB-jenny_dioco-medium" => (
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-jenny_dioco-medium.tar.bz2",
             "vits-piper-en_GB-jenny_dioco-medium",
+            67_225_842,
+            "a0888024569bafbefc05a4b48ddf8419d8dbbf3205f4af37cf7c6f1a87cc20c5",
         ),
         _ => return None,
     };
@@ -189,7 +197,7 @@ pub fn piper(voice: &str) -> Option<Pack> {
         label: "Piper voice",
         url: url.into(),
         installs,
-        size: 67_225_000,
-        sha256: None,
+        size,
+        sha256,
     })
 }

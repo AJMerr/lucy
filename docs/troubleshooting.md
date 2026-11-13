@@ -17,6 +17,15 @@
   KWallet), or set `LUCY_KEY_<NAME>` instead.
 - **"config.toml is managed by home-manager":** `programs.lucy.settings` owns it. Change Lucy's
   settings in your Nix config, or set it to `null` to edit the file yourself again.
+- **"has a different certificate from the one this machine paired with":** the core on the
+  other machine was reinstalled (or someone is in between). On that machine run
+  `lucy remote token`, then `lucy remote connect` here again with the fingerprint it shows.
+- **"not sending the token to … unencrypted":** connect with `wss://` (the default when you give
+  just a host), or, for a proxy without TLS on a network you trust, add `--insecure`.
+- **A remote chat waits for approval:** approve it on the machine running Lucy, or set
+  `[remote] approvals = "remote"` there. See [Remote access](remote.md).
+- **"the stored key … is only sent to the addresses that already use it":** when adding a model
+  at a new address, type its key again rather than reusing a stored one.
 - **No tray icon on Linux:** install `libayatana-appindicator` (and, on GNOME, the AppIndicator
   extension). `lucy app` opens the window without it.
 - **macOS or Windows won't open the app:** it isn't signed; see [Installing](install.md).

@@ -37,7 +37,7 @@ class FakeSocket implements Socket {
   }
   /** Answer the handshake the connection starts with. */
   greet(): void {
-    this.reply({ id: this.last("hello").id, result: { protocol_version: 5, core_version: "0.4.0", pid: 1 } });
+    this.reply({ id: this.last("hello").id, result: { protocol_version: 6, core_version: "0.4.0", pid: 1 } });
   }
 }
 
@@ -71,7 +71,7 @@ test("the handshake goes first, and calls made before it wait for it", async () 
     ["hello"],
     "nothing else until the core says hello back",
   );
-  assert.deepEqual(socket.sent[0]?.params, { protocol_version: 5, client: "lucy-ui test" });
+  assert.deepEqual(socket.sent[0]?.params, { protocol_version: 6, client: "lucy-ui test" });
 
   socket.greet();
   await settle();

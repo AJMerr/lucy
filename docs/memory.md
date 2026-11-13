@@ -6,8 +6,8 @@ with it, in the terminal, the window, the sprite and on your other machines.
 
 ## How she saves things
 
-She decides by herself, without being asked, and shows a short line when she does
-(`⚙ remember  Edits code in Neovim`, or "remember …" in the window).
+She decides by herself, without being asked, and shows it when she does: "Remembered “Edits
+code in Neovim”" in the terminal, and "remembered" with **Undo** in the window.
 
 - **Sensitive facts ask first.** Health, money, relationships, your home address and ID numbers
   get the usual Allow / Deny card before they're saved.
@@ -16,6 +16,9 @@ She decides by herself, without being asked, and shows a short line when she doe
   or `lucy auth set`).
 - **She keeps it current.** When something changes she replaces the old fact, and "forget that"
   in any chat removes one.
+- **Notes, not orders.** She treats what she remembers as facts about you, never as
+  instructions, so text slipped into a web page or a file can't plant standing orders in her
+  memory. A chat from another machine needs your approval here before it changes her memory.
 
 ## Seeing and changing it
 

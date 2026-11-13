@@ -208,8 +208,15 @@ enum RemoteAction {
     ///
     /// Example: lucy remote connect desktop:7077
     Connect {
-        /// Its address: host, host:port, or ws://host:port.
+        /// Its address: host, host:port, or wss://host:port.
         url: String,
+        /// The core's certificate fingerprint (`lucy remote token` there shows it); asked
+        /// for when not given.
+        #[arg(long)]
+        fingerprint: Option<String>,
+        /// Allow plain ws:// to an address beyond this machine and Tailscale.
+        #[arg(long)]
+        insecure: bool,
     },
     /// Go back to this machine's own core.
     Disconnect,
@@ -374,9 +381,15 @@ fn main() -> Result<()> {
             Some(SpriteAction::Quit) => "quit",
         }),
         Some(Command::Remote { action }) => match action {
-            RemoteAction::Connect { url } => {
-                tokio::runtime::Runtime::new()?.block_on(remote::connect_command(&url))
-            }
+            RemoteAction::Connect {
+                url,
+                fingerprint,
+                insecure,
+            } => tokio::runtime::Runtime::new()?.block_on(remote::connect_command(
+                &url,
+                fingerprint,
+                insecure,
+            )),
             RemoteAction::Disconnect => remote::disconnect_command(),
             RemoteAction::Token { rotate } => remote::token_command(rotate),
         },

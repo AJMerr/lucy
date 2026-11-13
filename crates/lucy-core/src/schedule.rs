@@ -302,6 +302,18 @@ pub trait Notifier: Send + Sync {
     fn notify(&self, title: &str, body: &str);
 }
 
+/// A notification body shown as written: Linux notification servers read a little HTML
+/// (links, images), which text from a model or a task shouldn't be able to use.
+fn plain_body(body: &str) -> String {
+    if cfg!(target_os = "linux") {
+        body.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    } else {
+        body.to_owned()
+    }
+}
+
 /// A desktop notification (D-Bus on Linux, Notification Center on macOS, toasts on Windows).
 pub struct DesktopNotifier;
 
@@ -310,7 +322,7 @@ impl Notifier for DesktopNotifier {
         let shown = notify_rust::Notification::new()
             .appname("Lucy")
             .summary(title)
-            .body(body)
+            .body(&plain_body(body))
             .show();
         if let Err(err) = shown {
             eprintln!("couldn't show a notification: {err}");

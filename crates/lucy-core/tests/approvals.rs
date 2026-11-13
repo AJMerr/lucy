@@ -86,3 +86,26 @@ async fn an_auto_rule_doesnt_open_private_paths_either() {
     assert_eq!(outside_home, Verdict::Run);
     toolbox.close().await;
 }
+
+#[tokio::test]
+async fn fetching_from_this_machine_always_asks() {
+    let dir = tempfile::tempdir().unwrap();
+    let toolbox = toolbox(dir.path(), &[("fetch_url", ToolRule::Auto)]).await;
+    let always: HashSet<String> = ["fetch_url"].map(String::from).into();
+
+    let local = toolbox.verdict(
+        &call(
+            "fetch_url",
+            json!({"url": "http://169.254.169.254/latest/meta-data/"}),
+        ),
+        &always,
+    );
+    let public = toolbox.verdict(
+        &call("fetch_url", json!({"url": "https://example.com/"})),
+        &always,
+    );
+
+    assert!(asks(&local), "{local:?}");
+    assert_eq!(public, Verdict::Run);
+    toolbox.close().await;
+}

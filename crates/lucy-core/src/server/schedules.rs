@@ -130,11 +130,12 @@ impl Core {
                     images: Vec::new(),
                     cwd: working_folder(None),
                     remote: false,
+                    started_by: None,
                     incognito: false,
                     task: Some(TaskRun {
                         title: schedule.title.clone(),
                         profile: schedule.profile.clone(),
-                        level: AgentLevel::try_from(schedule.level).unwrap_or_default(),
+                        level: self.task_level(&schedule),
                     }),
                 },
             )
@@ -171,6 +172,17 @@ impl Core {
         } else {
             store.save_schedule(&schedule)
         };
+    }
+
+    /// The level a task runs at: its own, but one created or changed from another machine
+    /// never above `[remote] max_level` as it is now.
+    fn task_level(&self, schedule: &Schedule) -> AgentLevel {
+        let level = AgentLevel::try_from(schedule.level).unwrap_or_default();
+        match (schedule.remote, self.config()) {
+            (false, _) => level,
+            (true, Ok(config)) => level.min(config.remote.max_level),
+            (true, Err(_)) => AgentLevel::Supervised,
+        }
     }
 
     fn remind(&self, session: &SessionId, schedule: &Schedule) -> Result<(), String> {
@@ -212,6 +224,22 @@ pub(super) fn task_summary(text: &str) -> String {
 pub(super) struct Book {
     pub core: Arc<Core>,
     pub profile: String,
+    /// The chat is driven from another machine: its tasks are marked as such (and capped at
+    /// `max_level`), and it may only cancel those.
+    pub remote: bool,
+    pub max_level: AgentLevel,
+}
+
+impl Book {
+    /// A schedule from `schedule`'s arguments, as this chat would make it.
+    fn parse(&self, arguments: &Value) -> Result<(Schedule, When), String> {
+        let (mut schedule, when) = parse(arguments, &self.profile)?;
+        if self.remote {
+            schedule.remote = true;
+            schedule.level = schedule.level.min(u8::from(self.max_level));
+        }
+        Ok((schedule, when))
+    }
 }
 
 /// A schedule from `schedule`'s arguments.
@@ -249,6 +277,7 @@ fn parse(arguments: &Value, profile: &str) -> Result<(Schedule, When), String> {
             paused: false,
             next_run: None,
             last_run: None,
+            remote: false,
         },
         when,
     ))
@@ -281,7 +310,7 @@ fn card(schedule: &Schedule, when: &When) -> String {
 
 impl ScheduleBook for Book {
     fn describe(&self, arguments: &Value) -> Result<(String, String), String> {
-        let (schedule, when) = parse(arguments, &self.profile)?;
+        let (schedule, when) = self.parse(arguments)?;
         if when.next_after(self.core.clock.now()).is_none() {
             return Err(format!("{} is in the past", when.describe()));
         }
@@ -297,7 +326,7 @@ impl ScheduleBook for Book {
     }
 
     fn create(&self, arguments: &Value) -> Result<String, String> {
-        let (mut schedule, when) = parse(arguments, &self.profile)?;
+        let (mut schedule, when) = self.parse(arguments)?;
         let next = when
             .next_after(self.core.clock.now())
             .ok_or_else(|| format!("{} is in the past", when.describe()))?;
@@ -365,7 +394,11 @@ impl ScheduleBook for Book {
     fn cancel(&self, which: &str) -> Result<String, String> {
         let which = which.trim().to_lowercase();
         let store = self.core.store.lock().unwrap();
-        let all = store.schedules().map_err(|err| err.to_string())?;
+        let mut all = store.schedules().map_err(|err| err.to_string())?;
+        // From another machine, only what was scheduled from one.
+        if self.remote {
+            all.retain(|s| s.remote);
+        }
         let matches: Vec<&Schedule> = all
             .iter()
             .filter(|s| s.id.to_lowercase() == which || s.title.to_lowercase() == which)
@@ -425,13 +458,22 @@ pub(super) fn list(core: &Core) -> Result<SchedulesList, RpcError> {
     })
 }
 
-pub(super) fn update(core: &Core, change: ScheduleUpdate) -> Result<ScheduleInfo, RpcError> {
+/// `schedules.update`. A change from another machine marks the task as remote, so it runs at
+/// most at `[remote] max_level`.
+pub(super) fn update(
+    core: &Core,
+    change: ScheduleUpdate,
+    remote: bool,
+) -> Result<ScheduleInfo, RpcError> {
     let mut schedule = core
         .store
         .lock()
         .unwrap()
         .schedule(&change.id)
         .map_err(app)?;
+    if remote {
+        schedule.remote = true;
+    }
     if let Some(title) = change.title.filter(|t| !t.trim().is_empty()) {
         schedule.title = title.trim().to_owned();
     }

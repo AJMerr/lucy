@@ -169,6 +169,8 @@ async function start(): Promise<void> {
   const reason = element<HTMLDivElement>("#approval .reason");
   const preview = element<HTMLPreElement>("#approval pre");
   const show = element<HTMLButtonElement>("#show");
+  const review = element<HTMLButtonElement>("#review");
+  const allowButtons = [...approval.querySelectorAll<HTMLButtonElement>("[data-decision=once], [data-decision=always]")];
   const ask = element<HTMLFormElement>("#ask");
   const input = element<HTMLInputElement>("#ask input");
   const pictures = element<HTMLDivElement>("#pictures");
@@ -251,7 +253,15 @@ async function start(): Promise<void> {
           return code;
         }),
       );
-      reason.textContent = view.approval.reason;
+      reason.textContent = view.approval.review
+        ? `${view.approval.reason} · too long, or has hidden characters, to approve here`
+        : view.approval.reason;
+      // Long calls, and ones with characters that hide part of them, are read in full in the
+      // chat window, never approved from the bubble.
+      review.hidden = !view.approval.review;
+      for (const button of allowButtons) {
+        button.hidden = view.approval.review;
+      }
       show.hidden = view.approval.preview === undefined;
       preview.textContent = view.approval.preview ?? "";
     } else {
@@ -348,6 +358,9 @@ async function start(): Promise<void> {
     invoke("open_chat").catch((err: unknown) => console.error("lucy-sprite:", err));
   });
   close.addEventListener("click", () => dispatch({ type: "dismiss" }));
+  review.addEventListener("click", () => {
+    invoke("open_chat").catch((err: unknown) => console.error("lucy-sprite:", err));
+  });
   show.addEventListener("click", () => {
     preview.hidden = !preview.hidden;
     layout();

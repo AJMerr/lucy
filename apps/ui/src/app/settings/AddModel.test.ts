@@ -61,10 +61,16 @@ test("a hosted model is found, tried and saved with its key in the keyring", asy
 
   assert.deepEqual(core.sent("keys.set"), [{ name: "openrouter", value: "sk-or-1" }]);
   assert.deepEqual(core.sent("models.list"), [
-    { provider: "openai_compat", base_url: "https://openrouter.ai/api/v1", key_name: "openrouter" },
+    { provider: "openai_compat", base_url: "https://openrouter.ai/api/v1", key_name: "openrouter", key: "sk-or-1" },
   ]);
   assert.deepEqual(core.sent("models.try"), [
-    { provider: "openai_compat", base_url: "https://openrouter.ai/api/v1", model: "z-ai/glm-5", key_name: "openrouter" },
+    {
+      provider: "openai_compat",
+      base_url: "https://openrouter.ai/api/v1",
+      model: "z-ai/glm-5",
+      key_name: "openrouter",
+      key: "sk-or-1",
+    },
   ]);
   assert.deepEqual(core.sent("config.update"), [
     {
