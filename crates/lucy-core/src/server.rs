@@ -1209,6 +1209,14 @@ impl Core {
         }
         let mut problems = Vec::new();
         for backup in &backups {
+            // A link put where the file was would send the restore somewhere else.
+            if std::fs::symlink_metadata(&backup.path).is_ok_and(|m| m.file_type().is_symlink()) {
+                problems.push(format!(
+                    "{}: it's now a link, so it was left alone",
+                    backup.path.display()
+                ));
+                continue;
+            }
             let restored = match &backup.before {
                 Some(content) => std::fs::write(&backup.path, content),
                 None => match std::fs::remove_file(&backup.path) {
@@ -2218,28 +2226,38 @@ impl Turn {
                  they were away. Carry on without it, and say what you couldn't do; they can \
                  raise the task's level to allow it."
             )),
-            Verdict::Ask { reason, preview } => match self.approval(call, reason, preview).await {
-                Some(Decision::Once) => Ok(()),
-                Some(Decision::Always) if !self.remote => {
-                    self.core
-                        .overrides
-                        .lock()
-                        .unwrap()
-                        .entry(self.key.clone())
-                        .or_default()
-                        .allowed_tools
-                        .insert(call.name.clone());
-                    Ok(())
+            Verdict::Ask { reason, preview } => {
+                let decision = self
+                    .approval(call, reason.clone(), preview)
+                    .await
+                    .map(|decision| self.still_fine(toolbox, call, &allowed, &reason, decision));
+                match decision {
+                    Some(Err(changed)) => Err(changed),
+                    Some(Ok(Decision::Once)) => Ok(()),
+                    Some(Ok(Decision::Always)) => {
+                        if !self.remote {
+                            self.core
+                                .overrides
+                                .lock()
+                                .unwrap()
+                                .entry(self.key.clone())
+                                .or_default()
+                                .allowed_tools
+                                .insert(call.name.clone());
+                        }
+                        Ok(())
+                    }
+                    Some(Ok(Decision::Deny)) => Err(
+                        "The user declined this tool call. Don't try it again unless they ask."
+                            .into(),
+                    ),
+                    None => Err(format!(
+                        "Nobody answered the approval prompt within {} minutes, so this didn't \
+                         run.",
+                        APPROVAL_TIMEOUT.as_secs() / 60
+                    )),
                 }
-                Some(Decision::Always) => Ok(()),
-                Some(Decision::Deny) => Err(
-                    "The user declined this tool call. Don't try it again unless they ask.".into(),
-                ),
-                None => Err(format!(
-                    "Nobody answered the approval prompt within {} minutes, so this didn't run.",
-                    APPROVAL_TIMEOUT.as_secs() / 60
-                )),
-            },
+            }
         };
         match go_ahead {
             Ok(()) => {
@@ -2252,6 +2270,30 @@ impl Turn {
                 toolbox.call(call).await
             }
             Err(reason) => self.announce(call, reason),
+        }
+    }
+
+    /// An approved call, checked again: the approval may have taken minutes, and what the call
+    /// touches (a link, a file) may have changed meanwhile. Anything that would now be refused,
+    /// or ask for a different reason, doesn't run.
+    fn still_fine(
+        &self,
+        toolbox: &ToolBox,
+        call: &ToolCall,
+        allowed: &HashSet<String>,
+        asked_because: &str,
+        decision: Decision,
+    ) -> Result<Decision, String> {
+        if decision == Decision::Deny {
+            return Ok(decision);
+        }
+        match toolbox.verdict(call, allowed) {
+            Verdict::Refuse(reason) => Err(reason),
+            Verdict::Ask { reason, .. } if reason != asked_because => Err(format!(
+                "Not run: while it waited for approval, what it would touch changed ({reason}). \
+                 Try again if it's still wanted."
+            )),
+            _ => Ok(decision),
         }
     }
 

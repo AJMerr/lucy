@@ -589,6 +589,18 @@ impl ToolBox {
         if let Some(reason) = policy::always_asks(&facts, &self.policy()) {
             return ask(reason);
         }
+        // Services on this machine or the local network (a router, a metadata endpoint, other
+        // apps' APIs) are fetched only with a yes each time.
+        if tool.external.is_none()
+            && call.name == "fetch_url"
+            && let Some(url) = call.arguments["url"]
+                .as_str()
+                .filter(|url| builtin::names_private_host(url))
+        {
+            return ask(format!(
+                "fetches from this machine or a private network ({url})"
+            ));
+        }
         if rule == Some(ToolRule::Auto) || allowed.contains(&call.name) {
             return Verdict::Run;
         }
@@ -636,8 +648,10 @@ impl ToolBox {
         match (read_only, hints.open_world_hint) {
             // A remote service's own data: reading it is what you connected it for.
             (true, _) if is_remote(tool) => CallKind::Read,
-            (true, Some(true)) => CallKind::Online,
-            (true, _) => CallKind::Read,
+            // Only a tool that says it stays on this machine is a local read: the MCP spec
+            // takes an unlabelled tool as reaching the outside world.
+            (true, Some(false)) => CallKind::Read,
+            (true, _) => CallKind::Online,
             // Unlabelled tools are treated as the MCP spec says: open world, possibly
             // destructive.
             (false, Some(false)) => CallKind::Write,
@@ -733,6 +747,23 @@ impl ToolBox {
                     _ => {}
                 }
             }
+            // Another server's tool may take a path under any name (`uri`, `source`, …): any
+            // value that looks like one counts too.
+            if tool.external.is_some() {
+                for value in args.values() {
+                    let texts: Vec<&str> = match value {
+                        Value::String(text) => vec![text],
+                        Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
+                        _ => vec![],
+                    };
+                    paths.extend(
+                        texts
+                            .into_iter()
+                            .filter_map(looks_like_path)
+                            .map(|p| resolve(&p, &base)),
+                    );
+                }
+            }
             let takes_path = tool
                 .def
                 .input_schema
@@ -745,6 +776,24 @@ impl ToolBox {
         }
         paths.into_iter()
     }
+}
+
+/// An argument that names a file on this machine: absolute, from home, or a `file:` URL.
+fn looks_like_path(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.contains('\n') {
+        return None;
+    }
+    if let Some(rest) = text.strip_prefix("file://") {
+        return Some(rest.to_owned());
+    }
+    let bytes = text.as_bytes();
+    let drive = bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    (text.starts_with('/') || text.starts_with("~/") || text.starts_with("\\\\") || drive)
+        .then(|| text.to_owned())
 }
 
 /// Reached over the network rather than started on this machine.

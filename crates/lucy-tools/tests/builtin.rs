@@ -467,3 +467,39 @@ fn windows_patterns_can_use_backslashes_and_resolved_paths() {
     assert!(private.contains(Path::new(r"D:\Keys\a")));
     assert!(!private.contains(Path::new(r"C:\Public\a")));
 }
+
+// --- fetch_url and the local network -----------------------------------------------------------
+
+#[test]
+fn addresses_on_this_machine_or_a_private_network_are_recognised() {
+    use lucy_tools::builtin::names_private_host;
+
+    for url in [
+        "http://localhost:8188/view",
+        "http://127.0.0.1:11434/api/tags",
+        "http://192.168.1.1/",
+        "http://10.0.0.5/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://100.64.0.7:7077/",
+        "http://[::1]/",
+        "http://[fd00::1]/",
+        "http://app.localhost/",
+    ] {
+        assert!(names_private_host(url), "{url}");
+    }
+    for url in ["https://example.com/", "https://8.8.8.8/", "not a url"] {
+        assert!(!names_private_host(url), "{url}");
+    }
+}
+
+#[tokio::test]
+async fn commands_dont_inherit_lucys_keys() {
+    // SAFETY: a name only this test uses; nothing else reads or writes it.
+    unsafe { std::env::set_var("LUCY_KEY_SCRUB_TEST", "sk-should-not-leak") };
+    let tools = Tools::start().await;
+
+    let command = if cfg!(windows) { "set" } else { "env" };
+    let output = tools.ok("run_command", json!({"command": command})).await;
+
+    assert!(!output.contains("sk-should-not-leak"), "{output}");
+}

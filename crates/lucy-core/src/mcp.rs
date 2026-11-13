@@ -316,6 +316,10 @@ where
     // Resolve through PATH the way a shell would (`npx` is `npx.cmd` on Windows).
     let mut command = rmcp::transport::which_command(program)
         .map_err(|err| format!("MCP server `{name}`: can't find `{program}` ({err})"))?;
+    // Lucy's own keys stay with her; a server gets the ones its config names.
+    for var in lucy_tools::builtin::secret_vars() {
+        command.env_remove(var);
+    }
     command.args(&config.args).envs(&config.env);
     for (var, key_name) in &config.env_keys {
         command.env(var, key(secrets, name, key_name, var)?);
