@@ -1,5 +1,46 @@
 # Changelog
 
+## v1.0.1: security fixes (2026-11-13)
+
+Fixes for problems found in a security review of tool approvals and the terminal. Please
+upgrade.
+
+### Breaking for security
+
+- **Always and `auto` no longer skip the safety checks.** Private paths (`~/.ssh`, keys,
+  `.env` files and so on) ask even for a tool you approved with **Always** or set to `auto`
+  in `[tools.rules]`, and so do file changes outside the folder Lucy may write in (the
+  workspace at level 2). Level 3 still changes files anywhere but private paths. See
+  [docs/tools.md](docs/tools.md).
+
+### Fixed
+
+- **Paths that climb out of the working folder are caught.** A path like `new/../../.bashrc`
+  counted as inside the working folder while `new` didn't exist yet, so in agent mode a file
+  change could land outside it, private paths included, without asking. Paths are now judged
+  the way the system resolves them, including links to things that don't exist yet.
+- **`search_files` stays out of private folders** reached another way, such as `~/./.config`
+  or a link to one.
+- **The terminal shows control characters instead of obeying them.** Replies, tool names,
+  arguments, output and errors could carry terminal escapes or a carriage return, which could
+  paint a harmless command over the real one in an approval prompt, write to the clipboard or
+  hide where a link goes. They're now shown as symbols (`␛`, `␍`, `<U+202E>`), and a command
+  in an approval prompt also shows characters that only look like spaces. `lucy ask` does
+  this on a terminal and passes replies through unchanged when piped. Picture data that isn't
+  base64 is no longer drawn.
+- **Signing in to an MCP server only opens web pages:** the sign-in address must be `https:`
+  (or `http:` on this computer). On Windows it opens without `cmd`, which read `&` in the
+  address as the start of another command and cut ordinary sign-in addresses short.
+- [docs/stability.md](docs/stability.md) says what each part of a version number means and
+  how security fixes ship.
+
+### Upgrading from v1.0.0
+
+- Restart the core after installing: `lucy service restart`, or `lucy core stop` if you
+  don't use the service. Still protocol v5.
+- If a tool you set to `auto` or approved with Always now asks, it's touching a private path or
+  a file outside the folder: the change above.
+
 ## v1.0.0: Lucy goes public (2026-11-12)
 
 The first stable release: Lucy is open source, documented, installable from package managers,

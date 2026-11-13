@@ -6,7 +6,7 @@ A personal AI assistant that works with any model, with a netrunner's attitude. 
 a terminal, in her app, or through her **sprite**: a small animated figure who lives on your
 desktop and answers in speech bubbles.
 
-> **Status:** v1.0.0, the first stable release: config.toml and the `lucy` command now follow [semver](docs/stability.md). Lucy chats with any OpenAI-compatible or Anthropic model; you add one in a few clicks, choosing from the models the provider offers.
+> **Status:** v1.0.1, a security update to the first stable release: config.toml and the `lucy` command now follow [semver](docs/stability.md). Lucy chats with any OpenAI-compatible or Anthropic model; you add one in a few clicks, choosing from the models the provider offers.
 >
 > She can:
 > - read, search, run and edit with your approval;
