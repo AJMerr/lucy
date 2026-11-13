@@ -36,7 +36,11 @@ pub async fn list_models(
     base_url: &str,
     api_key: Option<&str>,
 ) -> Result<Vec<ModelInfo>, ProviderError> {
-    let client = reqwest::Client::new();
+    // A provider that never answers mustn't hold the request (and its connection) forever.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
     let mut models = match kind {
         Kind::Anthropic => anthropic_models(&client, base_url, api_key).await?,
         Kind::OpenAiCompat => match ollama_tags(&client, base_url).await {

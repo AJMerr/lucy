@@ -310,9 +310,15 @@ impl Default for AgentSettings {
 pub struct RemoteSettings {
     pub enabled: bool,
     pub bind: SocketAddr,
-    /// Needed to listen beyond loopback (LAN, Tailscale). There's no TLS, so only on networks
-    /// you trust, or behind something that adds it.
+    /// Needed to listen beyond loopback (LAN, Tailscale).
     pub allow_network: bool,
+    /// Encrypt with the core's own certificate, which clients pin (`lucy remote token` shows
+    /// its fingerprint). Off only behind something that adds TLS itself, like a reverse proxy.
+    pub tls: bool,
+    /// Web pages (by origin, e.g. `https://lucy.example.com`) allowed to connect from a browser.
+    /// Lucy's own clients send no origin and are always allowed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed_origins: Vec<String>,
     /// Let remote clients change settings, API keys and the persona (reading is always
     /// allowed). Off, a leaked token can chat but not rewrite Lucy.
     pub allow_config: bool,
@@ -341,6 +347,8 @@ impl Default for RemoteSettings {
             enabled: false,
             bind: SocketAddr::from(([127, 0, 0, 1], 7077)),
             allow_network: false,
+            tls: true,
+            allowed_origins: Vec::new(),
             allow_config: false,
             max_level: AgentLevel::Guarded,
             approvals: RemoteApprovals::Local,

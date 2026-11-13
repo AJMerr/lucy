@@ -41,11 +41,13 @@ pub fn token(store: &dyn SecretStore, rotate: bool) -> Result<Token> {
     })
 }
 
-/// `desktop`, `desktop:8000` or `ws://desktop:7077` as a full WebSocket URL
-/// (`ws://desktop:7077/rpc`). `wss://` is kept for cores behind something that adds TLS.
+/// `desktop`, `desktop:8000` or `wss://desktop:7077` as a full WebSocket URL
+/// (`wss://desktop:7077/rpc`): encrypted with the core's own certificate. An explicit
+/// `wss://` without a port is a proxy on 443; `ws://` is for this machine or Tailscale.
 pub fn normalize_url(input: &str) -> Result<String> {
     let text = input.trim();
-    let (scheme, rest) = text.split_once("://").unwrap_or(("ws", text));
+    let given = text.split_once("://");
+    let (scheme, rest) = given.unwrap_or(("wss", text));
     if !matches!(scheme, "ws" | "wss") {
         bail!(
             "`{input}` isn't a WebSocket address; use ws://host:{DEFAULT_PORT} (or wss:// when \
@@ -65,15 +67,35 @@ pub fn normalize_url(input: &str) -> Result<String> {
             && port.chars().all(|c| c.is_ascii_digit())
             && (!host.contains(':') || host.ends_with(']'))
     });
-    let authority = match (has_port, scheme) {
-        (false, "ws") => format!("{authority}:{DEFAULT_PORT}"),
+    let authority = match (has_port, scheme, given.is_some()) {
+        (false, "ws", _) | (false, _, false) => format!("{authority}:{DEFAULT_PORT}"),
         _ => authority.to_owned(),
     };
     Ok(format!("{scheme}://{authority}{path}"))
 }
 
-/// Remember `url` as the core to use (in `remote.toml`, keeping its comments).
-pub fn save_connection(file: &Path, url: &str) -> Result<()> {
+/// A remote core this machine talks to, as remembered in `remote.toml`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Connection {
+    pub url: String,
+    /// Its certificate's fingerprint (`lucy remote token` shows it there).
+    pub fingerprint: Option<String>,
+    /// Plain `ws://` beyond this machine and Tailscale was allowed with `--insecure`.
+    pub insecure: bool,
+}
+
+impl Connection {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            fingerprint: None,
+            insecure: false,
+        }
+    }
+}
+
+/// Remember `connection` as the core to use (in `remote.toml`, keeping its comments).
+pub fn save_connection(file: &Path, connection: &Connection) -> Result<()> {
     let mut doc = match std::fs::read_to_string(file) {
         Ok(text) => text
             .parse::<toml_edit::DocumentMut>()
@@ -85,7 +107,18 @@ pub fn save_connection(file: &Path, url: &str) -> Result<()> {
         }
         Err(err) => return Err(err).with_context(|| format!("couldn't read {}", file.display())),
     };
-    doc["url"] = toml_edit::value(url);
+    doc["url"] = toml_edit::value(&connection.url);
+    match &connection.fingerprint {
+        Some(fingerprint) => doc["fingerprint"] = toml_edit::value(fingerprint),
+        None => {
+            doc.remove("fingerprint");
+        }
+    }
+    if connection.insecure {
+        doc["insecure"] = toml_edit::value(true);
+    } else {
+        doc.remove("insecure");
+    }
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("couldn't create {}", dir.display()))?;
@@ -95,7 +128,7 @@ pub fn save_connection(file: &Path, url: &str) -> Result<()> {
 }
 
 /// The remembered remote core, if any.
-pub fn saved_connection(file: &Path) -> Result<Option<String>> {
+pub fn saved_connection(file: &Path) -> Result<Option<Connection>> {
     let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -107,7 +140,34 @@ pub fn saved_connection(file: &Path) -> Result<Option<String>> {
     Ok(doc
         .get("url")
         .and_then(|url| url.as_str())
-        .map(str::to_owned))
+        .map(|url| Connection {
+            url: url.to_owned(),
+            fingerprint: doc
+                .get("fingerprint")
+                .and_then(|f| f.as_str())
+                .map(str::to_owned),
+            insecure: doc
+                .get("insecure")
+                .and_then(|i| i.as_bool())
+                .unwrap_or(false),
+        }))
+}
+
+/// The keyring entry for the token sent to the core at `url`: one per host and port, so a
+/// mistyped address never gets another core's token.
+pub fn client_token_key(url: &str) -> String {
+    let authority = url
+        .split_once("://")
+        .map_or(url, |(_, rest)| rest)
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let safe: String = authority
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    format!("{CLIENT_TOKEN_KEY}-{safe}")
 }
 
 /// Forget the remote core. False if none was remembered.
@@ -151,23 +211,52 @@ pub fn target() -> Result<Option<Endpoint>> {
             .ok()
             .filter(|url| !url.is_empty())
     });
-    let url = match given {
-        Some(url) => normalize_url(&url)?,
-        None => match saved_connection(&connection_file()?)? {
-            Some(url) => url,
-            None => return Ok(None),
-        },
+    let saved = saved_connection(&connection_file()?)?;
+    let saved_url = saved.as_ref().map(|saved| saved.url.clone());
+    let connection = match (given, saved) {
+        (Some(url), saved) => {
+            let url = normalize_url(&url)?;
+            match saved.filter(|saved| saved.url == url) {
+                Some(saved) => saved,
+                None => Connection {
+                    url,
+                    fingerprint: std::env::var("LUCY_REMOTE_FINGERPRINT")
+                        .ok()
+                        .filter(|f| !f.is_empty()),
+                    insecure: std::env::var("LUCY_REMOTE_INSECURE").is_ok_and(|v| v == "1"),
+                },
+            }
+        }
+        (None, Some(saved)) => saved,
+        (None, None) => return Ok(None),
     };
+    let url = connection.url.clone();
     let missing = format!(
         "no token for the Lucy core at {url}; run `lucy remote connect {url}` (or set {})",
         secrets::env_var_name(CLIENT_TOKEN_KEY)
     );
-    let token = match Secrets::system().resolve(CLIENT_TOKEN_KEY) {
+    let secrets = Secrets::system();
+    // Its own entry first. LUCY_KEY_REMOTE_CLIENT is used for any core; the single entry
+    // older versions kept only for the core it was saved with.
+    let token = match secrets.resolve(&client_token_key(&url)) {
         Ok(Some(key)) => key.value,
-        Ok(None) => bail!(missing),
-        Err(err) => bail!("{missing} ({err})"),
+        _ => match secrets.resolve(CLIENT_TOKEN_KEY) {
+            Ok(Some(key))
+                if matches!(key.source, KeySource::Env(_))
+                    || saved_url.as_deref() == Some(url.as_str()) =>
+            {
+                key.value
+            }
+            Ok(_) => bail!(missing),
+            Err(err) => bail!("{missing} ({err})"),
+        },
     };
-    Ok(Some(Endpoint::Remote { url, token }))
+    Ok(Some(Endpoint::Remote {
+        url,
+        token,
+        pin: connection.fingerprint,
+        insecure: connection.insecure,
+    }))
 }
 
 /// `lucy remote token [--rotate]`: print the token the core checks (on stdout, alone) and
@@ -213,6 +302,18 @@ pub fn token_command(rotate: bool) -> Result<()> {
         (None, false) => (token(&OsKeyring, false).with_context(keyring_hint)?, false),
     };
     println!("{}", token.value);
+    let config_path = config::default_path().context("no config directory; set LUCY_CONFIG")?;
+    let remote = Config::load(&config_path)
+        .ok()
+        .flatten()
+        .map(|config| config.remote)
+        .unwrap_or_default();
+    if remote.tls {
+        match lucy_core::remote_tls::load_or_create(&Secrets::system()) {
+            Ok(identity) => eprintln!("Certificate fingerprint: {}", identity.fingerprint()),
+            Err(err) => eprintln!("Couldn't read the certificate: {err}"),
+        }
+    }
     match (token.created, rotate, disconnected) {
         (true, true, true) => eprintln!(
             "That's the new token. Remote clients were disconnected and need it to connect again."
@@ -222,14 +323,10 @@ pub fn token_command(rotate: bool) -> Result<()> {
         (false, ..) => {}
     }
     eprintln!(
-        "On the other machine: `lucy remote connect <this machine's address>`, and paste it."
+        "On the other machine: `lucy remote connect <this machine's address>`, and paste the \
+         token and the fingerprint."
     );
-    let config_path = config::default_path().context("no config directory; set LUCY_CONFIG")?;
-    let enabled = Config::load(&config_path)
-        .ok()
-        .flatten()
-        .is_some_and(|config| config.remote.enabled);
-    if !enabled {
+    if !remote.enabled {
         eprintln!(
             "Remote access is off: set `enabled = true` under [remote] in {}, then restart the \
              core (`lucy service restart`, or `lucy core stop`).",
@@ -260,9 +357,32 @@ fn rotate_on_core() -> Result<Option<String>> {
     })
 }
 
-/// `lucy remote connect <url>`: check the token works, then remember the core and the token.
-pub async fn connect_command(url: &str) -> Result<()> {
+/// `lucy remote connect <url>`: check the token (and the core's certificate) work, then
+/// remember the core, its fingerprint and the token.
+pub async fn connect_command(url: &str, fingerprint: Option<String>, insecure: bool) -> Result<()> {
     let url = normalize_url(url)?;
+    // The core's own certificate needs its fingerprint; a proxy on 443 has a real one.
+    let own_certificate = url.starts_with("wss://") && !url.contains(":443/") && {
+        let authority = url["wss://".len()..].split('/').next().unwrap_or_default();
+        authority
+            .rsplit_once(':')
+            .is_some_and(|(_, port)| port.chars().all(|c| c.is_ascii_digit()))
+    };
+    let fingerprint = match fingerprint {
+        Some(fingerprint) => Some(fingerprint),
+        None if own_certificate && std::io::stdin().is_terminal() => Some(
+            dialoguer::Input::<String>::new()
+                .with_prompt("Certificate fingerprint (from `lucy remote token` on that machine)")
+                .interact_text()?,
+        ),
+        None if own_certificate => bail!(
+            "give the core's certificate fingerprint with --fingerprint (`lucy remote token` on \
+             that machine shows it)"
+        ),
+        None => None,
+    }
+    .map(|f| f.trim().to_owned())
+    .filter(|f| !f.is_empty());
     let token = if std::io::stdin().is_terminal() {
         Password::new()
             .with_prompt("Token (from `lucy remote token` on that machine)")
@@ -278,11 +398,20 @@ pub async fn connect_command(url: &str) -> Result<()> {
     let endpoint = Endpoint::Remote {
         url: url.clone(),
         token: token.clone(),
+        pin: fingerprint.clone(),
+        insecure,
     };
     let client = Client::connect(&endpoint, crate::core_process::CLIENT_NAME)
         .await
         .with_context(|| format!("couldn't connect to the Lucy core at {url}"))?;
-    save_connection(&connection_file()?, &url)?;
+    save_connection(
+        &connection_file()?,
+        &Connection {
+            url: url.clone(),
+            fingerprint,
+            insecure,
+        },
+    )?;
     println!(
         "Connected to Lucy's core at {url} (v{}). `lucy` here now talks to it; its tools run \
          on that machine, in {}.",
@@ -290,7 +419,8 @@ pub async fn connect_command(url: &str) -> Result<()> {
         client.folder().unwrap_or("its home folder")
     );
     println!("`lucy remote disconnect` goes back to this machine's own core.");
-    if let Err(err) = keyring_hint(OsKeyring.set(CLIENT_TOKEN_KEY, &token), CLIENT_TOKEN_KEY) {
+    let key_name = client_token_key(&url);
+    if let Err(err) = keyring_hint(OsKeyring.set(&key_name, &token), &key_name) {
         eprintln!("Couldn't keep the token, though: {err:#}");
     }
     Ok(())
@@ -298,7 +428,11 @@ pub async fn connect_command(url: &str) -> Result<()> {
 
 /// `lucy remote disconnect`: forget the remote core and its token.
 pub fn disconnect_command() -> Result<()> {
-    let forgot = forget_connection(&connection_file()?)?;
+    let file = connection_file()?;
+    if let Some(saved) = saved_connection(&file)? {
+        let _ = OsKeyring.delete(&client_token_key(&saved.url));
+    }
+    let forgot = forget_connection(&file)?;
     let _ = OsKeyring.delete(CLIENT_TOKEN_KEY);
     if forgot {
         println!("Disconnected. `lucy` uses this machine's own core again.");

@@ -5,18 +5,20 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL};
+use axum::http::header::{AUTHORIZATION, ORIGIN, SEC_WEBSOCKET_PROTOCOL};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use futures::{SinkExt, StreamExt};
 use lucy_protocol::rpc::{Request, RpcError, method};
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -26,6 +28,12 @@ use crate::secrets::KeySource;
 /// The shortest token accepted: a weaker one (set by hand in `LUCY_KEY_REMOTE_TOKEN`) keeps
 /// remote access closed.
 const MIN_TOKEN_CHARS: usize = 32;
+/// Connections served at once; more wait at the door (closed straight away).
+const MAX_CONNECTIONS: usize = 32;
+/// How long a new connection may take to finish TLS and send its request.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// The largest message a remote client may send: pictures travel inline, base64.
+const MAX_MESSAGE: usize = 32 * 1024 * 1024;
 
 /// Remote access while the core runs: its listener, the token it checks and the clients
 /// connected through it.
@@ -78,6 +86,41 @@ pub(super) async fn start(core: &Arc<Core>) {
         Some(_) => {}
     }
     *core.remote.token.lock().unwrap() = token;
+    let tls = match settings.tls {
+        true => {
+            let core = Arc::clone(core);
+            let identity = tokio::task::spawn_blocking(move || {
+                crate::remote_tls::load_or_create(&core.options.secrets)
+            })
+            .await
+            .map_err(|err| err.to_string())
+            .and_then(|made| made);
+            match identity.and_then(|identity| acceptor(&identity).map(|a| (a, identity))) {
+                Ok((acceptor, identity)) => {
+                    eprintln!(
+                        "remote access at wss://{bind}/rpc, certificate fingerprint {}",
+                        identity.fingerprint()
+                    );
+                    Some(acceptor)
+                }
+                Err(err) => {
+                    eprintln!("remote access not started: {err}");
+                    return;
+                }
+            }
+        }
+        false => {
+            if local {
+                eprintln!("remote access at ws://{bind}/rpc (no TLS: `tls = false`)");
+            } else {
+                eprintln!(
+                    "remote access is listening on {bind} without TLS (`tls = false`); only do \
+                     that behind something that adds it"
+                );
+            }
+            None
+        }
+    };
     let listener = match tokio::net::TcpListener::bind(bind).await {
         Ok(listener) => listener,
         Err(err) => {
@@ -85,20 +128,75 @@ pub(super) async fn start(core: &Arc<Core>) {
             return;
         }
     };
-    if !local {
-        eprintln!(
-            "remote access is listening on {bind} without TLS; use it only on a network you \
-             trust (e.g. Tailscale), or put something in front that adds TLS"
-        );
-    }
-    eprintln!("remote access at ws://{bind}/rpc");
     let app = Router::new()
         .route("/rpc", get(upgrade))
         .with_state(Arc::clone(core));
-    let handle = tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
-    });
+    let handle = tokio::spawn(accept(listener, tls, app));
     *core.remote.listener.lock().unwrap() = Some(handle);
+}
+
+/// A TLS acceptor for the core's certificate.
+fn acceptor(identity: &crate::remote_tls::Identity) -> Result<tokio_rustls::TlsAcceptor, String> {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .and_then(|builder| {
+            builder.with_no_client_auth().with_single_cert(
+                vec![CertificateDer::from(identity.cert.clone())],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(identity.key.clone())),
+            )
+        })
+        .map_err(|err| format!("the remote access certificate didn't load: {err}"))?;
+    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+}
+
+/// Accept connections: at most [`MAX_CONNECTIONS`] at once, each with [`HANDSHAKE_TIMEOUT`]
+/// to finish TLS and its request, so idle or half-open connections can't pile up.
+async fn accept(
+    listener: tokio::net::TcpListener,
+    tls: Option<tokio_rustls::TlsAcceptor>,
+    app: Router,
+) {
+    let slots = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    loop {
+        let Ok((tcp, _)) = listener.accept().await else {
+            continue;
+        };
+        let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else {
+            continue;
+        };
+        let tls = tls.clone();
+        let app = app.clone();
+        tokio::spawn(async move {
+            let _slot = slot;
+            match tls {
+                Some(tls) => {
+                    if let Ok(Ok(stream)) =
+                        tokio::time::timeout(HANDSHAKE_TIMEOUT, tls.accept(tcp)).await
+                    {
+                        serve_connection(stream, app).await;
+                    }
+                }
+                None => serve_connection(tcp, app).await,
+            }
+        });
+    }
+}
+
+/// HTTP/1 on one connection, with a deadline for its request headers, then the WebSocket.
+async fn serve_connection<I>(io: I, app: Router)
+where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    use hyper_util::rt::{TokioIo, TokioTimer};
+    let service = hyper_util::service::TowerToHyperService::new(app);
+    let _ = hyper::server::conn::http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HANDSHAKE_TIMEOUT)
+        .serve_connection(TokioIo::new(io), service)
+        .with_upgrades()
+        .await;
 }
 
 /// Stop listening and close every remote connection.
@@ -173,8 +271,25 @@ async fn upgrade(
     ws: WebSocketUpgrade,
 ) -> Response {
     // Turned off since the core started: refuse, even before the listener stops.
-    if !core.config().is_ok_and(|config| config.remote.enabled) {
+    let Ok(config) = core.config() else {
         return (StatusCode::SERVICE_UNAVAILABLE, "remote access is off").into_response();
+    };
+    if !config.remote.enabled {
+        return (StatusCode::SERVICE_UNAVAILABLE, "remote access is off").into_response();
+    }
+    // A web page can open a WebSocket to any address: only ones you named may.
+    if let Some(origin) = headers.get(ORIGIN).and_then(|value| value.to_str().ok())
+        && !config
+            .remote
+            .allowed_origins
+            .iter()
+            .any(|allowed| allowed.trim_end_matches('/').eq_ignore_ascii_case(origin))
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            "this web page isn't allowed to connect; add its origin to [remote] allowed_origins",
+        )
+            .into_response();
     }
     let expected = core.remote.token.lock().unwrap().clone();
     let Some(expected) = expected.filter(|t| t.chars().count() >= MIN_TOKEN_CHARS) else {
@@ -202,6 +317,7 @@ async fn upgrade(
     {
         return (StatusCode::UNAUTHORIZED, "wrong or missing token").into_response();
     }
+    let ws = ws.max_message_size(MAX_MESSAGE).max_frame_size(MAX_MESSAGE);
     let ws = match via_protocol {
         Some(_) => ws.protocols(["lucy"]),
         None => ws,

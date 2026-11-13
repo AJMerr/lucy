@@ -35,6 +35,11 @@ keyring.workspace = true
 rusqlite.workspace = true
 axum.workspace = true
 getrandom.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+rcgen.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

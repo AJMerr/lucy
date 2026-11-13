@@ -13,6 +13,7 @@ pub mod persona;
 pub mod pictures;
 pub mod policy;
 pub mod provider;
+pub mod remote_tls;
 pub mod schedule;
 pub mod secrets;
 pub mod server;

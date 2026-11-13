@@ -65,7 +65,7 @@ impl Desktop {
                 "[defaults]\nprofile = \"fake\"\n\n\
                  [profiles.fake]\nprovider = \"openai_compat\"\nbase_url = \"{}/v1\"\nmodel = \"fake-model\"\n\n\
                  [agent]\nworkspace = {:?}\n\n\
-                 [remote]\nenabled = true\nbind = \"127.0.0.1:{port}\"\n",
+                 [remote]\nenabled = true\nbind = \"127.0.0.1:{port}\"\ntls = false\n",
                 model.url(),
                 workspace.display().to_string(),
             ),
@@ -95,6 +95,8 @@ impl Desktop {
         let endpoint = Endpoint::Remote {
             url: desktop.url(),
             token: TOKEN.into(),
+            pin: None,
+            insecure: false,
         };
         for _ in 0..200 {
             if Client::connect(&endpoint, "probe").await.is_ok() {

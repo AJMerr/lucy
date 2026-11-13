@@ -56,6 +56,8 @@ struct Harness {
     dir: tempfile::TempDir,
     local: Endpoint,
     port: u16,
+    /// The core's certificate fingerprint.
+    fingerprint: String,
     _model: FakeServer,
 }
 
@@ -91,6 +93,19 @@ impl Harness {
         };
         let keyring = MemoryStore::default();
         keyring.set(REMOTE_TOKEN_KEY, TOKEN).unwrap();
+        // The certificate the core will use, made here so the test knows its fingerprint.
+        let fingerprint = {
+            let made = Secrets::new(MemoryStore::default(), |_: &str| None);
+            let identity = lucy_core::remote_tls::load_or_create(&made).unwrap();
+            let stored = made
+                .resolve(lucy_core::remote_tls::TLS_KEY)
+                .unwrap()
+                .unwrap();
+            keyring
+                .set(lucy_core::remote_tls::TLS_KEY, &stored.value)
+                .unwrap();
+            identity.fingerprint()
+        };
         keyring.set("anthropic", "sk-ant-the-users-key").unwrap();
         let options = CoreOptions {
             endpoint: local.clone(),
@@ -114,6 +129,7 @@ impl Harness {
             dir,
             local,
             port,
+            fingerprint,
             _model: model,
         }
     }
@@ -126,6 +142,8 @@ impl Harness {
         Endpoint::Remote {
             url: self.url(),
             token: token.into(),
+            pin: None,
+            insecure: false,
         }
     }
 
@@ -157,7 +175,8 @@ impl Harness {
     }
 }
 
-const ON: &str = "enabled = true\nbind = \"127.0.0.1:{port}\"";
+/// On, over plain WebSocket on loopback; TLS has its own tests below.
+const ON: &str = "enabled = true\nbind = \"127.0.0.1:{port}\"\ntls = false";
 
 async fn session(client: &Client, mode: Mode, level: AgentLevel) -> String {
     let id: String = client
@@ -828,4 +847,74 @@ async fn turning_remote_access_off_takes_effect_at_once() {
             .is_err()
     );
     assert!(!h.listening().await);
+}
+
+// --- TLS and the door -------------------------------------------------------------------------
+
+const TLS_ON: &str = "enabled = true\nbind = \"127.0.0.1:{port}\"";
+
+#[tokio::test]
+async fn over_tls_the_client_pins_the_cores_certificate() {
+    let h = Harness::start(vec![], TLS_ON).await;
+    let url = format!("wss://127.0.0.1:{}/rpc", h.port);
+    let pin = |pin: &str| Endpoint::Remote {
+        url: url.clone(),
+        token: TOKEN.into(),
+        pin: Some(pin.into()),
+        insecure: false,
+    };
+    let mut connected = None;
+    for _ in 0..200 {
+        if let Ok(client) = Client::connect(&pin(&h.fingerprint), "test").await {
+            connected = Some(client);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let client = connected.expect("the pinned certificate wasn't accepted");
+    let _: Value = client.call(method::CORE_STATUS, json!({})).await.unwrap();
+    let wrong = "0".repeat(64);
+    assert!(matches!(
+        Client::connect(&pin(&wrong), "test").await,
+        Err(lucy_client::ClientError::WrongCertificate { .. })
+    ));
+    // Unpinned, the self-signed certificate isn't trusted either.
+    let unpinned = Endpoint::Remote {
+        url: url.clone(),
+        token: TOKEN.into(),
+        pin: None,
+        insecure: false,
+    };
+    assert!(Client::connect(&unpinned, "test").await.is_err());
+}
+
+#[tokio::test]
+async fn web_pages_need_their_origin_allowed() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let h = Harness::start(
+        vec![],
+        &format!("{ON}\nallowed_origins = [\"https://lucy.example.com\"]"),
+    )
+    .await;
+    h.remote_client().await;
+    let with_origin = |origin: &str| {
+        let mut request = h.url().into_client_request().unwrap();
+        request
+            .headers_mut()
+            .insert("Authorization", format!("Bearer {TOKEN}").parse().unwrap());
+        request
+            .headers_mut()
+            .insert("Origin", origin.parse().unwrap());
+        request
+    };
+
+    assert!(
+        tokio_tungstenite::connect_async(with_origin("https://evil.example"))
+            .await
+            .is_err()
+    );
+    tokio_tungstenite::connect_async(with_origin("https://lucy.example.com"))
+        .await
+        .unwrap();
 }
