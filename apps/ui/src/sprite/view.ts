@@ -2,7 +2,7 @@
 // Rust side filters the rest) and your actions to her animation, speech bubble, input box and
 // approval request. Timers come in as `tick`s, so this stays testable.
 
-import { describeCall } from "../lib/calls.ts";
+import { describeCall, needsReview } from "../lib/calls.ts";
 import type { Attached } from "../lib/pictures.ts";
 import { approvalReason, type CoreEvent, type ImageRef } from "../lib/protocol.ts";
 
@@ -31,6 +31,15 @@ export interface Approval {
   reason: string;
   /** What it would change (a diff), if the core sent one. */
   preview?: string;
+  /** Too long, or with hidden characters, to approve here: review it in the chat window. */
+  review: boolean;
+}
+
+/** A call's arguments as plain text, to judge whether they can be read at a glance. */
+function rawCall(args: Record<string, unknown>): string {
+  return Object.values(args)
+    .map((value) => (typeof value === "string" ? value : JSON.stringify(value)))
+    .join("\n");
 }
 
 export interface View {
@@ -237,6 +246,7 @@ function onEvent(view: View, event: CoreEvent, now: number): View {
           summary: describeCall(call.name, call.arguments),
           reason: approvalReason(event),
           ...(event.preview === undefined ? {} : { preview: event.preview }),
+          review: needsReview(rawCall(call.arguments)),
         },
       };
     }

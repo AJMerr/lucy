@@ -1,7 +1,7 @@
 // The chat window's transcript: a pure function from her saved chat (when the window opens)
 // and the core's live events to the list of entries it shows.
 
-import { describeCall } from "./calls.ts";
+import { callDetails, describeCall } from "./calls.ts";
 import { approvalReason, type CoreEvent, type ImageRef } from "./protocol.ts";
 
 /** A saved message, as `sessions.load` returns it (`lucy_protocol::rpc::StoredMessage`). */
@@ -41,6 +41,8 @@ export type Entry =
       reason?: string;
       /** What it would change (while asking), if the core sent it. */
       preview?: string;
+      /** The whole command, or every argument, with hidden characters shown (while asking). */
+      details?: string;
       /** Pictures it gave back, e.g. one she made. */
       images?: ImageRef[];
       /** A fact she saved to memory, which you can take back. */
@@ -153,6 +155,9 @@ function onEvent(transcript: Transcript, event: CoreEvent): Transcript {
         state: asking ? "asking" : "running",
         ...(asking ? { reason: approvalReason(event) } : {}),
         ...(asking && event.preview !== undefined ? { preview: event.preview } : {}),
+        ...(asking && callDetails(call.name, call.arguments) !== undefined
+          ? { details: callDetails(call.name, call.arguments) }
+          : {}),
         ...(call.name === "remember" && typeof call.arguments?.fact === "string"
           ? { remembered: call.arguments.fact }
           : {}),

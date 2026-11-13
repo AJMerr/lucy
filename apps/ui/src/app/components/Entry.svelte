@@ -86,6 +86,9 @@
     {#if entry.reason}
       <div class="reason">{entry.reason}</div>
     {/if}
+    {#if entry.details !== undefined}
+      <pre class="details" aria-label="What it would run">{entry.details}</pre>
+    {/if}
     {#if entry.preview !== undefined && showChanges}
       <pre>{entry.preview}</pre>
     {/if}
@@ -170,6 +173,13 @@
   }
   .tool.failed .state {
     color: var(--hot);
+  }
+  .details {
+    max-height: 12em;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font: 12px/1.4 ui-monospace, monospace;
   }
   .tool.asking {
     color: var(--text);
