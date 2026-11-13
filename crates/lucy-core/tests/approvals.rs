@@ -38,8 +38,8 @@ fn asks(verdict: &Verdict) -> bool {
 #[tokio::test]
 async fn always_doesnt_open_private_paths_or_files_outside_the_folder() {
     let dir = tempfile::tempdir().unwrap();
-    let dir = dir.path().canonicalize().unwrap();
-    let toolbox = toolbox(&dir, &[]).await;
+    let dir = dir.path();
+    let toolbox = toolbox(dir, &[]).await;
     let always: HashSet<String> = ["read_file", "write_file"].map(String::from).into();
 
     let secret = toolbox.verdict(
@@ -69,8 +69,8 @@ async fn always_doesnt_open_private_paths_or_files_outside_the_folder() {
 #[tokio::test]
 async fn an_auto_rule_doesnt_open_private_paths_either() {
     let dir = tempfile::tempdir().unwrap();
-    let dir = dir.path().canonicalize().unwrap();
-    let toolbox = toolbox(&dir, &[("read_file", ToolRule::Auto)]).await;
+    let dir = dir.path();
+    let toolbox = toolbox(dir, &[("read_file", ToolRule::Auto)]).await;
 
     let secret = toolbox.verdict(
         &call("read_file", json!({"path": "secrets/token"})),

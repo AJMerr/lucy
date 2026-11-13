@@ -21,6 +21,8 @@ upgrade.
   the way the system resolves them, including links to things that don't exist yet.
 - **`search_files` stays out of private folders** reached another way, such as `~/./.config`
   or a link to one.
+- **Private paths match however they're spelled:** through a home folder behind a link (as on
+  macOS), and on Windows when written with backslashes in `[tools] private_paths`.
 - **The terminal shows control characters instead of obeying them.** Replies, tool names,
   arguments, output and errors could carry terminal escapes or a carriage return, which could
   paint a harmless command over the real one in an approval prompt, write to the clipboard or

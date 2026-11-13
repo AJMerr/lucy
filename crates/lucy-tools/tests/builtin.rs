@@ -438,3 +438,32 @@ async fn fetch_url_reports_http_errors() {
 
     assert!(err.contains("404"), "{err}");
 }
+
+// --- Private paths, however they're spelled ---------------------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn a_home_behind_a_link_is_private_by_either_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real-home");
+    std::fs::create_dir_all(real.join(".ssh")).unwrap();
+    let link = dir.path().join("home");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let private = PrivatePaths::defaults(Some(&link));
+
+    assert!(private.contains(&link.join(".ssh/config")));
+    assert!(private.contains(&real.canonicalize().unwrap().join(".ssh/config")));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_patterns_can_use_backslashes_and_resolved_paths() {
+    use std::path::Path;
+    let private = PrivatePaths::new(&[r"C:\Secrets\**", r"\\?\D:\Keys\**"], None).unwrap();
+
+    assert!(private.contains(Path::new(r"C:\secrets\token")));
+    assert!(private.contains(Path::new(r"\\?\C:\Secrets\token")));
+    assert!(private.contains(Path::new(r"D:\Keys\a")));
+    assert!(!private.contains(Path::new(r"C:\Public\a")));
+}

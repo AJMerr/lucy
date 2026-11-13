@@ -41,24 +41,40 @@ impl PrivatePaths {
 
     /// Patterns starting with `~/` are skipped when there is no home folder.
     pub fn new(patterns: &[impl AsRef<str>], home: Option<&Path>) -> Result<Self, globset::Error> {
-        let home = home.map(slashes);
+        // Home as given and, when it differs, its real path (on macOS `/var` is really
+        // `/private/var`), so a path matches however it's spelled.
+        let mut homes: Vec<String> = home.map(slashes).into_iter().collect();
+        if let Some(real) = home
+            .and_then(|home| home.canonicalize().ok())
+            .map(|p| slashes(&p))
+            && !homes.contains(&real)
+        {
+            homes.push(real);
+        }
         let mut builder = GlobSetBuilder::new();
         for pattern in patterns {
             let pattern = pattern.as_ref();
-            let pattern = match (pattern.strip_prefix("~/"), &home) {
-                (Some(rest), Some(home)) => format!("{}/{rest}", home.trim_end_matches('/')),
-                (Some(_), None) => continue,
-                (None, _) => pattern.to_owned(),
+            let expanded: Vec<String> = match pattern.strip_prefix("~/") {
+                Some(rest) => homes
+                    .iter()
+                    .map(|home| format!("{}/{rest}", home.trim_end_matches('/')))
+                    .collect(),
+                // On Windows a pattern may be written with backslashes, or come from a resolved
+                // `\\?\` path; elsewhere a backslash escapes the next character.
+                None if cfg!(windows) => vec![slashes(Path::new(pattern))],
+                None => vec![pattern.to_owned()],
             };
-            // `dir/**` should also cover `dir` itself (listing it reveals file names).
-            let base = pattern.strip_suffix("/**").map(str::to_owned);
-            for pattern in std::iter::once(pattern).chain(base) {
-                builder.add(
-                    GlobBuilder::new(&pattern)
-                        .literal_separator(true)
-                        .case_insensitive(cfg!(any(windows, target_os = "macos")))
-                        .build()?,
-                );
+            for pattern in expanded {
+                // `dir/**` should also cover `dir` itself (listing it reveals file names).
+                let base = pattern.strip_suffix("/**").map(str::to_owned);
+                for pattern in std::iter::once(pattern).chain(base) {
+                    builder.add(
+                        GlobBuilder::new(&pattern)
+                            .literal_separator(true)
+                            .case_insensitive(cfg!(any(windows, target_os = "macos")))
+                            .build()?,
+                    );
+                }
             }
         }
         Ok(Self {
