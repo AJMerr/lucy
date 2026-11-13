@@ -280,3 +280,20 @@ test("a /clear and a summary show where they happened, with the summary's text",
     { kind: "marker", marker: "summary", text: "You said hi, then again." },
   ]);
 });
+
+test("an approval only the core's machine can give says so", () => {
+  const asked = run([
+    started(1),
+    event({
+      type: "tool_approval",
+      session_id: session,
+      turn_id: 1,
+      call: { id: "c1", name: "run_command", arguments: { command: "ls" } },
+      reason: "runs a shell command",
+      local_only: true,
+    }),
+  ]);
+
+  const entry = asked.entries.find((e) => e.kind === "tool");
+  assert.ok(entry?.kind === "tool" && entry.reason?.includes("only the machine that runs Lucy"), JSON.stringify(entry));
+});

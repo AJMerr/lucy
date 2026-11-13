@@ -17,7 +17,7 @@ class FakeSocket implements Socket {
     // Play a cooperative core: say hello back and accept subscribe.
     if (parsed.method === "hello" || parsed.method === "subscribe") {
       queueMicrotask(() =>
-        this.reply({ id: parsed.id, result: parsed.method === "hello" ? { protocol_version: 5 } : null }),
+        this.reply({ id: parsed.id, result: parsed.method === "hello" ? { protocol_version: 6 } : null }),
       );
     }
   }

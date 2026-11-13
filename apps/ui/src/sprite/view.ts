@@ -4,7 +4,7 @@
 
 import { describeCall } from "../lib/calls.ts";
 import type { Attached } from "../lib/pictures.ts";
-import type { CoreEvent, ImageRef } from "../lib/protocol.ts";
+import { approvalReason, type CoreEvent, type ImageRef } from "../lib/protocol.ts";
 
 export type { CoreEvent };
 
@@ -235,7 +235,7 @@ function onEvent(view: View, event: CoreEvent, now: number): View {
         approval: {
           callId: call.id,
           summary: describeCall(call.name, call.arguments),
-          reason: event.reason ?? "",
+          reason: approvalReason(event),
           ...(event.preview === undefined ? {} : { preview: event.preview }),
         },
       };

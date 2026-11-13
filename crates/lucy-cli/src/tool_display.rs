@@ -14,6 +14,8 @@ const KEY_ARGS: &[&str] = &[
 const SUMMARY_CHARS: usize = 60;
 
 pub const APPROVAL_PROMPT: &str = "Allow? [y]es · [a]lways this chat · [N]o › ";
+/// For a call only the machine running Lucy may approve.
+pub const LOCAL_ONLY_PROMPT: &str = "[Enter] wait for it there · [n] decline › ";
 
 /// `⚙ read_file  src/main.rs`, without the outcome.
 pub fn started(call: &ToolCall) -> String {

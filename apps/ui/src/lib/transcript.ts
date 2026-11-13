@@ -2,7 +2,7 @@
 // and the core's live events to the list of entries it shows.
 
 import { describeCall } from "./calls.ts";
-import type { CoreEvent, ImageRef } from "./protocol.ts";
+import { approvalReason, type CoreEvent, type ImageRef } from "./protocol.ts";
 
 /** A saved message, as `sessions.load` returns it (`lucy_protocol::rpc::StoredMessage`). */
 export interface StoredMessage {
@@ -149,7 +149,7 @@ function onEvent(transcript: Transcript, event: CoreEvent): Transcript {
         callId: call.id,
         summary: describeCall(call.name, call.arguments),
         state: asking ? "asking" : "running",
-        ...(asking ? { reason: event.reason ?? "" } : {}),
+        ...(asking ? { reason: approvalReason(event) } : {}),
         ...(asking && event.preview !== undefined ? { preview: event.preview } : {}),
       };
       const at = entries.findIndex((entry) => entry.kind === "tool" && entry.callId === call.id);

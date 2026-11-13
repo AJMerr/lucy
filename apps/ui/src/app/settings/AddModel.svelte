@@ -23,6 +23,8 @@
   let baseUrl = $state("");
   let keyName = $state("");
   let key = $state("");
+  // The key typed for this provider, sent with `models.list` and `models.try` (it was also saved).
+  let typedKey = $state("");
   /** Null until the provider has been asked. */
   let models = $state<ModelInfo[] | null>(null);
   let search = $state("");
@@ -56,6 +58,7 @@
     baseUrl = next?.base_url ?? "";
     keyName = next?.key_name ?? "";
     key = "";
+    typedKey = "";
     models = null;
     search = "";
     choose("");
@@ -80,15 +83,22 @@
     return out;
   }
 
+  /** `access()` for asking the provider: a key typed here goes along, since a stored one is
+   * only sent where it's already used. Never part of the saved profile (it lives in the keyring). */
+  function asking(): Record<string, string> {
+    return typedKey === "" ? access() : { ...access(), key: typedKey };
+  }
+
   async function find(): Promise<void> {
     busy = true;
     problem = null;
     try {
       if (keyName.trim() !== "" && key.trim() !== "") {
         await store.setKey(keyName.trim(), key.trim());
+        typedKey = key.trim();
         key = "";
       }
-      models = await core.call<ModelInfo[]>("models.list", access());
+      models = await core.call<ModelInfo[]>("models.list", asking());
     } catch (err) {
       models = [];
       problem = `Couldn't list its models (${messageOf(err)}). Type the model's ID instead.`;
@@ -101,7 +111,7 @@
     tried = null;
     tryProblem = null;
     try {
-      tried = await core.call("models.try", { ...access(), model: model.trim() });
+      tried = await core.call("models.try", { ...asking(), model: model.trim() });
     } catch (err) {
       tryProblem = messageOf(err);
     }

@@ -8,9 +8,21 @@ export interface CoreEvent {
   call?: { id: string; name: string; arguments: Record<string, unknown> };
   reason?: string;
   preview?: string;
+  /** Only the machine running Lucy may approve this call (a reply driven from another one). */
+  local_only?: boolean;
   outcome?: string;
   error?: string;
   [key: string]: unknown;
+}
+
+/** Why a call asks, saying so when only the machine running Lucy may approve it. */
+export function approvalReason(event: CoreEvent): string {
+  const reason = event.reason ?? "";
+  if (event.local_only !== true) {
+    return reason;
+  }
+  const note = "asked from another machine: only the machine that runs Lucy can approve it";
+  return reason === "" ? note : `${reason} · ${note}`;
 }
 
 /** A picture kept with a chat (`lucy_protocol::rpc::ImageRef`); `images.get` fetches it. */
@@ -28,4 +40,4 @@ export interface ImageData {
 }
 
 /** The protocol this front end speaks (`lucy_protocol::rpc::PROTOCOL_VERSION`). */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;

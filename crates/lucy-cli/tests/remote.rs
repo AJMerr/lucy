@@ -11,7 +11,7 @@ use lucy_core::server::{CoreOptions, REMOTE_TOKEN_KEY, serve};
 use lucy_providers::testing::{FakeResponse, FakeServer};
 use serde_json::{Value, json};
 
-const TOKEN: &str = "e2e-token-0123456789abcdef";
+const TOKEN: &str = "e2e-token-0123456789abcdef0123456789";
 
 fn chunk(delta: Value, finish: Option<&str>) -> String {
     format!(

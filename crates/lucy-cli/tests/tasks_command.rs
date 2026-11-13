@@ -22,6 +22,7 @@ fn schedule(id: &str, kind: &str, title: &str, spec: &str) -> Schedule {
         paused: false,
         next_run: Some(4_102_444_800_000),
         last_run: None,
+        remote: false,
     }
 }
 

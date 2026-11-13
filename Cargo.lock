@@ -1811,6 +1811,7 @@ dependencies = [
  "chrono",
  "dirs",
  "futures",
+ "getrandom 0.2.17",
  "interprocess",
  "keyring",
  "lucy-client",

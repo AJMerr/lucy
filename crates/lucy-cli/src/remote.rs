@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use dialoguer::Password;
 use lucy_client::{Client, Endpoint};
 use lucy_core::config::{self, Config};
-use lucy_core::secrets::{self, OsKeyring, SecretStore, Secrets, SecretsError};
+use lucy_core::secrets::{self, KeySource, OsKeyring, SecretStore, Secrets, SecretsError};
 use lucy_core::server::REMOTE_TOKEN_KEY;
 
 /// The keyring entry for the token this machine sends to a remote core.
@@ -170,21 +170,56 @@ pub fn target() -> Result<Option<Endpoint>> {
     Ok(Some(Endpoint::Remote { url, token }))
 }
 
-/// `lucy remote token [--rotate]`: print the token (on stdout, alone) and what to do with it.
+/// `lucy remote token [--rotate]`: print the token the core checks (on stdout, alone) and
+/// what to do with it. Rotating goes through the running core, which disconnects every remote
+/// client; with no core running, the keyring's token is replaced.
 pub fn token_command(rotate: bool) -> Result<()> {
-    let token = token(&OsKeyring, rotate).with_context(|| {
+    let keyring_hint = || {
         format!(
             "couldn't keep the token in the keyring; set {} to a long random value instead",
             secrets::env_var_name(REMOTE_TOKEN_KEY)
         )
-    })?;
-    println!("{}", token.value);
-    match (token.created, rotate) {
-        (true, true) => eprintln!(
-            "That's the new token. New connections need it; ones already open stay connected."
+    };
+    // The environment wins over the keyring, for the core as here.
+    let from_env = Secrets::system()
+        .resolve(REMOTE_TOKEN_KEY)
+        .ok()
+        .flatten()
+        .and_then(|key| match key.source {
+            KeySource::Env(var) => Some((var, key.value)),
+            KeySource::Keyring => None,
+        });
+    let (token, disconnected) = match (&from_env, rotate) {
+        (Some((var, _)), true) => bail!(
+            "the token comes from {var}, which the core uses over the keyring; change {var}              (or unset it), then restart the core"
         ),
-        (true, false) => eprintln!("Created a token for remote clients."),
-        (false, _) => {}
+        (Some((_, value)), false) => (
+            Token {
+                value: value.clone(),
+                created: false,
+            },
+            false,
+        ),
+        (None, true) => match rotate_on_core()? {
+            Some(value) => (
+                Token {
+                    value,
+                    created: true,
+                },
+                true,
+            ),
+            None => (token(&OsKeyring, true).with_context(keyring_hint)?, false),
+        },
+        (None, false) => (token(&OsKeyring, false).with_context(keyring_hint)?, false),
+    };
+    println!("{}", token.value);
+    match (token.created, rotate, disconnected) {
+        (true, true, true) => eprintln!(
+            "That's the new token. Remote clients were disconnected and need it to connect again."
+        ),
+        (true, true, false) => eprintln!("That's the new token; new connections need it."),
+        (true, false, _) => eprintln!("Created a token for remote clients."),
+        (false, ..) => {}
     }
     eprintln!(
         "On the other machine: `lucy remote connect <this machine's address>`, and paste it."
@@ -202,6 +237,27 @@ pub fn token_command(rotate: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Ask this machine's core, if it's running, for a new token (`remote.rotate`).
+fn rotate_on_core() -> Result<Option<String>> {
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let endpoint = Endpoint::default_for_user();
+        if crate::core_process::status(&endpoint).await?.is_none() {
+            return Ok(None);
+        }
+        let client = Client::connect(&endpoint, crate::core_process::CLIENT_NAME).await?;
+        let rotated: serde_json::Value = client
+            .call(
+                lucy_protocol::rpc::method::REMOTE_ROTATE,
+                serde_json::json!({}),
+            )
+            .await?;
+        match rotated["token"].as_str() {
+            Some(token) => Ok(Some(token.to_owned())),
+            None => bail!("the core didn't return a new token"),
+        }
+    })
 }
 
 /// `lucy remote connect <url>`: check the token works, then remember the core and the token.

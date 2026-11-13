@@ -37,6 +37,9 @@ pub async fn run(
         }
         None => None,
     };
+    // A key typed now goes with the calls below: a stored one is only sent to the addresses
+    // that already use it.
+    let mut typed = None;
     if let Some(name) = &key_name {
         let key = prompter.input(
             &format!("API key for {name} (leave empty if it's already saved)"),
@@ -52,6 +55,7 @@ pub async fn run(
                     },
                 )
                 .await?;
+            typed = Some(key.trim().to_owned());
         }
     }
 
@@ -62,7 +66,7 @@ pub async fn run(
                 provider: preset.provider.clone(),
                 base_url: Some(base_url.clone()),
                 key_name: key_name.clone(),
-                key: None,
+                key: typed.clone(),
             },
         )
         .await
@@ -79,7 +83,7 @@ pub async fn run(
                 base_url: Some(base_url.clone()),
                 model: model.clone(),
                 key_name: key_name.clone(),
-                key: None,
+                key: typed.clone(),
             },
         )
         .await;
