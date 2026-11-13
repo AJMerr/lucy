@@ -106,6 +106,12 @@ pub async fn login(
     }
     state.start_authorization(request).await.map_err(fail)?;
     let auth_url = state.get_authorization_url().await.map_err(fail)?;
+    let auth_url = sign_in_page(&auth_url).ok_or_else(|| {
+        format!(
+            "`{name}` gave a sign-in address that isn't a web page (only https, or http on this \
+             machine, is opened)"
+        )
+    })?;
 
     open(&auth_url);
     let callback = tokio::time::timeout(LOGIN_TIMEOUT, wait_for_callback(&listener))
@@ -200,12 +206,31 @@ async fn respond(
     socket.shutdown().await
 }
 
+/// The sign-in page `url` names, if it is one: `https:`, or `http:` on this machine. Another
+/// scheme (`file:`, an app's own) would open more than a browser. The URL comes back in its
+/// parsed form, with anything odd percent-encoded.
+fn sign_in_page(url: &str) -> Option<String> {
+    let url = url::Url::parse(url).ok()?;
+    let local = match url.host() {
+        Some(url::Host::Domain(host)) => host == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    match url.scheme() {
+        "https" => Some(url.into()),
+        "http" if local => Some(url.into()),
+        _ => None,
+    }
+}
+
 /// Open `url` in the browser on this machine. Best effort: if none opens, a printed URL still
 /// works.
 pub fn open_browser(url: &str) {
     let mut command = if cfg!(windows) {
-        let mut command = std::process::Command::new("cmd");
-        command.args(["/C", "start", ""]).arg(url);
+        // Not `cmd /C start`: cmd would read `&` and `|` in the URL as commands of its own.
+        let mut command = std::process::Command::new("rundll32");
+        command.args(["url.dll,FileProtocolHandler", url]);
         command
     } else if cfg!(target_os = "macos") {
         let mut command = std::process::Command::new("open");
@@ -221,4 +246,27 @@ pub fn open_browser(url: &str) {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sign_in_page;
+
+    #[test]
+    fn only_web_pages_are_opened() {
+        assert!(sign_in_page("https://auth.example.com/authorize?a=1&b=2").is_some());
+        assert!(sign_in_page("http://127.0.0.1:8080/authorize").is_some());
+        assert!(sign_in_page("http://localhost/authorize").is_some());
+
+        assert_eq!(sign_in_page("http://auth.example.com/authorize"), None);
+        assert_eq!(sign_in_page("file:///etc/passwd"), None);
+        assert_eq!(sign_in_page("ms-settings:privacy"), None);
+        assert_eq!(sign_in_page("not a url"), None);
+    }
+
+    #[test]
+    fn what_opens_is_the_parsed_url() {
+        let page = sign_in_page("https://auth.example.com/a b?x=\"&calc&\"").unwrap();
+        assert!(!page.contains(' ') && !page.contains('"'), "{page}");
+    }
 }
