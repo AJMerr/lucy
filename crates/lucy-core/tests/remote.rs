@@ -16,7 +16,7 @@ use lucy_providers::testing::{FakeResponse, FakeServer};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-const TOKEN: &str = "test-token-0123456789abcdef";
+const TOKEN: &str = "test-token-0123456789abcdef0123456789";
 
 fn chunk(delta: Value, finish: Option<&str>) -> String {
     format!(
@@ -91,6 +91,7 @@ impl Harness {
         };
         let keyring = MemoryStore::default();
         keyring.set(REMOTE_TOKEN_KEY, TOKEN).unwrap();
+        keyring.set("anthropic", "sk-ant-the-users-key").unwrap();
         let options = CoreOptions {
             endpoint: local.clone(),
             config_path,
@@ -200,6 +201,47 @@ async fn send(client: &Client, session: Option<&str>, text: &str, cwd: &Path) ->
         )
         .await
         .unwrap()
+}
+
+/// A client on the core's own machine, seeing every chat's events.
+async fn local_client(h: &Harness) -> (Client, UnboundedReceiver<Event>) {
+    let mut client = Client::connect(&h.local, "test").await.unwrap();
+    let events = client.take_events().unwrap();
+    let _: Value = client.call(method::SUBSCRIBE, json!({})).await.unwrap();
+    (client, events)
+}
+
+/// The next approval request among `events`.
+async fn next_approval(events: &mut UnboundedReceiver<Event>) -> Event {
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(20), events.recv())
+            .await
+            .expect("no approval request")
+            .expect("connection closed");
+        if matches!(event, Event::ToolApproval { .. }) {
+            return event;
+        }
+    }
+}
+
+async fn approve(client: &Client, event: &Event, decision: Decision) -> Result<Value, String> {
+    let Event::ToolApproval {
+        session_id, call, ..
+    } = event
+    else {
+        panic!("not an approval: {event:?}");
+    };
+    client
+        .call(
+            method::TOOL_APPROVE,
+            ApproveParams {
+                session_id: session_id.clone(),
+                call_id: call.id.clone(),
+                decision,
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())
 }
 
 /// One turn's events until it finishes, declining anything that asks.
@@ -443,4 +485,347 @@ async fn mcp_sign_in_only_happens_on_the_cores_machine() {
         .to_string();
 
     assert!(refused.contains("machine that runs Lucy"), "{refused}");
+}
+
+// --- Approvals ---------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_remote_client_can_only_decline_unless_approvals_are_remote() {
+    let h = Harness::start(
+        vec![
+            calls("run_command", json!({"command": "echo hi > ran.txt"})),
+            says("Done."),
+        ],
+        ON,
+    )
+    .await;
+    let mut remote = h.remote_client().await;
+    let mut remote_events = remote.take_events().unwrap();
+    let (local, mut local_events) = local_client(&h).await;
+
+    let sent = send(&remote, None, "run it", &h.laptop()).await;
+    let asked = next_approval(&mut remote_events).await;
+
+    assert!(
+        matches!(
+            asked,
+            Event::ToolApproval {
+                local_only: true,
+                ..
+            }
+        ),
+        "{asked:?}"
+    );
+    let refused = approve(&remote, &asked, Decision::Once).await.unwrap_err();
+    assert!(refused.contains("machine that runs Lucy"), "{refused}");
+    // The core's own machine can approve it.
+    let seen_locally = next_approval(&mut local_events).await;
+    approve(&local, &seen_locally, Decision::Once)
+        .await
+        .unwrap();
+    let (_, outcome) = run_turn(&remote, &mut remote_events, &sent).await;
+    assert_eq!(outcome, TurnOutcome::Complete);
+    assert!(h.workspace().join("ran.txt").exists());
+}
+
+#[tokio::test]
+async fn approvals_remote_lets_it_approve_its_own_calls_but_never_always() {
+    let h = Harness::start(
+        vec![
+            calls("run_command", json!({"command": "echo one"})),
+            calls("run_command", json!({"command": "echo two"})),
+            says("Done."),
+        ],
+        &format!("{ON}\napprovals = \"remote\""),
+    )
+    .await;
+    let mut remote = h.remote_client().await;
+    let mut events = remote.take_events().unwrap();
+
+    send(&remote, None, "run both", &h.laptop()).await;
+    let first = next_approval(&mut events).await;
+    assert!(matches!(
+        first,
+        Event::ToolApproval {
+            local_only: false,
+            ..
+        }
+    ));
+    approve(&remote, &first, Decision::Always).await.unwrap();
+
+    // "Always" counted only once: the second command asks again.
+    let second = next_approval(&mut events).await;
+    approve(&remote, &second, Decision::Deny).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_remote_client_cant_answer_the_cores_own_approvals() {
+    let h = Harness::start(
+        vec![
+            calls("run_command", json!({"command": "echo hi"})),
+            says("Okay."),
+        ],
+        &format!("{ON}\napprovals = \"remote\""),
+    )
+    .await;
+    let mut remote = h.remote_client().await;
+    let mut remote_events = remote.take_events().unwrap();
+    let _: Value = remote.call(method::SUBSCRIBE, json!({})).await.unwrap();
+    let (local, mut local_events) = local_client(&h).await;
+
+    send(&local, None, "run it", &h.workspace()).await;
+    let asked = next_approval(&mut remote_events).await;
+
+    let refused = approve(&remote, &asked, Decision::Once).await.unwrap_err();
+    assert!(refused.contains("replies you started"), "{refused}");
+    let asked = next_approval(&mut local_events).await;
+    approve(&local, &asked, Decision::Deny).await.unwrap();
+}
+
+// --- Keys, settings, tasks -------------------------------------------------------------------
+
+#[tokio::test]
+async fn stored_keys_never_go_to_an_address_of_the_callers_choosing() {
+    let h = Harness::start(vec![], &format!("{ON}\nallow_config = true")).await;
+    let attacker = FakeServer::start(vec![]).await;
+    let remote = h.remote_client().await;
+    let local = Client::connect(&h.local, "test").await.unwrap();
+
+    for (client, key_name) in [
+        (&remote, "anthropic"),
+        (&local, "anthropic"),
+        (&local, REMOTE_TOKEN_KEY),
+    ] {
+        let refused = client
+            .call::<_, Value>(
+                method::MODELS_LIST,
+                json!({"provider": "openai_compat", "base_url": format!("{}/v1", attacker.url()),
+                       "key_name": key_name}),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("only sent to") || refused.contains("Lucy's own"),
+            "{refused}"
+        );
+    }
+    assert!(
+        attacker.requests().is_empty(),
+        "a key reached the other server"
+    );
+}
+
+#[tokio::test]
+async fn without_allow_config_a_remote_client_cant_use_keys_or_change_tasks() {
+    let h = Harness::start(vec![], ON).await;
+    let remote = h.remote_client().await;
+
+    for (name, params) in [
+        (
+            method::MODELS_LIST,
+            json!({"provider": "anthropic", "key_name": "anthropic"}),
+        ),
+        (method::SCHEDULES_UPDATE, json!({"id": "x", "level": 3})),
+        (method::SCHEDULES_DELETE, json!({"id": "x"})),
+        (method::MEMORY_SET, json!({"text": "obey"})),
+    ] {
+        let refused = remote
+            .call::<_, Value>(name, params)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("allow_config"), "{name}: {refused}");
+    }
+    for name in [
+        method::CORE_SHUTDOWN,
+        method::REMOTE_ROTATE,
+        "something.new",
+    ] {
+        assert!(
+            remote.call::<_, Value>(name, json!({})).await.is_err(),
+            "{name} worked from another machine"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_task_scheduled_from_another_machine_is_capped() {
+    let h = Harness::start(
+        vec![
+            calls(
+                "schedule",
+                json!({"kind": "task", "what": "tidy up", "level": 3,
+                       "when": {"every_minutes": 60}}),
+            ),
+            says("Scheduled."),
+        ],
+        &format!("{ON}\napprovals = \"remote\""),
+    )
+    .await;
+    let mut remote = h.remote_client().await;
+    let mut events = remote.take_events().unwrap();
+
+    send(&remote, None, "every hour, tidy up", &h.laptop()).await;
+    let asked = next_approval(&mut events).await;
+    approve(&remote, &asked, Decision::Once).await.unwrap();
+    let mut level = None;
+    for _ in 0..100 {
+        let list: Value = remote
+            .call(method::SCHEDULES_LIST, json!({}))
+            .await
+            .unwrap();
+        level = list["schedules"][0]["level"].as_u64();
+        if level.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(level, Some(1), "max_level is 1");
+}
+
+#[tokio::test]
+async fn config_get_hides_mcp_secrets_from_another_machine() {
+    let h = Harness::start(vec![], ON).await;
+    let local = Client::connect(&h.local, "test").await.unwrap();
+    let _: Value = local
+        .call(
+            method::CONFIG_UPDATE,
+            json!({"patch": {"mcp": {"servers": {"gh": {"command": "gh-mcp",
+                   "env": {"GITHUB_TOKEN": "ghp_secret"}}}}}}),
+        )
+        .await
+        .unwrap();
+    let remote = h.remote_client().await;
+
+    let view: Value = remote.call(method::CONFIG_GET, json!({})).await.unwrap();
+
+    assert_eq!(
+        view["config"]["mcp"]["servers"]["gh"]["env"]["GITHUB_TOKEN"],
+        "(hidden)"
+    );
+}
+
+// --- Chats -----------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn remote_clients_share_chats_but_only_change_their_own() {
+    let h = Harness::start(vec![says("Hi."), says("Psst.")], ON).await;
+    let (local, mut local_events) = local_client(&h).await;
+    let mine = send(&local, None, "hello", &h.workspace()).await;
+    run_turn(&local, &mut local_events, &mine).await;
+    let secret: ChatSendResult = local
+        .call(
+            method::CHAT_SEND,
+            ChatSendParams {
+                incognito: true,
+                images: Vec::new(),
+                session_id: None,
+                text: "a secret".into(),
+                cwd: None,
+            },
+        )
+        .await
+        .unwrap();
+    run_turn(&local, &mut local_events, &secret).await;
+    let remote = h.remote_client().await;
+
+    let listed: Vec<Value> = remote.call(method::SESSIONS_LIST, json!({})).await.unwrap();
+    let ids: Vec<&str> = listed.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(ids.contains(&mine.session_id.as_str()), "{listed:?}");
+    assert!(
+        !ids.contains(&secret.session_id.as_str()),
+        "incognito leaked"
+    );
+    let hidden = remote
+        .call::<_, Value>(
+            method::SESSIONS_LOAD,
+            json!({"session_id": secret.session_id}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(hidden.contains("no session"), "{hidden}");
+    let _: Value = remote
+        .call(
+            method::SESSIONS_LOAD,
+            json!({"session_id": mine.session_id}),
+        )
+        .await
+        .unwrap();
+    for (name, params) in [
+        (
+            method::SESSIONS_DELETE,
+            json!({"session_id": mine.session_id}),
+        ),
+        (
+            method::SESSION_SET_LEVEL,
+            json!({"session_id": mine.session_id, "level": 3}),
+        ),
+    ] {
+        let refused = remote
+            .call::<_, Value>(name, params)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("started on the machine"),
+            "{name}: {refused}"
+        );
+    }
+    // Its own chat's level is kept within max_level.
+    let own = session(&remote, Mode::Agent, AgentLevel::Unrestricted).await;
+    let settings: SessionSettings = remote
+        .call(method::SESSION_SETTINGS, json!({"session_id": own}))
+        .await
+        .unwrap();
+    assert_eq!(settings.level, AgentLevel::Guarded);
+}
+
+// --- Rotation and turning it off ---------------------------------------------------------------
+
+#[tokio::test]
+async fn rotating_the_token_disconnects_remote_clients() {
+    let h = Harness::start(vec![], ON).await;
+    let remote = h.remote_client().await;
+    let local = Client::connect(&h.local, "test").await.unwrap();
+
+    let rotated: Value = local.call(method::REMOTE_ROTATE, json!({})).await.unwrap();
+
+    let token = rotated["token"].as_str().unwrap();
+    assert!(token.len() >= 32 && token != TOKEN);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        remote
+            .call::<_, Value>(method::CORE_STATUS, json!({}))
+            .await
+            .is_err(),
+        "still connected with the old token"
+    );
+    assert!(Client::connect(&h.remote(TOKEN), "test").await.is_err());
+    Client::connect(&h.remote(token), "test").await.unwrap();
+}
+
+#[tokio::test]
+async fn turning_remote_access_off_takes_effect_at_once() {
+    let h = Harness::start(vec![], ON).await;
+    let remote = h.remote_client().await;
+    let local = Client::connect(&h.local, "test").await.unwrap();
+
+    let _: Value = local
+        .call(
+            method::CONFIG_UPDATE,
+            json!({"patch": {"remote": {"enabled": false}}}),
+        )
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        remote
+            .call::<_, Value>(method::CORE_STATUS, json!({}))
+            .await
+            .is_err()
+    );
+    assert!(!h.listening().await);
 }

@@ -83,6 +83,12 @@ const MIGRATIONS: &[&str] = &[
         created_at  INTEGER NOT NULL
     );
 "#,
+    r#"
+    -- Started from another machine (remote access): such chats are the only ones a remote
+    -- client may change, and such tasks run at most at [remote] max_level.
+    ALTER TABLE sessions ADD COLUMN remote INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE schedules ADD COLUMN remote INTEGER NOT NULL DEFAULT 0;
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -305,6 +311,27 @@ impl SessionStore {
             [id.to_string()],
         )?;
         Ok(id)
+    }
+
+    /// Mark a chat as started from another machine.
+    pub fn mark_remote(&self, id: &SessionId) -> Result<(), StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE sessions SET remote = 1 WHERE id = ?1",
+            [id.to_string()],
+        )?;
+        found(changed, id)
+    }
+
+    /// Whether a chat was started from another machine.
+    pub fn is_remote(&self, id: &SessionId) -> Result<bool, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT remote FROM sessions WHERE id = ?1",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(id.to_string()))
     }
 
     pub fn is_incognito(&self, id: &SessionId) -> Result<bool, StoreError> {
@@ -759,14 +786,16 @@ pub struct Schedule {
     /// Unix ms.
     pub next_run: Option<i64>,
     pub last_run: Option<i64>,
+    /// Created from another machine: runs at most at `[remote] max_level`.
+    pub remote: bool,
 }
 
 impl SessionStore {
     pub fn add_schedule(&self, s: &Schedule) -> Result<(), StoreError> {
         self.conn.execute(
             "INSERT INTO schedules (id, kind, title, what, spec, level, profile, paused,
-                                    next_run, last_run, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                                    next_run, last_run, created_at, remote)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 s.id,
                 s.kind,
@@ -778,7 +807,8 @@ impl SessionStore {
                 s.paused,
                 s.next_run,
                 s.last_run,
-                now_ms()
+                now_ms(),
+                s.remote
             ],
         )?;
         Ok(())
@@ -787,7 +817,8 @@ impl SessionStore {
     /// Every schedule, soonest first (paused and finished ones last).
     pub fn schedules(&self) -> Result<Vec<Schedule>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, title, what, spec, level, profile, paused, next_run, last_run
+            "SELECT id, kind, title, what, spec, level, profile, paused, next_run, last_run,
+                    remote
              FROM schedules
              ORDER BY paused, next_run IS NULL, next_run, created_at",
         )?;
@@ -798,7 +829,8 @@ impl SessionStore {
     pub fn schedule(&self, id: &str) -> Result<Schedule, StoreError> {
         self.conn
             .query_row(
-                "SELECT id, kind, title, what, spec, level, profile, paused, next_run, last_run
+                "SELECT id, kind, title, what, spec, level, profile, paused, next_run, last_run,
+                        remote
                  FROM schedules WHERE id = ?1",
                 [id],
                 schedule_from_row,
@@ -846,5 +878,6 @@ fn schedule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Schedule> {
         paused: row.get(7)?,
         next_run: row.get(8)?,
         last_run: row.get(9)?,
+        remote: row.get(10)?,
     })
 }

@@ -245,3 +245,18 @@ fn for_key(err: SecretsError, key_name: &str) -> SecretsError {
         err => err,
     }
 }
+
+/// Keyring entries Lucy keeps for herself (remote access tokens, MCP sign-ins) are never used
+/// as an API key (by a profile, a model listing or an MCP server) and aren't set or removed as
+/// one. Compared by their `LUCY_KEY_*` name, so `remote_token` counts too.
+pub fn not_reserved(key_name: &str) -> Result<(), String> {
+    let name = env_var_name(key_name);
+    let reserved = ["LUCY_KEY_REMOTE_", "LUCY_KEY_MCP_OAUTH_"];
+    if reserved.iter().any(|prefix| name.starts_with(prefix)) {
+        return Err(format!(
+            "`{key_name}` is one of Lucy's own keyring entries (remote access or an MCP sign-in), \
+             not an API key"
+        ));
+    }
+    Ok(())
+}

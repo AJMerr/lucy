@@ -9,7 +9,7 @@ use crate::{AgentLevel, Mode, Role, ToolCall};
 /// Bumped on any incompatible change; `hello` refuses mismatched clients.
 /// `core.status` and `core.shutdown` keep their shape across versions, so a newer client can
 /// still stop an older core (from v4 on).
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 pub mod method {
     pub const HELLO: &str = "hello";
@@ -80,6 +80,9 @@ pub mod method {
     /// Change a reminder or task (pause, reword, reschedule, level, model).
     pub const SCHEDULES_UPDATE: &str = "schedules.update";
     pub const SCHEDULES_DELETE: &str = "schedules.delete";
+    /// Replace the token remote clients present (`{token}`), and disconnect every remote
+    /// client. Only from the core's own machine.
+    pub const REMOTE_ROTATE: &str = "remote.rotate";
     /// Notification carrying an [`Event`](super::Event).
     pub const EVENT: &str = "event";
 }
@@ -591,6 +594,10 @@ pub enum Event {
         /// What it would change, e.g. a diff for a file edit.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         preview: Option<String>,
+        /// Only a client on the machine running Lucy may approve (a reply driven from another
+        /// machine, with `[remote] approvals = "local"`); a remote client can only decline.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        local_only: bool,
     },
     ToolStarted {
         session_id: String,

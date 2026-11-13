@@ -318,6 +318,21 @@ pub struct RemoteSettings {
     pub allow_config: bool,
     /// The highest agent level a chat driven from a remote client runs at.
     pub max_level: AgentLevel,
+    /// Who may approve tool calls in chats driven from a remote client: only the machine
+    /// running Lucy (`local`), or the remote client too (`remote`; then the token is as
+    /// good as sitting at that machine).
+    pub approvals: RemoteApprovals,
+}
+
+/// Who answers approval prompts in chats driven from another machine.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteApprovals {
+    /// Only clients on the machine running Lucy; a remote client can only decline.
+    #[default]
+    Local,
+    /// The remote client that started the reply may approve too.
+    Remote,
 }
 
 impl Default for RemoteSettings {
@@ -328,6 +343,7 @@ impl Default for RemoteSettings {
             allow_network: false,
             allow_config: false,
             max_level: AgentLevel::Guarded,
+            approvals: RemoteApprovals::Local,
         }
     }
 }

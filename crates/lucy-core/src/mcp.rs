@@ -289,6 +289,7 @@ where
     S: SecretStore,
     E: Fn(&str) -> Option<String>,
 {
+    secrets::not_reserved(key_name).map_err(|err| format!("MCP server `{server}`: {err}"))?;
     Ok(secrets
         .resolve(key_name)
         .map_err(|err| format!("MCP server `{server}`: {err}"))?

@@ -104,6 +104,8 @@ where
     let Some(key_name) = &profile.key_name else {
         return Ok(None);
     };
+    secrets::not_reserved(key_name)
+        .map_err(|reason| BuildError::Invalid(name.to_owned(), reason))?;
     let secret = secrets
         .resolve(key_name)?
         .ok_or_else(|| BuildError::MissingKey {

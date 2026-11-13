@@ -87,6 +87,9 @@ pub struct Access {
     pub level: AgentLevel,
     /// `[agent] workspace`, home-expanded.
     pub workspace: Option<PathBuf>,
+    /// The chat is driven from another machine: memory changes ask, and protected paths
+    /// are refused rather than asked about.
+    pub remote: bool,
 }
 
 impl ToolBox {
@@ -306,6 +309,10 @@ impl ToolBox {
             {
                 return ask("remembers something sensitive about you".into());
             }
+        }
+        // Memory steers every later chat, so another machine changes it only with approval.
+        if self.access.remote && self.memory_rule(&call.name) != Some(ToolRule::Deny) {
+            return ask("changes Lucy's memory from another machine".into());
         }
         match self.memory_rule(&call.name) {
             Some(ToolRule::Deny) => {
