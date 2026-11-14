@@ -860,7 +860,7 @@ impl<W: Write> Chat<'_, W> {
                     self.say(&format!("  {name}  {rule}  {description}"))?;
                 }
                 if tools.iter().any(|t| t.rule == ToolRuleInfo::AutoInHome) {
-                    self.note("  * runs by itself in your home folder; asks for private files and anywhere else")?;
+                    self.note("  * runs by itself in the chat's folder, the workspace and [tools] readable folders; asks elsewhere and for private files")?;
                 }
                 if tools.iter().any(|t| t.rule == ToolRuleInfo::AutoInFolder) {
                     self.note("  † changes files in the working folder (the workspace at level 2) by itself; asks elsewhere")?;

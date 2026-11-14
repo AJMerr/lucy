@@ -112,6 +112,27 @@
   />
 </label>
 <label class="field">
+  <span>
+    Folders she may read without asking, one per line (besides the chat's folder and the
+    workspace; reading anywhere else asks)
+  </span>
+  <textarea
+    rows="3"
+    aria-label="Readable folders"
+    placeholder={"~/Documents\n~/projects"}
+    value={(draft.tools?.readable ?? []).join("\n")}
+    oninput={(e) =>
+      set(
+        "tools",
+        "readable",
+        e.currentTarget.value
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      )}
+  ></textarea>
+</label>
+<label class="field">
   <span>Private paths: always ask before reading (one per line)</span>
   <textarea
     rows="3"

@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.2.0: reads are an allowlist (2026-11-14)
+
+Closes a gap a review found after v1.1.0: reading in your home folder was protected by a list
+of known secret locations, so a secret file that wasn't on the list could be read (and sent to
+the model) without asking.
+
+### Breaking for security
+
+- **She reads freely only where you let her:** the folder you're working in, `[agent] workspace`,
+  and folders you list in the new `[tools] readable` (Settings → Chat & agent). Reading anywhere
+  else, your home folder included, asks first; **Always** covers the rest of the chat. Private
+  paths still ask every time. Scheduled tasks and chats from another machine read only their
+  workspace and `readable` folders.
+- **Once a reply has read a file, a remote MCP server's read-only tools ask** for the rest of
+  that reply, since they could be handed what it read.
+
+### Upgrading from v1.1.0
+
+- Restart the core after installing: `lucy service restart`, or `lucy core stop`. Still
+  protocol v6.
+- If she now asks to read folders you're happy for her to browse, add them to
+  `[tools] readable` (for example `["~/Documents", "~/projects"]`).
+
 ## v1.1.0: security hardening (2026-11-13)
 
 The rest of the fixes from the security review. Remote access is locked down and encrypted, and

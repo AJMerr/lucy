@@ -41,7 +41,7 @@ Tasks list):
 | Level | While you're away |
 | --- | --- |
 | 0 · supervised | Nothing that would ask runs, so effectively nothing |
-| 1 · guarded (default) | Reads (files in your home folder, and MCP servers' data like your email and calendar) |
+| 1 · guarded (default) | Reads (files in your workspace and `[tools] readable` folders, and MCP servers' data like your email and calendar) |
 | 2 · workspace | Also changes files and runs commands in your workspace |
 | 3 · unrestricted | Anything |
 

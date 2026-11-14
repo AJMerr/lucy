@@ -67,6 +67,7 @@ impl Home {
                 workspace: workspace.as_deref(),
                 private: &self.private,
                 protected: &self.protected,
+                readable: &[],
             },
         )
     }
@@ -115,13 +116,15 @@ fn assert_asks(decision: Decision) {
     assert!(!runs(&decision), "expected Ask, got {decision:?}");
 }
 
-// --- Assist mode (unchanged from step 8) ---------------------------------------------------
+// --- Assist mode --------------------------------------------------------------------------
 
 #[test]
-fn assist_runs_reads_in_home_and_asks_for_everything_else() {
+fn assist_reads_its_folder_and_asks_for_everything_else() {
     let home = Home::new();
 
-    assert_runs(home.assist(local(CallKind::Read, vec![home.path("notes")])));
+    assert_runs(home.assist(local(CallKind::Read, vec![home.path("projects/app/a.rs")])));
+    // Elsewhere in home asks too: an allowlist, so a secret nobody listed is safe.
+    assert_asks(home.assist(local(CallKind::Read, vec![home.path("notes")])));
     assert_asks(home.assist(local(CallKind::Read, vec![home.outside("x")])));
     assert_asks(home.assist(local(CallKind::Read, vec![home.path(".ssh/config")])));
     assert_asks(home.assist(local(CallKind::Write, vec![home.path("projects/app/a.rs")])));
@@ -163,11 +166,15 @@ fn guarded_writes_freely_inside_the_working_folder_only() {
 }
 
 #[test]
-fn guarded_reads_home_but_asks_for_commands_online_and_unknown_tools() {
+fn guarded_reads_its_folder_but_asks_for_commands_online_and_unknown_tools() {
     let home = Home::new();
     let g = AgentLevel::Guarded;
 
-    assert_runs(home.agent(g, local(CallKind::Read, vec![home.path("notes")])));
+    assert_runs(home.agent(
+        g,
+        local(CallKind::Read, vec![home.path("projects/app/src/a.rs")]),
+    ));
+    assert_asks(home.agent(g, local(CallKind::Read, vec![home.path("notes")])));
     assert_asks(home.agent(g, local(CallKind::Read, vec![home.outside("x")])));
     assert_asks(home.agent(g, local(CallKind::Command, vec![])));
     assert_asks(home.agent(g, local(CallKind::Online, vec![])));
@@ -201,8 +208,14 @@ fn workspace_runs_local_work_anywhere_inside_it() {
         Some("notes"),
         local(CallKind::Command, vec![]),
     ));
-    // Reads keep Guarded's reach.
+    // Reads reach the workspace, and no further.
     assert_runs(home.decide(
+        Mode::Agent,
+        w,
+        ws,
+        local(CallKind::Read, vec![home.path("projects/other/x.rs")]),
+    ));
+    assert_asks(home.decide(
         Mode::Agent,
         w,
         ws,
@@ -323,14 +336,15 @@ fn an_agent_reads_where_it_may_write_even_outside_home() {
                 workspace: None,
                 private: &home.private,
                 protected: &home.protected,
+                readable: &[],
             },
         )
     };
 
     assert_runs(decide_at(Mode::Agent, AgentLevel::Guarded));
     assert_runs(decide_at(Mode::Agent, AgentLevel::Workspace));
-    // Assist mode keeps to home.
-    assert_asks(decide_at(Mode::Assist, AgentLevel::Guarded));
+    // So does Assist mode: it's the chat's own folder.
+    assert_runs(decide_at(Mode::Assist, AgentLevel::Guarded));
 }
 
 // --- Paths that climb out ---------------------------------------------------------------------
@@ -388,6 +402,7 @@ fn private_paths_and_changes_outside_the_folder_ask_even_when_always_allowed() {
                 workspace: None,
                 private: &home.private,
                 protected: &home.protected,
+                readable: &[],
             },
         )
     };
@@ -462,6 +477,7 @@ fn decide_in(
             workspace: workspace.as_deref(),
             private: &home.private,
             protected: &home.protected,
+            readable: &[],
         },
     )
 }
@@ -527,9 +543,49 @@ fn files_that_run_at_startup_or_hold_lucys_settings_always_ask() {
             assert_asks(home.agent(level, local(CallKind::Write, vec![path])));
         }
     }
-    // Reading them is fine.
-    assert_runs(home.agent(
-        AgentLevel::Guarded,
-        local(CallKind::Read, vec![home.path(".bashrc")]),
-    ));
+    // Reading one from a readable folder is fine.
+    assert_runs(read_in(&home, "", &[""], home.path(".bashrc")));
+}
+
+// --- Reads are an allowlist ----------------------------------------------------------------
+
+/// Decide a read for a chat working in `folder` (relative to home), with `readable` folders.
+fn read_in(home: &Home, folder: &str, readable: &[&str], path: PathBuf) -> Decision {
+    let folder = home.path(folder);
+    let homedir = home.path("");
+    let readable: Vec<PathBuf> = readable.iter().map(|r| home.path(r)).collect();
+    decide(
+        &local(CallKind::Read, vec![path]),
+        &Policy {
+            mode: Mode::Assist,
+            level: AgentLevel::Guarded,
+            folder: &folder,
+            home: Some(&homedir),
+            workspace: None,
+            private: &home.private,
+            protected: &home.protected,
+            readable: &readable,
+        },
+    )
+}
+
+#[test]
+fn a_secret_nobody_listed_still_asks() {
+    let home = Home::new();
+    let unlisted = home.path("work/client-api-keys.txt");
+
+    assert_asks(read_in(&home, "projects/app", &[], unlisted.clone()));
+    // A chat working in home itself (the app, scheduled tasks) can't read all of home either.
+    assert_asks(read_in(&home, "", &[], unlisted));
+}
+
+#[test]
+fn readable_folders_are_read_without_asking_but_private_files_in_them_still_ask() {
+    let home = Home::new();
+
+    assert_runs(read_in(&home, "", &["notes"], home.path("notes/todo.md")));
+    assert_asks(read_in(&home, "", &["notes"], home.path("work/x.md")));
+    // Even home itself, if you list it; private files still ask.
+    assert_runs(read_in(&home, "", &[""], home.path("work/x.md")));
+    assert_asks(read_in(&home, "", &[""], home.path(".ssh/config")));
 }

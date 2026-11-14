@@ -21,8 +21,9 @@ Keys go straight into your OS keyring, never into a file. You can add more model
 
 Type a message and she answers as it streams in. A few things to try:
 
-- **"What's in my Downloads folder?"** She lists it. Reading files in your home folder just
-  happens.
+- **"What's in my Downloads folder?"** She asks first, then lists it: she reads freely only in
+  the folder you're working in and folders you let her (`[tools] readable`, or Settings → Chat &
+  agent), so a file you never mentioned stays private. **Always** covers the rest of the chat.
 - **"Make a file called notes.md with a shopping list."** She asks first: anything that changes
   files, runs a command or goes online shows you what she wants to do, with **Allow**,
   **Always** (for this chat) and **Deny**. In the terminal that's `y`, `a` or `n`.
