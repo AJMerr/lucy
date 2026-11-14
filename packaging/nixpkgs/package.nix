@@ -10,16 +10,16 @@
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "lucy";
-  version = "1.1.0";
+  version = "1.2.0";
 
   src = fetchFromGitHub {
     owner = "AJMerr";
     repo = "lucy";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-U2GF7Ex5culfJH9vINZjhVURnri3Sh1/sOPLShCsBFw=";
+    hash = "sha256-wV9ulutXJn/oeMwA9Jeua3X/t4fLchzToQZSX3oHwOc=";
   };
 
-  cargoHash = "sha256-GmAnVaipRigPl6Zji8zbPxZtj2Ed5cdFJhXBXtXay04=";
+  cargoHash = "sha256-YEhEIH+NOGrWm4iLIt4Djz0v13S7ZR4/0dtz7F900zE=";
 
   cargoBuildFlags = [
     "-p"
