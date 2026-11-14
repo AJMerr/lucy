@@ -88,3 +88,11 @@ Every agent task has a **step cap** and a **token/cost cap** regardless of level
 - **Approved calls are checked again** before they run; one that would now be refused, or ask
   for a different reason, doesn't. Undo leaves a file that has since become a link alone.
 - Commands and MCP servers don't inherit `LUCY_KEY_*` or the providers' own key variables.
+
+## Implementation notes (v1.2.0, reads are an allowlist)
+
+- Reads run without asking only inside the chat's folder, `[agent] workspace` and `[tools]
+  readable` (each only when it isn't home or a folder holding it, unless you list it in
+  `readable`); anywhere else, home included, they ask. A secret nobody listed is protected by
+  default. Private paths still ask everywhere, and "always" or an `auto` rule for a read tool
+  covers the rest of the chat as before.

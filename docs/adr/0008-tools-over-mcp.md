@@ -116,3 +116,8 @@ path checks: their paths name the remote service's data, not this machine's file
   like a path on this machine (`/…`, `~/…`, `file://…`, `C:\\…`) is checked against home and the
   private and protected lists.
 - The approval card shows every argument of a tool Lucy has no summary for.
+
+## Implementation notes (v1.2.0)
+
+- Once a reply has read a local file, a remote server's read-only tools ask for the rest of that
+  reply: they could be handed what it read (in a search query, say).

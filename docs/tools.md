@@ -7,8 +7,13 @@ and write or edit files. [MCP servers](mcp.md) add more (email, calendars, GitHu
 
 In an ordinary chat (**Assist** mode), she decides what to use, and you decide what runs:
 
-- **Just happens:** reading, listing and searching files in your home folder, and tools an MCP
-  server marks read-only and local (a remote server's read-only tools too).
+- **Just happens:** reading, listing and searching files in the folder you're working in, your
+  `[agent] workspace`, and the folders in `[tools] readable` (Settings → Chat & agent); tools an
+  MCP server marks read-only and local; and a remote server's read-only tools, until the reply
+  has read a file (after that they ask, since they could be handed what it read).
+- **Asks first, then "Always" for the chat:** reading anywhere else, your home folder included.
+  It's an allowlist, so a secret nobody thought to list is still protected; add the folders
+  you're happy for her to browse to `readable` and she won't ask there.
 - **Asks first:** anything that changes files, runs a command or goes online. You see what she
   wants to do (and, for file edits, the changes) with **Allow**, **Always** (this tool, for the
   rest of this chat) and **Deny**; in a terminal, `y`, `a` or `n`.
@@ -41,7 +46,7 @@ The **level** decides what she may do without asking:
 | Level | Runs by itself | Still asks |
 | --- | --- | --- |
 | 0 Supervised | nothing | every tool call |
-| 1 Guarded (default) | reads; file changes inside the folder you started in | commands, going online, anything outside the folder |
+| 1 Guarded (default) | reads in the folder you started in (and readable folders); file changes there | commands, going online, anything outside the folder |
 | 2 Workspace | anything local inside `[agent] workspace` (or the folder), commands included | going online, anything outside the workspace |
 | 3 Unrestricted | everything | nothing |
 

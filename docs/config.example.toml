@@ -69,6 +69,9 @@ max_rounds = 10                 # tool rounds per message before Lucy must answe
 # use extra_private_paths; private_paths replaces the built-in list (keys, credentials, browser
 # profiles, shell histories, Lucy's own chats…).
 # extra_private_paths = ["~/work/secrets/**"]
+# Folders she may read without asking, besides the chat's folder and the workspace. Reading
+# anywhere else (home included) asks; "Always" covers the rest of a chat.
+# readable = ["~/Documents", "~/projects"]
 
 [tools.rules]                   # override the usual rule for a tool: "auto" | "ask" | "deny"
 # run_command = "deny"
