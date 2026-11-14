@@ -251,6 +251,10 @@ pub struct ToolSettings {
     /// More private paths, on top of `private_paths`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_private_paths: Vec<String>,
+    /// Folders she may read without asking, besides the chat's own folder and
+    /// `[agent] workspace` (e.g. `["~/Documents", "~/projects"]`). Reads elsewhere ask.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub readable: Vec<String>,
     /// Per-tool overrides of the usual rule, e.g. `run_command = "deny"`.
     pub rules: BTreeMap<String, ToolRule>,
 }
@@ -265,6 +269,7 @@ impl Default for ToolSettings {
                 .map(|p| p.to_string())
                 .collect(),
             extra_private_paths: Vec::new(),
+            readable: Vec::new(),
             rules: BTreeMap::new(),
         }
     }

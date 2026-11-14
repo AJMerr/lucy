@@ -42,6 +42,9 @@ pub struct Policy<'a> {
     pub private: &'a PrivatePaths,
     /// Files that run code at startup, and Lucy's own settings: changing them always asks.
     pub protected: &'a PrivatePaths,
+    /// Folders she may read without asking besides the chat's folder and the workspace
+    /// (`[tools] readable`), home-expanded.
+    pub readable: &'a [PathBuf],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,16 +141,10 @@ pub fn decide(call: &CallFacts, policy: &Policy) -> Decision {
 
     match call.kind {
         CallKind::Read if call.remote => Decision::Run,
-        CallKind::Read => match call.paths.iter().find(|p| {
-            // An agent may read wherever it may write.
-            let writable = agent
-                && (within(p, policy.folder)
-                    || (policy.level == AgentLevel::Workspace && within(p, workspace)));
-            !within_home(p, policy) && !writable
-        }) {
+        CallKind::Read => match call.paths.iter().find(|p| !readable(p, policy)) {
             None => Decision::Run,
             Some(path) => ask(format!(
-                "reads outside your home folder ({})",
+                "reads outside the folders she may read ({})",
                 path.display()
             )),
         },
@@ -183,8 +180,17 @@ fn is_private(path: &Path, private: &PrivatePaths) -> bool {
     private.contains(path) || private.contains(&real_path(path))
 }
 
-fn within_home(path: &Path, policy: &Policy) -> bool {
-    policy.home.is_some_and(|home| within(path, home))
+/// Whether `path` is somewhere she may read without asking: the chat's folder, the workspace
+/// and `[tools] readable`. An allowlist, so a secret nobody thought to list stays protected; home
+/// itself (or a folder holding it) only counts when listed in `readable`, since chats with no
+/// folder of their own work there.
+fn readable(path: &Path, policy: &Policy) -> bool {
+    let holds_home = |area: &Path| policy.home.is_some_and(|home| within(home, area));
+    let own = [Some(policy.folder), policy.workspace]
+        .into_iter()
+        .flatten()
+        .any(|area| !holds_home(area) && within(path, area));
+    own || policy.readable.iter().any(|area| within(path, area))
 }
 
 /// Whether `path`, symlinks resolved, is `area` or inside it.

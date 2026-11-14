@@ -536,7 +536,9 @@ pub struct ToolInfo {
 #[serde(rename_all = "snake_case")]
 pub enum ToolRuleInfo {
     Auto,
-    /// Read-only, but asks for private files or anything outside home.
+    /// Read-only, but asks for private files and anything outside the folders it may read
+    /// (the chat's folder, the workspace, `[tools] readable`). Named before reads became an
+    /// allowlist; kept for compatibility.
     AutoInHome,
     /// Agent mode: changes files inside the working folder (or workspace); asks elsewhere.
     AutoInFolder,

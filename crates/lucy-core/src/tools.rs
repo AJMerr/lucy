@@ -2,8 +2,9 @@
 //! (ADR 0004 and 0008). Permission checks live here, in the core, never in front ends.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use lucy_protocol::rpc::{ToolInfo, ToolRuleInfo};
 use lucy_protocol::{Message, Role, ToolCall};
@@ -72,6 +73,11 @@ pub struct ToolBox {
     private: PrivatePaths,
     /// Files that run code at startup, and Lucy's own settings: changing them always asks.
     protected: PrivatePaths,
+    /// `[tools] readable`, home-expanded.
+    readable: Vec<PathBuf>,
+    /// This reply has read a local file: from now on, a remote server's tools could be handed
+    /// what it read, so they ask.
+    read_files: AtomicBool,
     settings: ToolSettings,
     access: Access,
     /// `generate_image`, when a generator is set: ready, or why it can't make pictures.
@@ -113,6 +119,11 @@ impl ToolBox {
         let private = PrivatePaths::new(&patterns, home.as_deref())
             .map_err(|err| format!("bad pattern in tools.private_paths: {err}"))?;
         let protected = PrivatePaths::protected(home.as_deref(), &[]);
+        let readable = settings
+            .readable
+            .iter()
+            .map(|p| resolve(p, home.as_deref().unwrap_or(Path::new("/"))))
+            .collect();
         let mut tools = Vec::new();
         let builtin = if settings.builtin {
             let client = builtin::connect(BuiltinOptions {
@@ -152,6 +163,8 @@ impl ToolBox {
             home,
             private,
             protected,
+            readable,
+            read_files: AtomicBool::new(false),
             settings: settings.clone(),
             access: Access::default(),
             generator: None,
@@ -605,6 +618,14 @@ impl ToolBox {
         if rule == Some(ToolRule::Auto) || allowed.contains(&call.name) {
             return Verdict::Run;
         }
+        // Once this reply has read a file, a remote server's tool could be handed what it read
+        // (in a search query, say), so its calls ask from then on.
+        if facts.remote && self.read_files.load(Ordering::SeqCst) {
+            return ask(
+                "could pass on what this reply has read to another server; check what it sends"
+                    .into(),
+            );
+        }
         match policy::decide(&facts, &self.policy()) {
             Decision::Run => Verdict::Run,
             Decision::Ask(reason) => ask(reason),
@@ -630,6 +651,7 @@ impl ToolBox {
             workspace: self.access.workspace.as_deref(),
             private: &self.private,
             protected: &self.protected,
+            readable: &self.readable,
         }
     }
 
@@ -683,6 +705,9 @@ impl ToolBox {
         let Some(tool) = self.find(&call.name) else {
             return ToolOutput::failed(format!("There is no tool named `{}`.", call.name));
         };
+        if !is_remote(tool) && self.kind(tool) == CallKind::Read {
+            self.read_files.store(true, Ordering::SeqCst);
+        }
         let mut output = match (&tool.external, &self.builtin) {
             (Some(server), _) => server
                 .call(&tool.def.name, call.arguments.clone())

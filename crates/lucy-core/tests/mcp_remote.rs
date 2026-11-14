@@ -381,6 +381,41 @@ async fn remote_read_only_tools_run_without_local_path_checks() {
     host.shutdown().await;
 }
 
+#[tokio::test]
+async fn once_a_reply_has_read_a_file_remote_tools_ask() {
+    let remote = Remote::start(Guard::Headers(vec![])).await;
+    let host = McpHost::new();
+    let server = host
+        .server("hosted", &McpServer::remote(remote.url()), &secrets(&[]))
+        .await
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "a secret").unwrap();
+    let toolbox = ToolBox::open(
+        &ToolSettings::default(),
+        dir.path().to_owned(),
+        vec![server],
+    )
+    .await
+    .unwrap();
+    let call = |name: &str, arguments: Value| ToolCall {
+        id: "call_1".into(),
+        name: name.into(),
+        arguments,
+    };
+    let search = call("hosted__read_file", json!({"path": "/anything"}));
+
+    assert_eq!(toolbox.verdict(&search, &HashSet::new()), Verdict::Run);
+    toolbox
+        .call(&call("read_file", json!({"path": "notes.txt"})))
+        .await;
+    let after = toolbox.verdict(&search, &HashSet::new());
+
+    assert!(matches!(after, Verdict::Ask { .. }), "{after:?}");
+    toolbox.close().await;
+    host.shutdown().await;
+}
+
 // --- OAuth --------------------------------------------------------------------------------
 
 fn token_store() -> TokenStore {
